@@ -167,7 +167,7 @@ jobs:
 
   publish:
     name: Publish Trajex to Viam Module Registry
-    needs: [build-artifacts]
+    needs: [build-release-artifacts]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: true
