@@ -75,6 +75,20 @@ Behavior`s, and will be similarly identified in the source code.
   for a *sink*, which would mean all candidate accelerations are
   infeasible, so we check against the minimum, not the maximum.
 
+- **Correction 8: Eqs. 41 and 42**: The RHS of both inequalities
+  references `d/ds s_dot_max_acc`, but should reference `d/ds
+  s_dot_max_vel`. Equations 41 and 42 are the discontinuous analog of
+  equation 40, which compares the min-acceleration trajectory slope
+  against the velocity limit curve slope to determine whether the
+  trajectory can follow below the velocity limit curve. The same
+  comparison applies at a discontinuity: on the before-side, check if
+  the velocity limit is a sink; on the after-side, check if it is a
+  source or followable. Both checks compare against the velocity limit
+  curve slope, not the acceleration limit curve slope. This is
+  consistent with equation 40 and with the analogous pattern in
+  equation 38, where sink/source checks at the acceleration limit curve
+  compare against the acceleration limit curve slope.
+
 ### Behavioral Differences:
 
 - **Divergent Behavior 1**: We implement an opt-in denoising pass for

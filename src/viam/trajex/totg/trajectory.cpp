@@ -660,7 +660,7 @@ struct eq40_result {
 }
 
 // Phase 1: Search segment boundaries for a discontinuous velocity-limit switching point
-// (Kunz & Stilman equations 41-42).
+// (Kunz & Stilman equations 41-42) with correction 8 applied.
 std::optional<switching_point> find_discontinuous_velocity_switching_point(path::cursor cursor,
                                                                            const trajectory::options& opt,
                                                                            arc_length path_length) {
