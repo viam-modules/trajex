@@ -247,9 +247,7 @@ struct eq40_result {
     const auto accel_bounds = compute_acceleration_bounds(q_prime, q_double_prime, s_dot_max_vel, opt.max_acceleration, opt.epsilon);
 
     const auto trajectory_slope = accel_bounds.s_ddot_min / s_dot_max_vel;
-    return eq40_result{.delta = trajectory_slope - curve_slope,
-                       .s_dot_max_vel = s_dot_max_vel,
-                       .s_ddot_min = accel_bounds.s_ddot_min};
+    return eq40_result{.delta = trajectory_slope - curve_slope, .s_dot_max_vel = s_dot_max_vel, .s_ddot_min = accel_bounds.s_ddot_min};
 }
 
 // Performs a single Euler integration step in phase plane (s, s_dot).
