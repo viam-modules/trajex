@@ -220,6 +220,7 @@ struct switching_point {
 struct eq40_result {
     phase_plane_slope delta;
     arc_velocity s_dot_max_vel;
+    arc_acceleration s_ddot_min;
 };
 
 // Try to evaluate Eq. 40 delta:
@@ -246,7 +247,9 @@ struct eq40_result {
     const auto accel_bounds = compute_acceleration_bounds(q_prime, q_double_prime, s_dot_max_vel, opt.max_acceleration, opt.epsilon);
 
     const auto trajectory_slope = accel_bounds.s_ddot_min / s_dot_max_vel;
-    return eq40_result{.delta = trajectory_slope - curve_slope, .s_dot_max_vel = s_dot_max_vel};
+    return eq40_result{.delta = trajectory_slope - curve_slope,
+                       .s_dot_max_vel = s_dot_max_vel,
+                       .s_ddot_min = accel_bounds.s_ddot_min};
 }
 
 // Performs a single Euler integration step in phase plane (s, s_dot).
@@ -721,14 +724,6 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
         const auto [s_dot_max_accel_after, s_dot_max_vel_after] =
             compute_velocity_limits(q_prime_after, q_double_prime_after, opt.max_velocity, opt.max_acceleration, opt.epsilon);
 
-        // If velocity limit is degenerate (near zero) on either side, this is a switching point where we must come to rest.
-        if (opt.epsilon.wrap(s_dot_max_vel_before) == opt.epsilon.wrap(arc_velocity{0.0}) ||
-            opt.epsilon.wrap(s_dot_max_vel_after) == opt.epsilon.wrap(arc_velocity{0.0})) {
-            const auto switching_velocity = std::min(std::min(s_dot_max_vel_before, s_dot_max_vel_after), arc_velocity{0.0});
-            return switching_point{.point = {.s = boundary, .s_dot = switching_velocity},
-                                   .kind = trajectory::switching_point_kind::k_discontinuous_velocity_limit};
-        }
-
         // Conditions 41 and 42 are evaluated at s_dot_max_vel, but if s_dot_max_accel <= s_dot_max_vel
         // at this boundary, backward integration starting at s_dot_max_vel would immediately exceed
         // the acceleration limit curve -- this is not a valid velocity-type switching point candidate.
@@ -788,6 +783,7 @@ struct eq40_escape_bracket {
     arc_length after;
     phase_plane_slope after_delta;
     arc_velocity after_s_dot_max_vel;
+    arc_acceleration after_s_ddot_min;
 };
 
 // Phase 2: Coarse forward scan for an Eq. 40 sign bracket:
@@ -823,7 +819,8 @@ std::optional<eq40_escape_bracket> find_eq40_escape_bracket(path::cursor search_
                     return eq40_escape_bracket{.before = previous_position,
                                                .after = current_position,
                                                .after_delta = result->delta,
-                                               .after_s_dot_max_vel = result->s_dot_max_vel};
+                                               .after_s_dot_max_vel = result->s_dot_max_vel,
+                                               .after_s_ddot_min = result->s_ddot_min};
                 }
             }
 
@@ -864,7 +861,8 @@ std::optional<switching_point> refine_continuous_velocity_switching_point(path::
     // If the coarse step already landed on the root, no bisection needed.
     if (opt.epsilon.wrap(bracket.after_delta) == opt.epsilon.wrap(k_zero_delta)) {
         return switching_point{.point = {.s = bracket.after, .s_dot = bracket.after_s_dot_max_vel},
-                               .kind = trajectory::switching_point_kind::k_velocity_escape};
+                               .kind = trajectory::switching_point_kind::k_velocity_escape,
+                               .backward_accel = bracket.after_s_ddot_min};
     }
 
     // TODO(RSDK-12767): Eliminate this hardcoded constant.
@@ -872,12 +870,14 @@ std::optional<switching_point> refine_continuous_velocity_switching_point(path::
     auto positive_side = bracket.before;
     auto nonpositive_side = bracket.after;
     auto best_s_dot_max_vel = bracket.after_s_dot_max_vel;
+    auto best_s_ddot_min = bracket.after_s_ddot_min;
 
     for (int iteration = 0; iteration < max_bisection_iterations; ++iteration) {
         // Positions converged -- the sign change is localized within epsilon.
         if (opt.epsilon.wrap(positive_side) == opt.epsilon.wrap(nonpositive_side)) {
             return switching_point{.point = {.s = nonpositive_side, .s_dot = best_s_dot_max_vel},
-                                   .kind = trajectory::switching_point_kind::k_velocity_escape};
+                                   .kind = trajectory::switching_point_kind::k_velocity_escape,
+                                   .backward_accel = best_s_ddot_min};
         }
 
         const auto mid = midpoint(positive_side, nonpositive_side);
@@ -894,12 +894,14 @@ std::optional<switching_point> refine_continuous_velocity_switching_point(path::
         // Found the root -- return immediately.
         if (mid_result->delta == k_zero_delta) {
             return switching_point{.point = {.s = mid, .s_dot = mid_result->s_dot_max_vel},
-                                   .kind = trajectory::switching_point_kind::k_velocity_escape};
+                                   .kind = trajectory::switching_point_kind::k_velocity_escape,
+                                   .backward_accel = mid_result->s_ddot_min};
         }
 
         if (mid_result->delta < k_zero_delta) {
             nonpositive_side = mid;
             best_s_dot_max_vel = mid_result->s_dot_max_vel;
+            best_s_ddot_min = mid_result->s_ddot_min;
         } else {
             positive_side = mid;
         }
