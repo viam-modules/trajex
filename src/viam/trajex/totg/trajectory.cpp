@@ -699,10 +699,10 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
         if (opt.epsilon.wrap(dot()) != opt.epsilon.wrap(1.0)) {
             const auto q_double_prime_before = current_segment.curvature(boundary);
             const auto q_double_prime_after = segment_after.curvature(boundary);
-            const auto accel_before = compute_acceleration_bounds(
-                q_prime_before, q_double_prime_before, arc_velocity{0.0}, opt.max_acceleration, opt.epsilon);
-            const auto accel_after = compute_acceleration_bounds(
-                q_prime_after, q_double_prime_after, arc_velocity{0.0}, opt.max_acceleration, opt.epsilon);
+            const auto accel_before =
+                compute_acceleration_bounds(q_prime_before, q_double_prime_before, arc_velocity{0.0}, opt.max_acceleration, opt.epsilon);
+            const auto accel_after =
+                compute_acceleration_bounds(q_prime_after, q_double_prime_after, arc_velocity{0.0}, opt.max_acceleration, opt.epsilon);
             return switching_point{
                 .point = {.s = boundary, .s_dot = arc_velocity{0.0}},
                 .kind = trajectory::switching_point_kind::k_discontinuous_velocity_limit,
@@ -771,12 +771,12 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
         // Only accept the velocity switching point if it is feasible with respect to the acceleration
         // limit curve.
         if (opt.epsilon.wrap(s_dot_max_accel_switching_min) >= opt.epsilon.wrap(s_dot_max_vel_switching_min)) {
-            return switching_point{.point = {.s = boundary, .s_dot = s_dot_max_vel_switching_min},
-                                   .kind = trajectory::switching_point_kind::k_discontinuous_velocity_limit,
-                                   .forward_accel = accel_after.s_ddot_min,
-                                   .backward_accel = accel_before.s_ddot_min,
-                                };
-
+            return switching_point{
+                .point = {.s = boundary, .s_dot = s_dot_max_vel_switching_min},
+                .kind = trajectory::switching_point_kind::k_discontinuous_velocity_limit,
+                .forward_accel = accel_after.s_ddot_min,
+                .backward_accel = accel_before.s_ddot_min,
+            };
         }
     }
 
