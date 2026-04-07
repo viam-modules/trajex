@@ -868,8 +868,8 @@ std::optional<switching_point> refine_continuous_velocity_switching_point(path::
         return switching_point{
             .point = {.s = bracket.after, .s_dot = bracket.after_s_dot_max_vel},
             .kind = trajectory::switching_point_kind::k_velocity_escape,
-            .backward_accel = bracket.after_s_ddot_min,
             .forward_accel = bracket.after_s_ddot_min,
+            .backward_accel = bracket.after_s_ddot_min,
         };
     }
 
@@ -886,8 +886,8 @@ std::optional<switching_point> refine_continuous_velocity_switching_point(path::
             return switching_point{
                 .point = {.s = nonpositive_side, .s_dot = best_s_dot_max_vel},
                 .kind = trajectory::switching_point_kind::k_velocity_escape,
-                .backward_accel = best_s_ddot_min,
                 .forward_accel = best_s_ddot_min,
+                .backward_accel = best_s_ddot_min,
             };
         }
 
@@ -906,8 +906,8 @@ std::optional<switching_point> refine_continuous_velocity_switching_point(path::
         if (mid_result->delta == k_zero_delta) {
             return switching_point{.point = {.s = mid, .s_dot = mid_result->s_dot_max_vel},
                                    .kind = trajectory::switching_point_kind::k_velocity_escape,
-                                   .backward_accel = mid_result->s_ddot_min,
-                                   .forward_accel = mid_result->s_ddot_min};
+                                   .forward_accel = mid_result->s_ddot_min,
+                                   .backward_accel = mid_result->s_ddot_min};
         }
 
         if (mid_result->delta < k_zero_delta) {
