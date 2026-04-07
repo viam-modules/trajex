@@ -763,6 +763,11 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
 
         // Only accept the velocity switching point if it is feasible with respect to the acceleration
         // limit curve.
+        // The leftmost term of the LHS of equation 42 is s_ddot_min
+        // Therefore the fulfillment of the conditional can only make claims about what integration
+        // forwards at minimum acceleration accomplishes. That is why the forwards acceleration value
+        // is to s_ddot_min. At this location in the phase plane it is safe to integrate with only
+        // this value.
         if (opt.epsilon.wrap(s_dot_max_accel_switching_min) >= opt.epsilon.wrap(s_dot_max_vel_switching_min)) {
             return switching_point{
                 .point = {.s = boundary, .s_dot = s_dot_max_vel_switching_min},
@@ -851,6 +856,8 @@ std::optional<eq40_escape_bracket> find_eq40_escape_bracket(path::cursor search_
 
 // Phase 3: Refine the coarse Eq. 40 bracket via bisection and accept only if
 // delta converges to zero (within epsilon).
+// We are able to return a forwards acceleration here since we are integrating forwards by
+// walking on the velocity limit curve which may only be done at minimum acceleration.
 std::optional<switching_point> refine_continuous_velocity_switching_point(path::cursor search_cursor,
                                                                           const eq40_escape_bracket& bracket,
                                                                           const trajectory::options& opt) {
@@ -858,9 +865,12 @@ std::optional<switching_point> refine_continuous_velocity_switching_point(path::
 
     // If the coarse step already landed on the root, no bisection needed.
     if (opt.epsilon.wrap(bracket.after_delta) == opt.epsilon.wrap(k_zero_delta)) {
-        return switching_point{.point = {.s = bracket.after, .s_dot = bracket.after_s_dot_max_vel},
-                               .kind = trajectory::switching_point_kind::k_velocity_escape,
-                               .backward_accel = bracket.after_s_ddot_min};
+        return switching_point{
+            .point = {.s = bracket.after, .s_dot = bracket.after_s_dot_max_vel},
+            .kind = trajectory::switching_point_kind::k_velocity_escape,
+            .backward_accel = bracket.after_s_ddot_min,
+            .forward_accel = bracket.after_s_ddot_min,
+        };
     }
 
     // TODO(RSDK-12767): Eliminate this hardcoded constant.
@@ -873,9 +883,12 @@ std::optional<switching_point> refine_continuous_velocity_switching_point(path::
     for (int iteration = 0; iteration < max_bisection_iterations; ++iteration) {
         // Positions converged -- the sign change is localized within epsilon.
         if (opt.epsilon.wrap(positive_side) == opt.epsilon.wrap(nonpositive_side)) {
-            return switching_point{.point = {.s = nonpositive_side, .s_dot = best_s_dot_max_vel},
-                                   .kind = trajectory::switching_point_kind::k_velocity_escape,
-                                   .backward_accel = best_s_ddot_min};
+            return switching_point{
+                .point = {.s = nonpositive_side, .s_dot = best_s_dot_max_vel},
+                .kind = trajectory::switching_point_kind::k_velocity_escape,
+                .backward_accel = best_s_ddot_min,
+                .forward_accel = best_s_ddot_min,
+            };
         }
 
         const auto mid = midpoint(positive_side, nonpositive_side);
@@ -893,7 +906,8 @@ std::optional<switching_point> refine_continuous_velocity_switching_point(path::
         if (mid_result->delta == k_zero_delta) {
             return switching_point{.point = {.s = mid, .s_dot = mid_result->s_dot_max_vel},
                                    .kind = trajectory::switching_point_kind::k_velocity_escape,
-                                   .backward_accel = mid_result->s_ddot_min};
+                                   .backward_accel = mid_result->s_ddot_min,
+                                   .forward_accel = mid_result->s_ddot_min};
         }
 
         if (mid_result->delta < k_zero_delta) {
