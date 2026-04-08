@@ -704,8 +704,6 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
             const auto q_double_prime_after = segment_after.curvature(boundary);
             const auto accel_before =
                 compute_acceleration_bounds(q_prime_before, q_double_prime_before, arc_velocity{0.0}, opt.max_acceleration, opt.epsilon);
-            const auto accel_after =
-                compute_acceleration_bounds(q_prime_after, q_double_prime_after, arc_velocity{0.0}, opt.max_acceleration, opt.epsilon);
             return switching_point{
                 .point = {.s = boundary, .s_dot = arc_velocity{0.0}},
                 .kind = trajectory::switching_point_kind::k_discontinuous_velocity_limit,
