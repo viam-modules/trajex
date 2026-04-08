@@ -701,7 +701,6 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
         const auto dot = xt::sum(q_prime_before * q_prime_after);
         if (opt.epsilon.wrap(dot()) != opt.epsilon.wrap(1.0)) {
             const auto q_double_prime_before = current_segment.curvature(boundary);
-            const auto q_double_prime_after = segment_after.curvature(boundary);
             const auto accel_before =
                 compute_acceleration_bounds(q_prime_before, q_double_prime_before, arc_velocity{0.0}, opt.max_acceleration, opt.epsilon);
             return switching_point{
@@ -998,17 +997,20 @@ std::optional<switching_point> find_continuous_velocity_switching_point(path::cu
 [[gnu::pure]] switching_point find_switching_point(path::cursor cursor, const trajectory::options& opt) {
     // Always search for both types of switching points
     auto accel_sp = find_acceleration_switching_point(cursor, opt);
-    // The found velocity switching point does not return a forwards acceleration value on purpose.
-    // The reasoning is that integrating forwards from a velocity switching point (should it come prior
-    // in the phase plane to the found acceleration switching point) is that we will either be walking
-    // the limit curve or integrating forwards at max acceleration and remaining below it.
-    // A continuous velocity switching point only allows walking the limit curve. However a discontinuous
-    // switching point can result in walking the limit curve and integrating at an acceleration in this
-    // range [s_ddot_min, s_ddot_max] or remaining below the limit curve while integrating forwards at
-    // s_ddot_max. So as to not duplicate work unneccesarily of choosing what the forwards acceleration
-    // integration value should be in the case that a discontinuous velocity switching point is found, it
-    // is a conscious design decision to return std::nullopt for the forwards integration field of a
-    // found velocity switching point.
+
+    // The found velocity switching point does not return a forwards acceleration value on
+    // purpose. The reasoning is that integrating forwards from a velocity switching point
+    // (should it come prior in the phase plane to the found acceleration switching point)
+    // is that we will either be walking the limit curve or integrating forwards at max
+    // acceleration and remaining below it. A continuous velocity switching point only
+    // allows walking the limit curve. However a discontinuous switching point can result
+    // in walking the limit curve and integrating at an acceleration in this range
+    // [s_ddot_min, s_ddot_max] or remaining below the limit curve while integrating
+    // forwards at s_ddot_max. So as to not duplicate work unneccesarily of choosing what
+    // the forwards acceleration integration value should be in the case that a
+    // discontinuous velocity switching point is found, it is a conscious design decision
+    // to return std::nullopt for the forwards integration field of a found velocity
+    // switching point.
     auto vel_sp = find_velocity_switching_point(cursor, opt);
     assert(vel_sp.forward_accel == std::nullopt);
 
