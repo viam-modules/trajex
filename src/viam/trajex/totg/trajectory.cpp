@@ -659,6 +659,8 @@ struct eq40_result {
 
 // Phase 1: Search segment boundaries for a discontinuous velocity-limit switching point
 // (Kunz & Stilman equations 41-42) with correction 8 applied.
+// A velocity switching point will never contain a forward acceleration value.
+// More information found in the find_switching_point function.
 std::optional<switching_point> find_discontinuous_velocity_switching_point(path::cursor cursor,
                                                                            const trajectory::options& opt,
                                                                            arc_length path_length) {
@@ -707,7 +709,7 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
             return switching_point{
                 .point = {.s = boundary, .s_dot = arc_velocity{0.0}},
                 .kind = trajectory::switching_point_kind::k_discontinuous_velocity_limit,
-                .forward_accel = accel_after.s_ddot_max,
+                .forward_accel = std::nullopt,
                 .backward_accel = accel_before.s_ddot_min,
             };
         }
@@ -763,16 +765,11 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
 
         // Only accept the velocity switching point if it is feasible with respect to the acceleration
         // limit curve.
-        // The leftmost term of the LHS of equation 42 is s_ddot_min
-        // Therefore the fulfillment of the conditional can only make claims about what integration
-        // forwards at minimum acceleration accomplishes. That is why the forwards acceleration value
-        // is to s_ddot_min. At this location in the phase plane it is safe to integrate with only
-        // this value.
         if (opt.epsilon.wrap(s_dot_max_accel_switching_min) >= opt.epsilon.wrap(s_dot_max_vel_switching_min)) {
             return switching_point{
                 .point = {.s = boundary, .s_dot = s_dot_max_vel_switching_min},
                 .kind = trajectory::switching_point_kind::k_discontinuous_velocity_limit,
-                .forward_accel = accel_after.s_ddot_min,
+                .forward_accel = std::nullopt,
                 .backward_accel = accel_before.s_ddot_min,
             };
         }
@@ -856,8 +853,8 @@ std::optional<eq40_escape_bracket> find_eq40_escape_bracket(path::cursor search_
 
 // Phase 3: Refine the coarse Eq. 40 bracket via bisection and accept only if
 // delta converges to zero (within epsilon).
-// We are able to return a forwards acceleration here since we are integrating forwards by
-// walking on the velocity limit curve which may only be done at minimum acceleration.
+// A velocity switching point will never contain a forward acceleration value.
+// More information found in the find_switching_point function.
 std::optional<switching_point> refine_continuous_velocity_switching_point(path::cursor search_cursor,
                                                                           const eq40_escape_bracket& bracket,
                                                                           const trajectory::options& opt) {
@@ -868,7 +865,7 @@ std::optional<switching_point> refine_continuous_velocity_switching_point(path::
         return switching_point{
             .point = {.s = bracket.after, .s_dot = bracket.after_s_dot_max_vel},
             .kind = trajectory::switching_point_kind::k_velocity_escape,
-            .forward_accel = bracket.after_s_ddot_min,
+            .forward_accel = std::nullopt,
             .backward_accel = bracket.after_s_ddot_min,
         };
     }
@@ -886,7 +883,7 @@ std::optional<switching_point> refine_continuous_velocity_switching_point(path::
             return switching_point{
                 .point = {.s = nonpositive_side, .s_dot = best_s_dot_max_vel},
                 .kind = trajectory::switching_point_kind::k_velocity_escape,
-                .forward_accel = best_s_ddot_min,
+                .forward_accel = std::nullopt,
                 .backward_accel = best_s_ddot_min,
             };
         }
@@ -906,7 +903,7 @@ std::optional<switching_point> refine_continuous_velocity_switching_point(path::
         if (mid_result->delta == k_zero_delta) {
             return switching_point{.point = {.s = mid, .s_dot = mid_result->s_dot_max_vel},
                                    .kind = trajectory::switching_point_kind::k_velocity_escape,
-                                   .forward_accel = mid_result->s_ddot_min,
+                                   .forward_accel = std::nullopt,
                                    .backward_accel = mid_result->s_ddot_min};
         }
 
@@ -953,6 +950,8 @@ std::optional<switching_point> find_continuous_velocity_switching_point(path::cu
 //
 // Returns the switching point on velocity curve. If no escape point found, returns end of path.
 // Takes path::cursor by value (cheap copy) to seed forward search from current position.
+// A velocity switching point will never contain a forward acceleration value.
+// More information found in the find_switching_point function.
 [[gnu::pure]] switching_point find_velocity_switching_point(path::cursor cursor, const trajectory::options& opt) {
     const auto path_length = cursor.path().length();
 
@@ -1001,7 +1000,19 @@ std::optional<switching_point> find_continuous_velocity_switching_point(path::cu
 [[gnu::pure]] switching_point find_switching_point(path::cursor cursor, const trajectory::options& opt) {
     // Always search for both types of switching points
     auto accel_sp = find_acceleration_switching_point(cursor, opt);
+    // The found velocity switching point does not return a forwards acceleration value on purpose.
+    // The reasoning is that integrating forwards from a velocity switching point (should it come prior
+    // in the phase plane to the found acceleration switching point) is that we will either be walking
+    // the limit curve or integrating forwards at max acceleration and remaining below it.
+    // A continuous velocity switching point only allows walking the limit curve. However a discontinuous
+    // switching point can result in walking the limit curve and integrating at an acceleration in this
+    // range [s_ddot_min, s_ddot_max] or remaining below the limit curve while integrating forwards at
+    // s_ddot_max. So as to not duplicate work unneccesarily of choosing what the forwards acceleration
+    // integration value should be in the case that a discontinuous velocity switching point is found, it
+    // is a conscious design decision to return std::nullopt for the forwards integration field of a
+    // found velocity switching point.
     auto vel_sp = find_velocity_switching_point(cursor, opt);
+    assert(vel_sp.forward_accel == std::nullopt);
 
     return select_switching_point(accel_sp, vel_sp, opt.epsilon);
 }
@@ -1199,7 +1210,8 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                 const auto [s_ddot_desired, following] = [&]() -> std::pair<arc_acceleration, bool> {
                     if (std::exchange(current_kind, std::nullopt)) {
                         if (where.forward_accel) {
-                            // TODO: is this false correct? What about vel sps?
+                            // A velocity switching point will never contain a forward acceleration value
+                            // More information found in the find_switching_point function.
                             return {*where.forward_accel, false};
                         }
                     }
