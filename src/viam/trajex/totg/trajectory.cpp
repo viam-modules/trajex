@@ -1188,11 +1188,17 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                 if (traj.integration_points_.empty()) {
                     return trajectory::seconds{0.0};
                 }
+
+                // Validate that backwards integration left the switching point as the end of the trajectory.
                 assert(traj.integration_points_.back().s == where.point.s);
                 assert(traj.integration_points_.back().s_dot == where.point.s_dot);
+                assert(std::isnan(static_cast<double>(traj.integration_points_.back().s_ddot)) ||
+                       (where.forward_accel && (*where.forward_accel == traj.integration_points_.back().s_ddot)));
+
                 auto now = traj.integration_points_.back().time;
                 traj.integration_points_.pop_back();
                 traj.duration_ = traj.integration_points_.back().time;
+
                 return now;
             }();
             auto current_point{std::move(where.point)};
@@ -1572,6 +1578,14 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
             // TODO: This might be cleaner if the switching_point struct contained a path cursor.
             auto backwards_cursor = path_cursor;
 
+            if (traj.integration_points_.size() < 2) [[unlikely]] {
+                throw std::runtime_error{"Backwards integration must have a forward trajectory to potentially intersect"};
+            }
+
+            if (where.point.s <= traj.integration_points_.front().s) [[unlikely]] {
+                throw std::runtime_error{"Backwards integration cannot start at or before the beginning of the path"};
+            }
+
             if (where.point.s < traj.integration_points_.back().s) {
                 std::ostringstream oss;
                 oss << "TOTG algorithm error: switching point is behind last forward integration point. "
@@ -1584,24 +1598,40 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                 traj.options_.observer->on_started_backward_integration(traj, {.start = where.point, .kind = where.kind});
             }
 
-            auto current_point{where.point};
-            std::optional<switching_point_kind> current_kind{where.kind};
+            // Record the switching point as our first backward point. If the switching point came with a forward accel,
+            // record that. Otherwise, mark the point with an indeterminate forward acceleration. Forward integration
+            // will figure out the proper acceleration.
+            backwards_points.push_back(
+                {.time = trajectory::seconds{0.0},
+                 .s = where.point.s,
+                 .s_dot = where.point.s_dot,
+                 .s_ddot = where.forward_accel.value_or(arc_acceleration{std::numeric_limits<double>::quiet_NaN()})});
 
             while (true) {
+                const auto& current_point = backwards_points.back();
                 backwards_cursor.seek(current_point.s);
 
-                // Compute the maximum acceleration we are permitted at this phase point and switching point type.
+                // Compute the acceleration we should use at this phase point..
                 const auto s_ddot_desired = [&] {
-                    if (std::exchange(current_kind, std::nullopt)) {
-                        if (where.backward_accel) {
-                            return *where.backward_accel;
-                        }
-                    };
+                    // If this is the first point in the backwards trajectory, then this is a switching point. If it has
+                    // a backward acceleration set, we need to respect it.
+                    if ((backwards_points.size() == 1) && where.backward_accel) {
+                        return *where.backward_accel;
+                    }
 
-                    auto q_prime = backwards_cursor.tangent();
-                    auto q_double_prime = backwards_cursor.curvature();
+                    // If we are standing at the beginning of a segment (possibly because backward integration got
+                    // clamped to it), use the min acceleration in the segment we are integrating into, rather than the
+                    // one we are leaving.
+                    auto current_segment_iter = backwards_cursor.base();
+                    if (current_point.s == (*current_segment_iter).start()) {
+                        assert(current_segment_iter != traj.path().begin());
+                        --current_segment_iter;
+                    }
 
-                    auto [s_ddot_min, _1] = compute_acceleration_bounds(
+                    const auto q_prime = (*current_segment_iter).tangent(current_point.s);
+                    const auto q_double_prime = (*current_segment_iter).curvature(current_point.s);
+
+                    const auto [s_ddot_min, _1] = compute_acceleration_bounds(
                         q_prime, q_double_prime, current_point.s_dot, traj.options_.max_acceleration, traj.options_.epsilon);
 
                     return s_ddot_min;
@@ -1614,10 +1644,16 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                 // TODO(RSDK-12981): There's no guarantee that the candidate we select here by going
                 // backwards with `s_ddot_to_use` as determined at the switching point would then
                 // integrate forwards from the candidate to the switching point.
-                const auto next_point =
+                auto next_point =
                     euler_step(current_point.s, current_point.s_dot, s_ddot_desired, -traj.options_.delta, traj.options_.epsilon);
 
-                // TODO: Do we need to avoid integrating across segment boundaries here too?
+                // Do not integrate across segment boundaries. Behavior can be very different on the other side.
+                if (const auto seg = *backwards_cursor; current_point.s != seg.start() && next_point.s < seg.start()) {
+                    const auto ds_desired = next_point.s - current_point.s;
+                    const auto ds_achieved = seg.start() - current_point.s;
+                    next_point.s = seg.start();
+                    next_point.s_dot = lerp(current_point.s_dot, next_point.s_dot, ds_achieved / ds_desired);
+                }
 
                 // Backward integration must decrease s.
                 if ((next_point.s >= current_point.s)) [[unlikely]] {
@@ -1666,17 +1702,6 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     // makes this kinematically consistent.
 
                     auto& last_forward_point = traj.integration_points_.back();
-
-                    // If the first backward step already crossed the forward trajectory, backwards_points
-                    // is empty and the switching point itself was never recorded. Push it now so the
-                    // splice logic below has something to work with and the switching point ends up in
-                    // integration_points_ where forward integration expects it.
-                    if (backwards_points.empty()) {
-                        backwards_points.push_back({.time = trajectory::seconds{0.0},
-                                                    .s = current_point.s,
-                                                    .s_dot = current_point.s_dot,
-                                                    .s_ddot = s_ddot_desired});
-                    }
 
                     // Access backwards points in reverse order (first backward point is closest to splice).
                     const auto backwards_points_reversed = std::ranges::reverse_view(std::as_const(backwards_points));
@@ -1729,33 +1754,17 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     // Correct the acceleration value at the last forward point.
                     last_forward_point.s_ddot = computed_s_ddot;
 
-                    // In the loop below, we need the time of the last forward point, but we are going
-                    // to be writing to the vector that holds that point. Extract the time to a local variable
-                    // so it doesn't get destroyed out from under us on a reallocation.
-                    auto last_forward_point_time = last_forward_point.time;
-
                     // Reserve space to avoid reallocations during bulk append.
                     traj.integration_points_.reserve(traj.integration_points_.size() + backwards_points.size());
 
                     // Append backward trajectory with corrected timestamps.
                     const auto size = std::ranges::ssize(backwards_points_reversed);
-                    for (std::remove_const_t<decltype(size)> i = 0; i < size; ++i) {
-                        auto corrected = backwards_points_reversed[i];
-
-                        // All points in the backwards array were computed with a uniform delta, but we need to account
-                        // for the computed dt that happened at the splice.
-                        corrected.time = (last_forward_point_time + dt) + (i * traj.options_.delta);
-
-                        // For all but the last point we will be adding, we assume the acceleration that took us
-                        // backward to that point is the acceleration we should use to move forward (erroneously, see
-                        // RSDK-12981 above), so we need to take it from its neighbor. For the last point, we need to
-                        // respect the switching point's forward acceleration if set, since we may not call forward
-                        // integration again if at the end of path.
-                        corrected.s_ddot = (i < size - 1)
-                                               ? backwards_points_reversed[i + 1].s_ddot
-                                               : where.forward_accel.value_or(arc_acceleration{std::numeric_limits<double>::quiet_NaN()});
-
-                        traj.integration_points_.push_back(corrected);
+                    auto total_time = last_forward_point.time + dt;
+                    for (std::remove_const_t<decltype(size)> i = 0; i != size; ++i) {
+                        auto correcting = backwards_points_reversed[i];
+                        correcting.time = total_time;
+                        total_time += backwards_points_reversed[i].time;
+                        traj.integration_points_.push_back(correcting);
                     }
 
                     // Update trajectory duration to reflect new endpoint before invoking callbacks.
@@ -1794,17 +1803,13 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     throw std::runtime_error{"TOTG algorithm error: backward integration exceeded limit curve - trajectory is infeasible"};
                 }
 
-                // The point is feasible, so append it to the backwards trajectory points. Note that the timestamps
-                // are zero-based from the switching point, but will be fixed up when we splice.
-                const trajectory::seconds previous_time =
-                    backwards_points.empty() ? trajectory::seconds{0.0} : backwards_points.back().time;
-                backwards_points.push_back({.time = previous_time + traj.options_.delta,
-                                            .s = current_point.s,
-                                            .s_dot = current_point.s_dot,
-                                            .s_ddot = s_ddot_desired});
+                // The point is feasible, so append it to the backwards trajectory points. Note that the timestamps are
+                // are stored as deltas, not absolutes. The times will be fixed up when we splice.
+                const auto delta_s_dot = current_point.s_dot - next_point.s_dot;
+                const auto dt = (s_ddot_desired != arc_acceleration{0.0}) ? delta_s_dot / s_ddot_desired
+                                                                          : (current_point.s - next_point.s) / current_point.s_dot;
 
-                // Continue backward integration from the point we just added.
-                current_point = next_point;
+                backwards_points.push_back({.time = dt, .s = next_point.s, .s_dot = next_point.s_dot, .s_ddot = s_ddot_desired});
             }
         };
 
