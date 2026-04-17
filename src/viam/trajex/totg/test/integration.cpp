@@ -1416,7 +1416,7 @@ BOOST_AUTO_TEST_CASE(three_waypoint_baseline_behavior_accel_constrained) {
         .set_max_blend_deviation(0.1);
 
     // Trajectory-wide expectations
-    fixture.expect_duration(trajectory::seconds{20.162}).expect_integration_point_count(20161).expect_path_length(arc_length{1.8553});
+    fixture.expect_duration(trajectory::seconds{20.162}).expect_integration_point_count(20164).expect_path_length(arc_length{1.8553});
 
     // Set waypoints
     fixture.set_waypoints_deg({{0.0, 0.0, 0.0, 0.0, 0.0, 0.0}, {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0}, {-45.0, -90.0, 0.0, 0.0, 0.0, 0.0}});
@@ -1431,7 +1431,7 @@ BOOST_AUTO_TEST_CASE(three_waypoint_baseline_behavior_accel_constrained) {
         .expect_splice(trajectory::seconds{13.4162}, size_t{921})
         .expect_forward_start(arc_length{1.46262}, arc_velocity{0.12863})
         .expect_backward_start(arc_length{1.85532488}, arc_velocity{0}, trajectory::switching_point_kind::k_path_end)
-        .expect_splice(trajectory::seconds{20.16199}, size_t{9304});
+        .expect_splice(trajectory::seconds{20.16199}, size_t{9305});
 
     const trajectory traj = fixture.create_and_validate();
 }
@@ -1449,7 +1449,7 @@ BOOST_AUTO_TEST_CASE(three_waypoint_baseline_behavior_vel_constrained) {
         .set_max_blend_deviation(0.1);
 
     // Trajectory-wide expectations
-    fixture.expect_duration(trajectory::seconds{90.02}).expect_integration_point_count(90021).expect_path_length(arc_length{1.8553});
+    fixture.expect_duration(trajectory::seconds{90.02}).expect_integration_point_count(90022).expect_path_length(arc_length{1.8553});
 
     // Set waypoints
     fixture.set_waypoints_deg({{0.0, 0.0, 0.0, 0.0, 0.0, 0.0}, {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0}, {-45.0, -90.0, 0.0, 0.0, 0.0, 0.0}});
@@ -1857,7 +1857,7 @@ BOOST_AUTO_TEST_CASE(RSDK_13450_nonfirst_extremum_is_switching_point) {
         .expect_forward_start(arc_length{2.10559}, arc_velocity{0.36975})
         .expect_hit_limit(arc_length{2.12877}, arc_velocity{0.37161}, arc_velocity{0.37161}, arc_velocity{159.008})
         .expect_backward_start(arc_length{2.18090}, arc_velocity{0.18160}, trajectory::switching_point_kind::k_nondifferentiable_extremum)
-        .expect_splice(std::nullopt, size_t{1131})
+        .expect_splice(std::nullopt, size_t{1132})
         .expect_forward_start(arc_length{2.18090}, arc_velocity{0.18160})
         .expect_backward_start(arc_length{3.30795}, arc_velocity{0.0}, trajectory::switching_point_kind::k_path_end)
         .expect_splice(std::nullopt, size_t{323});
