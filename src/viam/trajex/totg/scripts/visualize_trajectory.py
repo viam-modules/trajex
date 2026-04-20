@@ -363,6 +363,28 @@ def plot_arc_length_vs_time(data, ax):
     ax.grid(True, alpha=0.3)
 
 
+def plot_arc_acceleration(data, ax):
+    """Plot arc acceleration (s_ddot) vs arc length with feasible bounds."""
+    s = np.array([float(x) for x in data['integration_points']['s']])
+    s_ddot = np.array([_f(x) for x in data['integration_points']['s_ddot']])
+
+    ip = data['integration_points']
+    if 's_ddot_min' in ip and 's_ddot_max' in ip:
+        s_ddot_min = np.array([_f(x) for x in ip['s_ddot_min']])
+        s_ddot_max = np.array([_f(x) for x in ip['s_ddot_max']])
+        ax.fill_between(s, s_ddot_min, s_ddot_max, alpha=0.15, color='red', label='Feasible bounds')
+        ax.plot(s, s_ddot_min, 'r-', linewidth=0.5, alpha=0.5)
+        ax.plot(s, s_ddot_max, 'r-', linewidth=0.5, alpha=0.5)
+
+    ax.plot(s, s_ddot, 'b-', linewidth=1, label='s_ddot')
+    ax.axhline(y=0, color='gray', linewidth=0.5, linestyle='--')
+    ax.set_xlabel('Arc Length s')
+    ax.set_ylabel('Arc Acceleration s_ddot')
+    ax.set_title('Arc Acceleration vs Arc Length')
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc='best')
+
+
 def main():
     if len(sys.argv) >= 2:
         filename = sys.argv[1]
@@ -378,8 +400,8 @@ def main():
         data = load_trajectory(sys.stdin)
 
     # Create figure with 3-row layout (taller to give phase plane more vertical space)
-    fig = plt.figure(figsize=(14, 18), num=title)
-    gs = fig.add_gridspec(3, 2)
+    fig = plt.figure(figsize=(14, 22), num=title)
+    gs = fig.add_gridspec(4, 2)
 
     # Row 1: Phase plane spans both columns
     ax_phase = fig.add_subplot(gs[0, :])
@@ -398,6 +420,10 @@ def main():
 
     ax_arc = fig.add_subplot(gs[2, 1])
     plot_arc_length_vs_time(data, ax_arc)
+
+    # Row 4: Arc acceleration spans both columns (same x-axis as phase plane)
+    ax_s_ddot = fig.add_subplot(gs[3, :])
+    plot_arc_acceleration(data, ax_s_ddot)
 
     plt.tight_layout(rect=[0, 0.03, 1, 1])  # Leave space for legend at bottom
     plt.show()

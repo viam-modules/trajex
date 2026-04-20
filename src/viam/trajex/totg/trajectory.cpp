@@ -1105,77 +1105,6 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
         // Constructor initializes trajectory with initial point at rest (0, 0)
         trajectory traj{std::move(p), std::move(opt)};
 
-        // Helper to detect intersection between backward trajectory and forward trajectory in phase plane.
-        // Returns index in forward trajectory where intersection occurs, or nullopt if no intersection.
-        // Intersection means backward point's s_dot exceeds forward trajectory's interpolated s_dot at same s.
-        const auto find_trajectory_intersection = [&](arc_length backward_s, arc_velocity backward_s_dot) -> std::optional<size_t> {
-            const auto& forward_points = traj.integration_points_;
-
-            // Forward trajectory must have at least 2 points by the time we're in backward integration.
-            // If not, the state machine has a serious logic bug (how did we reach backward with no forward points?).
-            if (forward_points.size() < 2) [[unlikely]] {
-                throw std::logic_error{"find_trajectory_intersection called with fewer than 2 forward points - state machine bug"};
-            }
-
-            // Binary search for the pair of forward points that bracket backward_s
-            // We need forward_points[i].s <= backward_s < forward_points[i+1].s
-            auto it =
-                std::upper_bound(forward_points.begin(), forward_points.end(), backward_s, [](arc_length s, const integration_point& pt) {
-                    return s < pt.s;
-                });
-
-            // If backward_s is before first forward point, no intersection possible
-            if (it == forward_points.begin()) {
-                return std::nullopt;
-            }
-
-            // Get bracketing points: pt0.s <= backward_s < pt1.s (or pt1 is end)
-            auto pt1_it = it;
-            auto pt0_it = std::prev(it);
-            const auto& pt0 = *pt0_it;
-
-            // Handle edge case: backward_s is at or past last forward point
-            if (pt1_it == forward_points.end()) {
-                // Backward is beyond forward trajectory - compare with last point
-                if (traj.options_.epsilon.wrap(backward_s_dot) >= traj.options_.epsilon.wrap(pt0.s_dot)) {
-                    // Intersection at last forward point
-                    return std::distance(forward_points.begin(), pt0_it);
-                }
-                return std::nullopt;
-            }
-
-            const auto& pt1 = *pt1_it;
-
-            // Interpolate forward trajectory's s_dot at backward_s using linear interpolation
-            // between pt0 and pt1. Forward uses piecewise constant acceleration, which gives
-            // piecewise linear velocity: s_dot(s) = s_dot0 + (s_ddot0 / s_dot0) * (s - s0)
-            //
-            // But for intersection detection, simple linear interpolation of s_dot is sufficient
-            // and more robust (avoids division by near-zero s_dot).
-            const auto s_range = pt1.s - pt0.s;
-            if (s_range < traj.options_.epsilon) [[unlikely]] {
-                // Points are too close - compare directly with pt0
-                if (traj.options_.epsilon.wrap(backward_s_dot) >= traj.options_.epsilon.wrap(pt0.s_dot)) {
-                    return std::distance(forward_points.begin(), pt0_it);
-                }
-                return std::nullopt;
-            }
-
-            const auto s_offset = backward_s - pt0.s;
-            const auto interpolation_factor = s_offset / s_range;
-            const auto forward_s_dot_interp = lerp(pt0.s_dot, pt1.s_dot, interpolation_factor);
-
-            // Intersection occurs if backward's s_dot exceeds forward's interpolated s_dot.
-            // Backward integration starts with low s_dot and increases as s decreases, eventually
-            // crossing above the forward trajectory's s_dot at the same s position.
-            if (traj.options_.epsilon.wrap(backward_s_dot) >= traj.options_.epsilon.wrap(forward_s_dot_interp)) {
-                // Intersection found - return index of pt0 (start of bracketing interval)
-                return std::distance(forward_points.begin(), pt0_it);
-            }
-
-            return std::nullopt;
-        };
-
         // TODO: If switching_point communicated s via cursor, this would be even cleaner.
         path::cursor path_cursor = traj.path_.create_cursor();
         const auto integrate_forward_from = [&](switching_point where) -> switching_point {
@@ -1555,6 +1484,13 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                             .forward_accel = arc_acceleration{0.0}};
                 }
 
+                // Forward integration must increase s. The identical check earlier in this function
+                // validates the raw step, but subsequent clamping and bisection can move next_point.
+                // This guards against a bug in those operations producing backward or zero progress.
+                if (next_point.s <= current_point.s) [[unlikely]] {
+                    throw std::runtime_error{"TOTG algorithm error: forward integration must increase s"};
+                }
+
                 current_point = next_point;
                 current_time = next_time;
             }
@@ -1597,6 +1533,10 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
             if (traj.options_.observer) {
                 traj.options_.observer->on_started_backward_integration(traj, {.start = where.point, .kind = where.kind});
             }
+
+            // Sliding window for intersection detection. Both backward integration and the window
+            // move monotonically left, so each forward segment is visited at most once.
+            auto forward_window = std::prev(traj.integration_points_.end(), 2);
 
             // Record the switching point as our first backward point. If the switching point came with a forward accel,
             // record that. Otherwise, mark the point with an indeterminate forward acceleration. Forward integration
@@ -1668,32 +1608,83 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                         "forward trajectory - trajectory is infeasible (would require non-zero initial velocity)"};
                 }
 
-                // Check if we have moved far enough backward in the phase plane that we are now at or before
-                // the last forward point. If we have, it is time to find the exact intersection.
+                // Detect intersection between the backward step [next_point, current_point] and the
+                // forward trajectory by sliding the forward window leftward.
                 //
-                // NOTE: We do this check before checking to see if we have hit the velocity limit curve, since
-                // we may be trying to intersect a forward trajectory that was following the curve. If we check
-                // against the limit curve first, we might error out when we should have intersected.
-                std::optional<size_t> intersection_index;
-                if (next_point.s <= traj.integration_points_.back().s) {
-                    intersection_index = find_trajectory_intersection(next_point.s, next_point.s_dot);
+                // We interpolate both trajectories at the overlap endpoints and check whether backward
+                // is above forward at either one. Two sub-cases:
+                //
+                //   Sign change (above at one, below at the other): the two piecewise-linear trajectories
+                //   cross within the overlap. This is the precise case -- we know the crossing is within
+                //   this forward segment.
+                //
+                //   Above at both endpoints: the crossing happened to the RIGHT of the overlap, in the
+                //   gap between forward's last point and the limit curve. Forward bisection converges in
+                //   s but not s_dot, so the last forward point can sit below the limit curve. Backward,
+                //   starting from the limit curve, enters the overlap already above forward.
+                //
+                // Note that "backward above forward at both endpoints" can ONLY arise from the gap. For
+                // backward to be falling (going down-left), s_ddot_min must be positive. That implies
+                // s_ddot_max is also positive (since s_ddot_max >= s_ddot_min), so free forward
+                // integration would be rising. And if forward were following a falling velocity curve,
+                // its tangent acceleration would be negative -- but s_ddot_min > 0 means that tangent
+                // acceleration is infeasible. So backward and forward can never both be falling, and the
+                // above-at-both case is exclusively the gap scenario.
+                //
+                // NOTE: We do this check before checking to see if we have hit the velocity limit curve,
+                // since we may be trying to intersect a forward trajectory that was following the curve.
+                // If we check against the limit curve first, we might error out when we should have
+                // intersected.
+                auto intersection = traj.integration_points_.end();
+                while (next_point.s < std::next(forward_window)->s) {
+                    const auto& fwd_left = *forward_window;
+                    const auto& fwd_right = *std::next(forward_window);
+                    const auto fwd_range = fwd_right.s - fwd_left.s;
+
+                    if (next_point.s >= fwd_left.s) {
+                        // The backward step's left end is within this forward segment. Interpolate
+                        // forward's s_dot at next_point.s and check if backward is above it. This
+                        // catches both genuine crossings (backward rose above forward during this step)
+                        // and the gap case (backward entered the overlap already above forward because
+                        // it descended from the limit curve into the gap left by forward bisection).
+                        const auto fwd_interp = lerp(fwd_left.s_dot, fwd_right.s_dot, (next_point.s - fwd_left.s) / fwd_range);
+                        if (next_point.s_dot > fwd_interp) {
+                            intersection = forward_window;
+                        }
+                        // Hold position regardless: this is the rightmost segment that could overlap
+                        // with the next backward step, so don't slide past it.
+                        break;
+                    }
+
+                    // The backward step extends past this forward segment to the left. Check if
+                    // backward is above forward at the segment's left boundary before sliding past.
+                    if (current_point.s > fwd_left.s) {
+                        const auto bwd_range = current_point.s - next_point.s;
+                        const auto bwd_interp = lerp(next_point.s_dot, current_point.s_dot, (fwd_left.s - next_point.s) / bwd_range);
+                        if (bwd_interp > fwd_left.s_dot) {
+                            intersection = forward_window;
+                            break;
+                        }
+                    }
+
+                    if (forward_window == traj.integration_points_.begin()) {
+                        break;
+                    }
+                    --forward_window;
                 }
 
-                if (intersection_index) {
+                if (intersection != traj.integration_points_.end()) {
                     // Splice the backward trajectory into forward trajectory at the intersection point.
-                    // Note that `next_point` will not be included in the backwards trajectory.
-
-                    // Truncate forward trajectory after intersection point
-
-                    const auto truncate_index = static_cast<ptrdiff_t>(*intersection_index + 1);
-                    const auto truncate_begin = std::next(begin(traj.integration_points_), truncate_index);
+                    // `intersection` pointed to the left endpoint of the intersecting segment; advance
+                    // past it and truncate everything from there.
+                    ++intersection;
 
                     // Only preserve pruned points if observer needs them for event reporting
                     if (traj.options_.observer) {
-                        traj.frosts_.emplace_back(std::make_move_iterator(truncate_begin),
+                        traj.frosts_.emplace_back(std::make_move_iterator(intersection),
                                                   std::make_move_iterator(end(traj.integration_points_)));
                     }
-                    traj.integration_points_.erase(truncate_begin, end(traj.integration_points_));
+                    traj.integration_points_.erase(intersection, end(traj.integration_points_));
 
                     // Fix splice point kinematic consistency
                     //

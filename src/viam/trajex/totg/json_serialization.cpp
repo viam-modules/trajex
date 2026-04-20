@@ -60,6 +60,10 @@ Json::Value serialize_integration_points(const trajectory& traj) {
     Json::Value s_dot_max_acc_values(Json::arrayValue);
     Json::Value s_dot_max_vel_values(Json::arrayValue);
 
+    // Acceleration bounds at each point
+    Json::Value s_ddot_min_values(Json::arrayValue);
+    Json::Value s_ddot_max_values(Json::arrayValue);
+
     // Joint-space data (each element is an array)
     Json::Value configurations(Json::arrayValue);
     Json::Value velocities(Json::arrayValue);
@@ -71,6 +75,8 @@ Json::Value serialize_integration_points(const trajectory& traj) {
     s_ddot_values.resize(static_cast<Json::ArrayIndex>(points.size()));
     s_dot_max_acc_values.resize(static_cast<Json::ArrayIndex>(points.size()));
     s_dot_max_vel_values.resize(static_cast<Json::ArrayIndex>(points.size()));
+    s_ddot_min_values.resize(static_cast<Json::ArrayIndex>(points.size()));
+    s_ddot_max_values.resize(static_cast<Json::ArrayIndex>(points.size()));
     configurations.resize(static_cast<Json::ArrayIndex>(points.size()));
     velocities.resize(static_cast<Json::ArrayIndex>(points.size()));
     accelerations.resize(static_cast<Json::ArrayIndex>(points.size()));
@@ -114,6 +120,11 @@ Json::Value serialize_integration_points(const trajectory& traj) {
             s_dot_max_vel_values[idx] = static_cast<double>(s_dot_max_vel);
         }
 
+        // Acceleration bounds at this phase point
+        const auto accel_bounds = traj.get_acceleration_bounds(cursor, pt.s_dot);
+        s_ddot_min_values[idx] = static_cast<double>(accel_bounds.s_ddot_min);
+        s_ddot_max_values[idx] = static_cast<double>(accel_bounds.s_ddot_max);
+
         configurations[idx] = xarray_to_json_array(q);
 
         // Joint velocity: q̇ = (dq/ds) * (ds/dt) = tangent * s_dot
@@ -135,6 +146,10 @@ Json::Value serialize_integration_points(const trajectory& traj) {
     // Limit curves
     result["s_dot_max_acc"] = std::move(s_dot_max_acc_values);
     result["s_dot_max_vel"] = std::move(s_dot_max_vel_values);
+
+    // Acceleration bounds
+    result["s_ddot_min"] = std::move(s_ddot_min_values);
+    result["s_ddot_max"] = std::move(s_ddot_max_values);
 
     // Joint-space
     result["configuration"] = std::move(configurations);
