@@ -169,6 +169,8 @@ add_library(viam-trajex-totg)
 target_sources(viam-trajex-totg
   PRIVATE
     src/viam/trajex/trajex.cpp
+    src/viam/trajex/jacobian/forward_kinematics.cpp
+    src/viam/trajex/jacobian/jacobian.cpp
     src/viam/trajex/totg/json_serialization.cpp
     src/viam/trajex/totg/observers.cpp
     src/viam/trajex/totg/path.cpp
@@ -186,6 +188,7 @@ target_include_directories(viam-trajex-totg
 
 target_link_libraries(viam-trajex-totg
   PUBLIC
+    Eigen3::Eigen
     xtensor
     xtl
   PRIVATE
@@ -317,6 +320,7 @@ target_sources(viam-trajex-totg-test
     src/viam/trajex/totg/test/uniform_sampler.cpp
     src/viam/trajex/totg/test/integration.cpp
     src/viam/trajex/totg/test/observers.cpp
+    src/viam/trajex/jacobian/test/jacobian.cpp
 )
 
 target_link_libraries(viam-trajex-totg-test
