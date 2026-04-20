@@ -1742,15 +1742,17 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     }
 #endif
 
-                    // Correct the acceleration value at the last forward point.
+                    // Correct the acceleration value at the last forward point, and compute
+                    // the total time we will use as a baseline for fixing up the timestamps of
+                    // the backward points.
                     last_forward_point.s_ddot = computed_s_ddot;
+                    auto total_time = last_forward_point.time + dt;
 
-                    // Reserve space to avoid reallocations during bulk append.
+                    // Reserve space to avoid reallocations during bulk append. Note that this invalidates `last_forward_point`.
                     traj.integration_points_.reserve(traj.integration_points_.size() + backwards_points.size());
 
                     // Append backward trajectory with corrected timestamps.
                     const auto size = std::ranges::ssize(backwards_points_reversed);
-                    auto total_time = last_forward_point.time + dt;
                     for (std::remove_const_t<decltype(size)> i = 0; i != size; ++i) {
                         auto correcting = backwards_points_reversed[i];
                         correcting.time = total_time;
