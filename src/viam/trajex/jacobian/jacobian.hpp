@@ -1,6 +1,10 @@
 #pragma once
 
-#include <Eigen/Core>
+#if __has_include(<xtensor/containers/xarray.hpp>)
+#include <xtensor/containers/xarray.hpp>
+#else
+#include <xtensor/xarray.hpp>
+#endif
 
 #include <viam/trajex/jacobian/forward_kinematics.hpp>
 #include <viam/trajex/jacobian/model.hpp>
@@ -15,6 +19,6 @@ void compute_jacobian(const model& m, data& d);
 
 // Convenience: compute both FK and Jacobian.
 // q must have model.joints.size() elements.
-void compute_jacobian(const model& m, const Eigen::VectorXd& q, data& d);
+void compute_jacobian(const model& m, const xt::xarray<double>& q, data& d);
 
 }  // namespace viam::trajex::jacobian

@@ -3,7 +3,11 @@
 #include <string>
 #include <vector>
 
-#include <Eigen/Core>
+#if __has_include(<xtensor/containers/xarray.hpp>)
+#include <xtensor/containers/xarray.hpp>
+#else
+#include <xtensor/xarray.hpp>
+#endif
 
 namespace viam::trajex::jacobian {
 
@@ -26,17 +30,17 @@ struct model {
 };
 
 struct data {
-    // Base-frame transform to frame i-1 for each joint i. The Jacobian
-    // reads z_{i-1} and p_{i-1} from these.
-    std::vector<Eigen::Matrix4d> joint_transforms;
-    Eigen::Matrix4d end_effector_transform;
-    Eigen::MatrixXd J;  // 6 x N
+    // Base-frame transform to frame i-1 for each joint i (each is 4x4). The
+    // Jacobian reads z_{i-1} and p_{i-1} from these.
+    std::vector<xt::xarray<double>> joint_transforms;
+    xt::xarray<double> end_effector_transform;  // 4x4
+    xt::xarray<double> J;                       // 6 x N
     bool fk_computed = false;
 
     explicit data(const model& m)
-        : joint_transforms(m.joints.size(), Eigen::Matrix4d::Identity())
-        , end_effector_transform(Eigen::Matrix4d::Identity())
-        , J(Eigen::MatrixXd::Zero(6, static_cast<Eigen::Index>(m.joints.size())))
+        : joint_transforms(m.joints.size(), xt::eye<double>(4))
+        , end_effector_transform(xt::eye<double>(4))
+        , J(xt::zeros<double>({std::size_t{6}, m.joints.size()}))
     {}
 };
 
