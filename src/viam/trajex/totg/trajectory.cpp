@@ -243,7 +243,6 @@ struct switching_point_cache {
 struct eq40_result {
     phase_plane_slope delta;
     arc_velocity s_dot_max_vel;
-    arc_acceleration s_ddot_min;
 };
 
 // Try to evaluate Eq. 40 delta:
@@ -270,7 +269,7 @@ struct eq40_result {
     const auto accel_bounds = compute_acceleration_bounds(q_prime, q_double_prime, s_dot_max_vel, opt.max_acceleration, opt.epsilon);
 
     const auto trajectory_slope = accel_bounds.s_ddot_min / s_dot_max_vel;
-    return eq40_result{.delta = trajectory_slope - curve_slope, .s_dot_max_vel = s_dot_max_vel, .s_ddot_min = accel_bounds.s_ddot_min};
+    return eq40_result{.delta = trajectory_slope - curve_slope, .s_dot_max_vel = s_dot_max_vel};
 }
 
 // Performs a single Euler integration step in phase plane (s, s_dot).
@@ -582,9 +581,10 @@ std::optional<switching_point> find_acceleration_switching_point(path::cursor cu
 
         // Apply Kunz & Stilman equation 38
         // A discontinuity of s_dot_max_acc(s) is a switching point if and only if:
-        // Case A: [s_dot_max_acc(s-) < s_dot_max_acc(s+) and (s_ddot_max(s-, s_dot_max_acc(s-))/s_dot_max_acc(s-)) >= d/ds
-        // s_dot_max_acc(s-)] Case B: [s_dot_max_acc(s-) > s_dot_max_acc(s+) and (s_ddot_max(s+, s_dot_max_acc(s+))/s_dot_max_acc(s+)) <=
-        // d/ds s_dot_max_acc(s+)]
+        //  - Case A: [s_dot_max_acc(s-) < s_dot_max_acc(s+) and (s_ddot_max(s-, s_dot_max_acc(s-))/s_dot_max_acc(s-)) >= d/ds
+        //  s_dot_max_acc(s-)]
+        //  - Case B: [s_dot_max_acc(s-) > s_dot_max_acc(s+) and (s_ddot_max(s+, s_dot_max_acc(s+))/s_dot_max_acc(s+)) <= d/ds
+        //  s_dot_max_acc(s+)]
 
         bool is_switching_point = false;
         switching_point sp{.point = {.s = boundary, .s_dot = s_dot_max_acc_switching_min},
@@ -616,8 +616,11 @@ std::optional<switching_point> find_acceleration_switching_point(path::cursor cu
             const auto phase_slope_left = s_ddot_min_bb / s_dot_max_acc_bb;
             is_switching_point = phase_slope_left >= slope_left;
 
+            // TODO(RSDK-12981): This mandate is empirically not required for the step-UP case --
+            // dropping it leaves all tests passing. We retain it for symmetry with Case B (where
+            // the corresponding mandate IS load-bearing) until we understand the asymmetry and
+            // can remove both.
             sp.forward_accel = s_ddot_max_bb;
-            sp.backward_accel = s_ddot_min_bb;
 
         } else if (s_dot_max_acc_after < s_dot_max_acc_before) {
             // Case B: Negative step (limit decreases)
@@ -637,14 +640,16 @@ std::optional<switching_point> find_acceleration_switching_point(path::cursor cu
             const auto slope_right = (s_dot_max_acc_ab - s_dot_max_acc_after) / actual_step_right;
 
             // Evaluate s_ddot_max at (s+, s_dot_max_acc(s+))
-            const auto [s_ddot_min_ab, s_ddot_max_ab] =
+            const auto [_2, s_ddot_max_ab] =
                 compute_acceleration_bounds(q_prime_ab, q_double_prime_ab, s_dot_max_acc_ab, opt.max_acceleration, opt.epsilon);
 
             const auto phase_slope_right = s_ddot_max_ab / s_dot_max_acc_ab;
             is_switching_point = phase_slope_right <= slope_right;
 
+            // TODO(RSDK-12981): This mandate is currently load-bearing -- removing it causes
+            // test failures, unlike the symmetric Case A mandate above which is removable. Both
+            // are kept until we understand the asymmetry and can remove both.
             sp.forward_accel = s_ddot_max_ab;
-            sp.backward_accel = s_ddot_min_ab;
 
         } else {
             // Should s_dot_max_acc_before and s_dot_max_acc_after be within epsilon of each other, then
@@ -735,14 +740,9 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
         // boundaries are C1-continuous; we enforce this explicitly.
         const auto dot = xt::sum(q_prime_before * q_prime_after);
         if (opt.epsilon.wrap(dot()) != opt.epsilon.wrap(1.0)) {
-            const auto q_double_prime_before = current_segment.curvature(boundary);
-            const auto accel_before =
-                compute_acceleration_bounds(q_prime_before, q_double_prime_before, arc_velocity{0.0}, opt.max_acceleration, opt.epsilon);
             return switching_point{
                 .point = {.s = boundary, .s_dot = arc_velocity{0.0}},
                 .kind = trajectory::switching_point_kind::k_discontinuous_velocity_limit,
-                .forward_accel = std::nullopt,
-                .backward_accel = accel_before.s_ddot_min,
             };
         }
 
@@ -801,8 +801,6 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
             return switching_point{
                 .point = {.s = boundary, .s_dot = s_dot_max_vel_switching_min},
                 .kind = trajectory::switching_point_kind::k_discontinuous_velocity_limit,
-                .forward_accel = std::nullopt,
-                .backward_accel = accel_before.s_ddot_min,
             };
         }
     }
@@ -815,7 +813,6 @@ struct eq40_escape_bracket {
     arc_length after;
     phase_plane_slope after_delta;
     arc_velocity after_s_dot_max_vel;
-    arc_acceleration after_s_ddot_min;
 };
 
 // Phase 2: Coarse forward scan for an Eq. 40 sign bracket:
@@ -851,8 +848,7 @@ std::optional<eq40_escape_bracket> find_eq40_escape_bracket(path::cursor search_
                     return eq40_escape_bracket{.before = previous_position,
                                                .after = current_position,
                                                .after_delta = result->delta,
-                                               .after_s_dot_max_vel = result->s_dot_max_vel,
-                                               .after_s_ddot_min = result->s_ddot_min};
+                                               .after_s_dot_max_vel = result->s_dot_max_vel};
                 }
             }
 
@@ -897,8 +893,6 @@ std::optional<switching_point> refine_continuous_velocity_switching_point(path::
         return switching_point{
             .point = {.s = bracket.after, .s_dot = bracket.after_s_dot_max_vel},
             .kind = trajectory::switching_point_kind::k_velocity_escape,
-            .forward_accel = std::nullopt,
-            .backward_accel = bracket.after_s_ddot_min,
         };
     }
 
@@ -907,7 +901,6 @@ std::optional<switching_point> refine_continuous_velocity_switching_point(path::
     auto positive_side = bracket.before;
     auto nonpositive_side = bracket.after;
     auto best_s_dot_max_vel = bracket.after_s_dot_max_vel;
-    auto best_s_ddot_min = bracket.after_s_ddot_min;
 
     for (int iteration = 0; iteration < max_bisection_iterations; ++iteration) {
         // Positions converged -- the sign change is localized within epsilon.
@@ -915,8 +908,6 @@ std::optional<switching_point> refine_continuous_velocity_switching_point(path::
             return switching_point{
                 .point = {.s = nonpositive_side, .s_dot = best_s_dot_max_vel},
                 .kind = trajectory::switching_point_kind::k_velocity_escape,
-                .forward_accel = std::nullopt,
-                .backward_accel = best_s_ddot_min,
             };
         }
 
@@ -933,16 +924,15 @@ std::optional<switching_point> refine_continuous_velocity_switching_point(path::
 
         // Found the root -- return immediately.
         if (mid_result->delta == k_zero_delta) {
-            return switching_point{.point = {.s = mid, .s_dot = mid_result->s_dot_max_vel},
-                                   .kind = trajectory::switching_point_kind::k_velocity_escape,
-                                   .forward_accel = std::nullopt,
-                                   .backward_accel = mid_result->s_ddot_min};
+            return switching_point{
+                .point = {.s = mid, .s_dot = mid_result->s_dot_max_vel},
+                .kind = trajectory::switching_point_kind::k_velocity_escape,
+            };
         }
 
         if (mid_result->delta < k_zero_delta) {
             nonpositive_side = mid;
             best_s_dot_max_vel = mid_result->s_dot_max_vel;
-            best_s_ddot_min = mid_result->s_ddot_min;
         } else {
             positive_side = mid;
         }
@@ -1030,7 +1020,17 @@ switching_point find_switching_point(switching_point_cache* cache, path::cursor 
     if (!cache->next_accel) {
         const auto bound = cache->next_vel ? cache->next_vel->point.s : path_length;
         cache->next_accel = find_acceleration_switching_point(cursor, bound, opt);
-        if (!cache->next_accel && bound == path_length) {
+        if (cache->next_accel) {
+            assert(!cache->next_accel->backward_accel ||
+                   (cache->next_accel->kind == trajectory::switching_point_kind::k_nondifferentiable_extremum &&
+                    cache->next_accel->backward_accel == arc_acceleration{0.0}));
+
+            assert(!cache->next_accel->forward_accel ||
+                   (cache->next_accel->kind == trajectory::switching_point_kind::k_discontinuous_curvature) ||
+                   (cache->next_accel->kind == trajectory::switching_point_kind::k_nondifferentiable_extremum &&
+                    cache->next_accel->forward_accel == arc_acceleration{0.0}));
+
+        } else if (bound == path_length) {
             cache->next_accel = k_path_end_sentinel;
         }
     }
@@ -1054,7 +1054,8 @@ switching_point find_switching_point(switching_point_cache* cache, path::cursor 
         const auto bound = cache->next_accel ? cache->next_accel->point.s : path_length;
         cache->next_vel = find_velocity_switching_point(cursor, bound, opt);
         if (cache->next_vel) {
-            assert(cache->next_vel->forward_accel == std::nullopt);
+            assert(!cache->next_vel->backward_accel);
+            assert(!cache->next_vel->forward_accel);
         } else if (bound == path_length) {
             cache->next_vel = k_path_end_sentinel;
         }
