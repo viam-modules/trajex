@@ -1669,77 +1669,85 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                         "forward trajectory - trajectory is infeasible (would require non-zero initial velocity)"};
                 }
 
-                // The naive Euler step uses s_ddot_min evaluated at the departure point C, but on curved segments the
-                // acceleration field varies with position and velocity. Lock the arc position s from the naive step and
-                // bisect on velocity to find v such that the acceleration connecting (s_P, v) to C equals
-                // s_ddot_min(s_P, v). This makes each backward point forward-reachable from its neighbor within
-                // acceleration bounds.
+                // The naive Euler step uses s_ddot_min evaluated at current_point, but on curved segments the
+                // acceleration field varies with position and velocity. Lock next_point.s from the naive step and
+                // bisect on s_dot to find a velocity such that the acceleration connecting (next_point.s, s_dot)
+                // to current_point equals s_ddot_min(next_point.s, s_dot). This makes each backward point
+                // forward-reachable from its neighbor within acceleration bounds.
                 if (!s_ddot_mandated) {
-                    const auto s_P = next_point.s;
-                    const auto v_C = current_point.s_dot;
-                    const auto ds = current_point.s - s_P;
+                    const auto delta_s = current_point.s - next_point.s;
 
-                    // Compute geometry at s_P once. Since s is locked, q' and q'' are constant across
-                    // all bisection iterations. Use the cursor's natural segment resolution: for a
-                    // forward-traversing particle at s_P, the relevant geometry is the segment it's
-                    // entering (to the right), not the one it's leaving.
-                    backwards_cursor.seek(s_P);
-                    const auto q_prime_at_P = backwards_cursor.tangent();
-                    const auto q_double_prime_at_P = backwards_cursor.curvature();
+                    // Compute geometry at next_point.s once. Since s is locked, q' and q'' are
+                    // constant across all bisection iterations. Use the cursor's natural segment
+                    // resolution: for a forward-traversing particle at next_point.s, the relevant
+                    // geometry is the segment it's entering (to the right), not the one it's
+                    // leaving.
+                    backwards_cursor.seek(next_point.s);
+                    const auto q_prime = backwards_cursor.tangent();
+                    const auto q_double_prime = backwards_cursor.curvature();
 
-                    // Residual h(v) = required_a(v) - s_ddot_min(s_P, v). The root is the velocity
-                    // where kinematic consistency and the acceleration field agree. required_a uses
-                    // the same delta_v / dt factoring as the forward and splice inter-point
-                    // acceleration computations; the only cast is on the residual itself, since the
-                    // bracket-update sign-product arithmetic has no natural strong type.
-                    auto eval_residual = [&](arc_velocity v) {
-                        const auto delta_v = v_C - v;
-                        const auto mean_v = midpoint(v, v_C);
-                        const auto dt = ds / mean_v;
-                        const auto required_a = delta_v / dt;
+                    // Residual residual(s_dot) = required_s_ddot(s_dot) - s_ddot_min(next_point.s,
+                    // s_dot). The root is the velocity where kinematic consistency and the
+                    // acceleration field agree. required_s_ddot uses the same delta_s_dot / dt
+                    // factoring as the forward and splice inter-point acceleration computations.
+                    const auto eval_residual = [&](arc_velocity s_dot) {
+                        const auto delta_s_dot = current_point.s_dot - s_dot;
+                        const auto s_dot_average = midpoint(s_dot, current_point.s_dot);
+                        const auto dt = delta_s / s_dot_average;
+                        const auto required_s_ddot = delta_s_dot / dt;
                         const auto bounds = compute_acceleration_bounds_unchecked(
-                            q_prime_at_P, q_double_prime_at_P, v, traj.options_.max_acceleration, traj.options_.epsilon);
-                        return static_cast<double>(required_a - bounds.s_ddot_min);
+                            q_prime, q_double_prime, s_dot, traj.options_.max_acceleration, traj.options_.epsilon);
+                        return required_s_ddot - bounds.s_ddot_min;
                     };
 
-                    // Establish bracket. The naive velocity and the current velocity are our first two
-                    // probes. Keep them ordered (v_lo < v_hi) for consistent bisection.
-                    auto v_lo = std::min(next_point.s_dot, v_C);
-                    auto v_hi = std::max(next_point.s_dot, v_C);
-                    auto h_lo = eval_residual(v_lo);
-                    auto h_hi = eval_residual(v_hi);
+                    // Two residuals straddle zero iff one is non-negative and the other is non-
+                    // positive. This is the bracket condition for the monotone residual, and the
+                    // same predicate drives the per-iteration update inside the bisection loop.
+                    constexpr auto k_zero_acceleration = arc_acceleration{0.0};
+                    const auto straddles_zero = [k_zero_acceleration](arc_acceleration a, arc_acceleration b) {
+                        return (a <= k_zero_acceleration && b >= k_zero_acceleration) ||
+                               (a >= k_zero_acceleration && b <= k_zero_acceleration);
+                    };
 
-                    // If both endpoints are on the same side, expand the bracket. h(v) is positive
-                    // for small v (required_a dominates) and negative for large v (centripetal term
-                    // in s_ddot_min dominates), so expand in the appropriate direction.
-                    if (h_lo * h_hi > 0) {
-                        if (h_lo > 0) {
-                            v_hi = arc_velocity{static_cast<double>(v_hi) * 2.0};
-                            h_hi = eval_residual(v_hi);
+                    // Establish bracket. The naive velocity and the current velocity are our first
+                    // two probes. Keep them ordered (low, high) for consistent bisection.
+                    auto s_dot_low = std::min(next_point.s_dot, current_point.s_dot);
+                    auto s_dot_high = std::max(next_point.s_dot, current_point.s_dot);
+                    auto residual_low = eval_residual(s_dot_low);
+                    auto residual_high = eval_residual(s_dot_high);
+
+                    // If both endpoints are on the same side, expand the bracket. The residual is
+                    // positive for small s_dot (required_s_ddot dominates) and negative for large
+                    // s_dot (centripetal term in s_ddot_min dominates), so expand in the
+                    // appropriate direction.
+                    if (!straddles_zero(residual_low, residual_high)) {
+                        if (residual_low > k_zero_acceleration) {
+                            s_dot_high *= 2.0;
+                            residual_high = eval_residual(s_dot_high);
                         } else {
-                            v_lo = arc_velocity{1e-10};
-                            h_lo = eval_residual(v_lo);
+                            s_dot_low = arc_velocity{1e-10};
+                            residual_low = eval_residual(s_dot_low);
                         }
                     }
 
-                    if (h_lo * h_hi <= 0) {
-                        for (int iter = 0; iter < 64; ++iter) {
-                            const auto v_mid = midpoint(v_lo, v_hi);
-                            if (v_mid == v_lo || v_mid == v_hi) {
+                    if (straddles_zero(residual_low, residual_high)) {
+                        for (size_t i = 0; i != 64; ++i) {
+                            const auto s_dot_mid = midpoint(s_dot_low, s_dot_high);
+                            if (s_dot_mid == s_dot_low || s_dot_mid == s_dot_high) {
                                 break;
                             }
-                            const auto h_mid = eval_residual(v_mid);
-                            if (h_lo * h_mid <= 0) {
-                                v_hi = v_mid;
-                                h_hi = h_mid;
+                            const auto residual_mid = eval_residual(s_dot_mid);
+                            if (straddles_zero(residual_low, residual_mid)) {
+                                s_dot_high = s_dot_mid;
+                                residual_high = residual_mid;
                             } else {
-                                v_lo = v_mid;
-                                h_lo = h_mid;
+                                s_dot_low = s_dot_mid;
+                                residual_low = residual_mid;
                             }
                         }
 
                         // Take whichever bracket endpoint has the smaller residual.
-                        next_point.s_dot = (std::abs(h_lo) <= std::abs(h_hi)) ? v_lo : v_hi;
+                        next_point.s_dot = (abs(residual_low) <= abs(residual_high)) ? s_dot_low : s_dot_high;
                     }
                     // If no bracket established, keep the naive velocity (graceful degradation).
                 }
