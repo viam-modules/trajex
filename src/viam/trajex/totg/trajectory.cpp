@@ -1152,6 +1152,12 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
         // Constructor initializes trajectory with initial point at rest (0, 0)
         trajectory traj{std::move(p), std::move(opt)};
 
+        // The phase plane's northern wall: the supremum of the velocity MVC over any path. From
+        // the unit-tangent constraint sum_i t_i^2 = 1, max_i |t_i| >= 1/sqrt(N) at every s, which
+        // collapses |q_dot_i| <= v_max_i down to s_dot <= sqrt(N) * max v_max regardless of path
+        // geometry. Used as a runaway detector for the backward solver's bracket expansion.
+        const auto s_dot_upper_bound = std::sqrt(traj.path().dof()) * arc_velocity{xt::amax(traj.options_.max_velocity)()};
+
         // TODO(RSDK-12769): Investigate how integration_cache fits into the future phase_plane and
         // phase_plane::cursor concepts. It isn't either of those things, but its path_cursor will
         // likely become a phase_plane::cursor.
@@ -1162,6 +1168,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
             .path_cursor = traj.path_.create_cursor(),
             .switching_points = {},
         };
+
         const auto integrate_forward_from = [&traj, &cache](switching_point where) -> switching_point {
             // If we have no integration points yet, then this is the beginning of time. Otherwise, we are starting from
             // a switching point from which we started backwards integration. The backwards integration pass has put
@@ -1564,7 +1571,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
         // The `where` parameter is `const` because we intend to return it so that it will feed back
         // into `integrate_forward`. Intentional or accidental alteration would likely result in a bug.
-        auto integrate_backwards_from = [&traj, &cache, backwards_points = trajectory::integration_points{}](
+        auto integrate_backwards_from = [&traj, &cache, &s_dot_upper_bound, backwards_points = trajectory::integration_points{}](
                                             const switching_point where) mutable {
             // Clear out any old state.
             backwards_points.clear();
@@ -1669,19 +1676,20 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                         "forward trajectory - trajectory is infeasible (would require non-zero initial velocity)"};
                 }
 
-                // The naive Euler step uses s_ddot_min evaluated at current_point, but on curved segments the
-                // acceleration field varies with position and velocity. Lock next_point.s from the naive step and
-                // bisect on s_dot to find a velocity such that the acceleration connecting (next_point.s, s_dot)
-                // to current_point equals s_ddot_min(next_point.s, s_dot). This makes each backward point
+                // `Elaboration 1`: The naive Euler step uses s_ddot_min evaluated at current_point, but on curved
+                // segments the acceleration field varies with position and velocity. Lock next_point.s from the naive
+                // step and bisect on s_dot to find a velocity such that the acceleration connecting (next_point.s,
+                // s_dot) to current_point equals s_ddot_min(next_point.s, s_dot). This makes each backward point
                 // forward-reachable from its neighbor within acceleration bounds.
                 if (!s_ddot_mandated) {
                     const auto delta_s = current_point.s - next_point.s;
 
                     // Compute geometry at next_point.s once. Since s is locked, q' and q'' are
-                    // constant across all bisection iterations. Use the cursor's natural segment
-                    // resolution: for a forward-traversing particle at next_point.s, the relevant
-                    // geometry is the segment it's entering (to the right), not the one it's
-                    // leaving.
+                    // constant across all eval_residual calls. Use the cursor's natural segment
+                    // resolution: at next_point.s the relevant geometry is the segment a forward-
+                    // traversing particle is entering, which is the segment forward replay will
+                    // depart from at this point. This is the same land-side semantics applied
+                    // above when computing s_ddot_desired at current_point.
                     backwards_cursor.seek(next_point.s);
                     const auto q_prime = backwards_cursor.tangent();
                     const auto q_double_prime = backwards_cursor.curvature();
@@ -1700,43 +1708,70 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                         return required_s_ddot - bounds.s_ddot_min;
                     };
 
-                    // Two residuals straddle zero iff one is non-negative and the other is non-
-                    // positive. This is the bracket condition for the monotone residual, and the
-                    // same predicate drives the per-iteration update inside the bisection loop.
-                    constexpr auto k_zero_acceleration = arc_acceleration{0.0};
-                    const auto straddles_zero = [k_zero_acceleration](arc_acceleration a, arc_acceleration b) {
-                        return (a <= k_zero_acceleration && b >= k_zero_acceleration) ||
-                               (a >= k_zero_acceleration && b <= k_zero_acceleration);
-                    };
+                    // Fast path: if naive is already within epsilon of the root, skip the bisection.
+                    // At our resolution, residuals within tolerance of zero are indistinguishable from
+                    // zero, and no further refinement could change the answer. Common on same-segment
+                    // steps where s_ddot_min varies little with s_dot (linears, mild curvature).
+                    const auto residual_naive = eval_residual(next_point.s_dot);
+                    if (traj.options_.epsilon.wrap(residual_naive) != traj.options_.epsilon.wrap(arc_acceleration{0.0})) {
+                        // Slow path: solve required_s_ddot(s_dot) = s_ddot_min(next_point.s, s_dot) for
+                        // s_dot. The residual is monotone in s_dot under the acceleration field, so a
+                        // bracketed bisection finds the root.
+                        constexpr auto straddles_zero = [k_zero_acceleration = arc_acceleration{0.0}](arc_acceleration a,
+                                                                                                      arc_acceleration b) {
+                            return (a <= k_zero_acceleration && b >= k_zero_acceleration) ||
+                                   (a >= k_zero_acceleration && b <= k_zero_acceleration);
+                        };
 
-                    // Establish bracket. The naive velocity and the current velocity are our first
-                    // two probes. Keep them ordered (low, high) for consistent bisection.
-                    auto s_dot_low = std::min(next_point.s_dot, current_point.s_dot);
-                    auto s_dot_high = std::max(next_point.s_dot, current_point.s_dot);
-                    auto residual_low = eval_residual(s_dot_low);
-                    auto residual_high = eval_residual(s_dot_high);
+                        // Initial bracket: the realized s_dot delta around naive, padded by epsilon on each
+                        // side. Wide enough to enclose the root in most cases; the expansion loop below
+                        // handles the rest.
+                        auto delta_s_dot = next_point.s_dot - current_point.s_dot;
+                        const auto other_bound = next_point.s_dot - delta_s_dot;
+                        auto s_dot_low =
+                            std::max(arc_velocity{0.0}, std::min(next_point.s_dot, other_bound) - arc_velocity{traj.options_.epsilon});
+                        auto s_dot_high = std::max(next_point.s_dot, other_bound) + arc_velocity{traj.options_.epsilon};
+                        auto residual_low = eval_residual(s_dot_low);
+                        auto residual_high = eval_residual(s_dot_high);
+                        delta_s_dot = abs(delta_s_dot);
 
-                    // If both endpoints are on the same side, expand the bracket. The residual is
-                    // positive for small s_dot (required_s_ddot dominates) and negative for large
-                    // s_dot (centripetal term in s_ddot_min dominates), so expand in the
-                    // appropriate direction.
-                    if (!straddles_zero(residual_low, residual_high)) {
-                        if (residual_low > k_zero_acceleration) {
-                            s_dot_high *= 2.0;
-                            residual_high = eval_residual(s_dot_high);
-                        } else {
-                            s_dot_low = arc_velocity{1e-10};
+                        // Expansion: geometric doubling until the residuals straddle zero. The cap is twice
+                        // the phase plane's northern wall -- one full doubling above the supremum of feasible
+                        // s_dot -- and no kinematic root can live above it, so we throw rather than search further.
+                        const auto s_dot_high_upper_bound = 2 * s_dot_upper_bound;
+                        while (!straddles_zero(residual_low, residual_high)) {
+                            delta_s_dot *= 2;
+                            s_dot_low = std::max(arc_velocity{0.0}, s_dot_low - delta_s_dot);
+                            s_dot_high += delta_s_dot;
+
+                            if (s_dot_high > s_dot_high_upper_bound) [[unlikely]] {
+                                throw std::runtime_error{
+                                    "Backward integration solver bracket expansion exceeded phase plane velocity ceiling"};
+                            }
+
                             residual_low = eval_residual(s_dot_low);
+                            residual_high = eval_residual(s_dot_high);
                         }
-                    }
 
-                    if (straddles_zero(residual_low, residual_high)) {
-                        for (size_t i = 0; i != 64; ++i) {
+                        // Bisection: halve the bracket until the midpoint residual is within epsilon of
+                        // zero (indistinguishable from the root at our resolution) or the bracket pinches
+                        // sub-ULP (the FP-precision floor, ~53 halvings for double -- mechanically bounded,
+                        // so no iteration counter). If the bracket ever loses its zero-straddle,
+                        // monotonicity has broken down -- throw rather than silently wander.
+                        while (true) {
+                            if (!straddles_zero(residual_low, residual_high)) [[unlikely]] {
+                                throw std::runtime_error{"Backward integration solver bracket lost zero-straddle invariant"};
+                            }
                             const auto s_dot_mid = midpoint(s_dot_low, s_dot_high);
-                            if (s_dot_mid == s_dot_low || s_dot_mid == s_dot_high) {
+                            if (s_dot_mid == s_dot_low || s_dot_mid == s_dot_high) [[unlikely]] {
                                 break;
                             }
                             const auto residual_mid = eval_residual(s_dot_mid);
+                            if (traj.options_.epsilon.wrap(residual_mid) == traj.options_.epsilon.wrap(arc_acceleration{0.0})) {
+                                s_dot_low = s_dot_high = s_dot_mid;
+                                residual_low = residual_high = residual_mid;
+                                break;
+                            }
                             if (straddles_zero(residual_low, residual_mid)) {
                                 s_dot_high = s_dot_mid;
                                 residual_high = residual_mid;
@@ -1749,7 +1784,6 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                         // Take whichever bracket endpoint has the smaller residual.
                         next_point.s_dot = (abs(residual_low) <= abs(residual_high)) ? s_dot_low : s_dot_high;
                     }
-                    // If no bracket established, keep the naive velocity (graceful degradation).
                 }
 
                 // Detect intersection between the backward step [next_point, current_point] and the
