@@ -38,6 +38,12 @@ have included in our implementation, along with a few opt-in
 improvements. These are noted in this README as numbered `Divergent
 Behavior`s, and will be similarly identified in the source code.
 
+Finally, some parts of the paper's algorithm sketch presume implicit
+requirements that the paper itself does not articulate, and that the
+reference implementation overlooks. Where we have added machinery to
+satisfy these requirements, we identify it as a numbered
+`Elaboration`, similarly tagged in the source code.
+
 ### Corrections to the Papers:
 
 - **Correction 1: Eqs. 7-9**: The `s` in the numerator of the quantity
@@ -126,3 +132,23 @@ Behavior`s, and will be similarly identified in the source code.
   passes through without stopping. The Case 2 switching-point search
   is extended to handle extrema at C-C boundaries via limit-curve
   continuity checking across the boundary.
+
+### Elaborations:
+
+- **Elaboration 1: Backward integration solve**: The paper's
+  "integrate backward with minimum acceleration" in VI Step 5
+  implicitly requires consecutive backward points to be connected by a
+  forward step that uses exactly `s_ddot_min` -- the most negative
+  path acceleration the joint acceleration constraints permit. On
+  curved segments the path tangent and curvature vary continuously
+  with `s`, so `s_ddot_min` varies with `s` as well, and the local
+  `s_ddot_min` at one backward point differs from the one a forward
+  replay would see at the next; the implicit consistency breaks at
+  every step. (Linear segments avoid this entirely because
+  `s_ddot_min` is constant in `s` along them.) The reference
+  implementation steps with the local `s_ddot_min` and accepts the
+  inconsistency, producing trajectories with acceleration-bound
+  excursions at backward-stepped points. We solve at each backward
+  step for the velocity at which decelerating forward at the local
+  `s_ddot_min` lands exactly on the previous backward point,
+  eliminating the inconsistency at its source.

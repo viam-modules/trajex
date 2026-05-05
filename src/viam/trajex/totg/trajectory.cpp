@@ -125,14 +125,15 @@ struct switching_point_cache {
     return {s_dot_max_accel, s_dot_max_vel};
 }
 
-// Computes the feasible range of path acceleration (s_ddot) given current path velocity (s_dot)
-// and joint acceleration limits. The path acceleration must satisfy joint constraints in all DOF.
-// See Kunz & Stilman equations 22-23.
-[[gnu::pure]] trajectory::acceleration_bounds compute_acceleration_bounds(const xt::xarray<double>& q_prime,
-                                                                          const xt::xarray<double>& q_double_prime,
-                                                                          arc_velocity s_dot,
-                                                                          const xt::xarray<double>& q_ddot_max,
-                                                                          class epsilon epsilon) {
+// Computes the algebraic acceleration bounds without checking feasibility. The acceleration
+// bounds are well-defined and continuous above the limit curve, so this is safe to call at any
+// phase plane position. Used by the backward integration bisection solve, where evaluation above
+// the limit curve is expected during bracket probing.
+[[gnu::pure]] trajectory::acceleration_bounds compute_acceleration_bounds_unchecked(const xt::xarray<double>& q_prime,
+                                                                                    const xt::xarray<double>& q_double_prime,
+                                                                                    arc_velocity s_dot,
+                                                                                    const xt::xarray<double>& q_ddot_max,
+                                                                                    class epsilon epsilon) {
     arc_acceleration s_ddot_min{-std::numeric_limits<double>::infinity()};
     arc_acceleration s_ddot_max{std::numeric_limits<double>::infinity()};
 
@@ -159,6 +160,19 @@ struct switching_point_cache {
         const auto max_from_joint = (q_ddot_max(i) / std::abs(q_prime(i))) - (centripetal_term / q_prime(i));
         s_ddot_max = std::min(s_ddot_max, arc_acceleration{max_from_joint});
     }
+
+    return {s_ddot_min, s_ddot_max};
+}
+
+// Computes the feasible range of path acceleration (s_ddot) given current path velocity (s_dot)
+// and joint acceleration limits. Throws if the bounds are infeasible (above the limit curve).
+// See Kunz & Stilman equations 22-23.
+[[gnu::pure]] trajectory::acceleration_bounds compute_acceleration_bounds(const xt::xarray<double>& q_prime,
+                                                                          const xt::xarray<double>& q_double_prime,
+                                                                          arc_velocity s_dot,
+                                                                          const xt::xarray<double>& q_ddot_max,
+                                                                          class epsilon epsilon) {
+    auto [s_ddot_min, s_ddot_max] = compute_acceleration_bounds_unchecked(q_prime, q_double_prime, s_dot, q_ddot_max, epsilon);
 
     if (epsilon.wrap(s_ddot_min) > epsilon.wrap(s_ddot_max)) [[unlikely]] {
         throw std::runtime_error{"TOTG algorithm error: acceleration bounds are infeasible"};
@@ -229,7 +243,6 @@ struct switching_point_cache {
 struct eq40_result {
     phase_plane_slope delta;
     arc_velocity s_dot_max_vel;
-    arc_acceleration s_ddot_min;
 };
 
 // Try to evaluate Eq. 40 delta:
@@ -256,7 +269,7 @@ struct eq40_result {
     const auto accel_bounds = compute_acceleration_bounds(q_prime, q_double_prime, s_dot_max_vel, opt.max_acceleration, opt.epsilon);
 
     const auto trajectory_slope = accel_bounds.s_ddot_min / s_dot_max_vel;
-    return eq40_result{.delta = trajectory_slope - curve_slope, .s_dot_max_vel = s_dot_max_vel, .s_ddot_min = accel_bounds.s_ddot_min};
+    return eq40_result{.delta = trajectory_slope - curve_slope, .s_dot_max_vel = s_dot_max_vel};
 }
 
 // Performs a single Euler integration step in phase plane (s, s_dot).
@@ -568,9 +581,10 @@ std::optional<switching_point> find_acceleration_switching_point(path::cursor cu
 
         // Apply Kunz & Stilman equation 38
         // A discontinuity of s_dot_max_acc(s) is a switching point if and only if:
-        // Case A: [s_dot_max_acc(s-) < s_dot_max_acc(s+) and (s_ddot_max(s-, s_dot_max_acc(s-))/s_dot_max_acc(s-)) >= d/ds
-        // s_dot_max_acc(s-)] Case B: [s_dot_max_acc(s-) > s_dot_max_acc(s+) and (s_ddot_max(s+, s_dot_max_acc(s+))/s_dot_max_acc(s+)) <=
-        // d/ds s_dot_max_acc(s+)]
+        //  - Case A: [s_dot_max_acc(s-) < s_dot_max_acc(s+) and (s_ddot_max(s-, s_dot_max_acc(s-))/s_dot_max_acc(s-)) >= d/ds
+        //  s_dot_max_acc(s-)]
+        //  - Case B: [s_dot_max_acc(s-) > s_dot_max_acc(s+) and (s_ddot_max(s+, s_dot_max_acc(s+))/s_dot_max_acc(s+)) <= d/ds
+        //  s_dot_max_acc(s+)]
 
         bool is_switching_point = false;
         switching_point sp{.point = {.s = boundary, .s_dot = s_dot_max_acc_switching_min},
@@ -602,8 +616,11 @@ std::optional<switching_point> find_acceleration_switching_point(path::cursor cu
             const auto phase_slope_left = s_ddot_min_bb / s_dot_max_acc_bb;
             is_switching_point = phase_slope_left >= slope_left;
 
+            // TODO(RSDK-12981): This mandate is empirically not required for the step-UP case --
+            // dropping it leaves all tests passing. We retain it for symmetry with Case B (where
+            // the corresponding mandate IS load-bearing) until we understand the asymmetry and
+            // can remove both.
             sp.forward_accel = s_ddot_max_bb;
-            sp.backward_accel = s_ddot_min_bb;
 
         } else if (s_dot_max_acc_after < s_dot_max_acc_before) {
             // Case B: Negative step (limit decreases)
@@ -623,14 +640,16 @@ std::optional<switching_point> find_acceleration_switching_point(path::cursor cu
             const auto slope_right = (s_dot_max_acc_ab - s_dot_max_acc_after) / actual_step_right;
 
             // Evaluate s_ddot_max at (s+, s_dot_max_acc(s+))
-            const auto [s_ddot_min_ab, s_ddot_max_ab] =
+            const auto [_2, s_ddot_max_ab] =
                 compute_acceleration_bounds(q_prime_ab, q_double_prime_ab, s_dot_max_acc_ab, opt.max_acceleration, opt.epsilon);
 
             const auto phase_slope_right = s_ddot_max_ab / s_dot_max_acc_ab;
             is_switching_point = phase_slope_right <= slope_right;
 
+            // TODO(RSDK-12981): This mandate is currently load-bearing -- removing it causes
+            // test failures, unlike the symmetric Case A mandate above which is removable. Both
+            // are kept until we understand the asymmetry and can remove both.
             sp.forward_accel = s_ddot_max_ab;
-            sp.backward_accel = s_ddot_min_ab;
 
         } else {
             // Should s_dot_max_acc_before and s_dot_max_acc_after be within epsilon of each other, then
@@ -721,14 +740,9 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
         // boundaries are C1-continuous; we enforce this explicitly.
         const auto dot = xt::sum(q_prime_before * q_prime_after);
         if (opt.epsilon.wrap(dot()) != opt.epsilon.wrap(1.0)) {
-            const auto q_double_prime_before = current_segment.curvature(boundary);
-            const auto accel_before =
-                compute_acceleration_bounds(q_prime_before, q_double_prime_before, arc_velocity{0.0}, opt.max_acceleration, opt.epsilon);
             return switching_point{
                 .point = {.s = boundary, .s_dot = arc_velocity{0.0}},
                 .kind = trajectory::switching_point_kind::k_discontinuous_velocity_limit,
-                .forward_accel = std::nullopt,
-                .backward_accel = accel_before.s_ddot_min,
             };
         }
 
@@ -787,8 +801,6 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
             return switching_point{
                 .point = {.s = boundary, .s_dot = s_dot_max_vel_switching_min},
                 .kind = trajectory::switching_point_kind::k_discontinuous_velocity_limit,
-                .forward_accel = std::nullopt,
-                .backward_accel = accel_before.s_ddot_min,
             };
         }
     }
@@ -801,7 +813,6 @@ struct eq40_escape_bracket {
     arc_length after;
     phase_plane_slope after_delta;
     arc_velocity after_s_dot_max_vel;
-    arc_acceleration after_s_ddot_min;
 };
 
 // Phase 2: Coarse forward scan for an Eq. 40 sign bracket:
@@ -837,8 +848,7 @@ std::optional<eq40_escape_bracket> find_eq40_escape_bracket(path::cursor search_
                     return eq40_escape_bracket{.before = previous_position,
                                                .after = current_position,
                                                .after_delta = result->delta,
-                                               .after_s_dot_max_vel = result->s_dot_max_vel,
-                                               .after_s_ddot_min = result->s_ddot_min};
+                                               .after_s_dot_max_vel = result->s_dot_max_vel};
                 }
             }
 
@@ -883,8 +893,6 @@ std::optional<switching_point> refine_continuous_velocity_switching_point(path::
         return switching_point{
             .point = {.s = bracket.after, .s_dot = bracket.after_s_dot_max_vel},
             .kind = trajectory::switching_point_kind::k_velocity_escape,
-            .forward_accel = std::nullopt,
-            .backward_accel = bracket.after_s_ddot_min,
         };
     }
 
@@ -893,7 +901,6 @@ std::optional<switching_point> refine_continuous_velocity_switching_point(path::
     auto positive_side = bracket.before;
     auto nonpositive_side = bracket.after;
     auto best_s_dot_max_vel = bracket.after_s_dot_max_vel;
-    auto best_s_ddot_min = bracket.after_s_ddot_min;
 
     for (int iteration = 0; iteration < max_bisection_iterations; ++iteration) {
         // Positions converged -- the sign change is localized within epsilon.
@@ -901,8 +908,6 @@ std::optional<switching_point> refine_continuous_velocity_switching_point(path::
             return switching_point{
                 .point = {.s = nonpositive_side, .s_dot = best_s_dot_max_vel},
                 .kind = trajectory::switching_point_kind::k_velocity_escape,
-                .forward_accel = std::nullopt,
-                .backward_accel = best_s_ddot_min,
             };
         }
 
@@ -919,16 +924,15 @@ std::optional<switching_point> refine_continuous_velocity_switching_point(path::
 
         // Found the root -- return immediately.
         if (mid_result->delta == k_zero_delta) {
-            return switching_point{.point = {.s = mid, .s_dot = mid_result->s_dot_max_vel},
-                                   .kind = trajectory::switching_point_kind::k_velocity_escape,
-                                   .forward_accel = std::nullopt,
-                                   .backward_accel = mid_result->s_ddot_min};
+            return switching_point{
+                .point = {.s = mid, .s_dot = mid_result->s_dot_max_vel},
+                .kind = trajectory::switching_point_kind::k_velocity_escape,
+            };
         }
 
         if (mid_result->delta < k_zero_delta) {
             nonpositive_side = mid;
             best_s_dot_max_vel = mid_result->s_dot_max_vel;
-            best_s_ddot_min = mid_result->s_ddot_min;
         } else {
             positive_side = mid;
         }
@@ -1016,7 +1020,17 @@ switching_point find_switching_point(switching_point_cache* cache, path::cursor 
     if (!cache->next_accel) {
         const auto bound = cache->next_vel ? cache->next_vel->point.s : path_length;
         cache->next_accel = find_acceleration_switching_point(cursor, bound, opt);
-        if (!cache->next_accel && bound == path_length) {
+        if (cache->next_accel) {
+            assert(!cache->next_accel->backward_accel ||
+                   (cache->next_accel->kind == trajectory::switching_point_kind::k_nondifferentiable_extremum &&
+                    cache->next_accel->backward_accel == arc_acceleration{0.0}));
+
+            assert(!cache->next_accel->forward_accel ||
+                   (cache->next_accel->kind == trajectory::switching_point_kind::k_discontinuous_curvature) ||
+                   (cache->next_accel->kind == trajectory::switching_point_kind::k_nondifferentiable_extremum &&
+                    cache->next_accel->forward_accel == arc_acceleration{0.0}));
+
+        } else if (bound == path_length) {
             cache->next_accel = k_path_end_sentinel;
         }
     }
@@ -1040,7 +1054,8 @@ switching_point find_switching_point(switching_point_cache* cache, path::cursor 
         const auto bound = cache->next_accel ? cache->next_accel->point.s : path_length;
         cache->next_vel = find_velocity_switching_point(cursor, bound, opt);
         if (cache->next_vel) {
-            assert(cache->next_vel->forward_accel == std::nullopt);
+            assert(!cache->next_vel->backward_accel);
+            assert(!cache->next_vel->forward_accel);
         } else if (bound == path_length) {
             cache->next_vel = k_path_end_sentinel;
         }
@@ -1137,6 +1152,12 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
         // Constructor initializes trajectory with initial point at rest (0, 0)
         trajectory traj{std::move(p), std::move(opt)};
 
+        // The phase plane's northern wall: the supremum of the velocity MVC over any path. From
+        // the unit-tangent constraint sum_i t_i^2 = 1, max_i |t_i| >= 1/sqrt(N) at every s, which
+        // collapses |q_dot_i| <= v_max_i down to s_dot <= sqrt(N) * max v_max regardless of path
+        // geometry. Used as a runaway detector for the backward solver's bracket expansion.
+        const auto s_dot_upper_bound = std::sqrt(traj.path().dof()) * arc_velocity{xt::amax(traj.options_.max_velocity)()};
+
         // TODO(RSDK-12769): Investigate how integration_cache fits into the future phase_plane and
         // phase_plane::cursor concepts. It isn't either of those things, but its path_cursor will
         // likely become a phase_plane::cursor.
@@ -1147,6 +1168,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
             .path_cursor = traj.path_.create_cursor(),
             .switching_points = {},
         };
+
         const auto integrate_forward_from = [&traj, &cache](switching_point where) -> switching_point {
             // If we have no integration points yet, then this is the beginning of time. Otherwise, we are starting from
             // a switching point from which we started backwards integration. The backwards integration pass has put
@@ -1239,10 +1261,14 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     throw std::runtime_error{"TOTG algorithm error: forward integration must increase s"};
                 }
 
-                // Don't integrate past the end of a segment. Instead, interpolate to the segment end. Otherwise, if we
-                // had a very short subsequent segment, but which contained a more limiting constraint, we might
-                // integrate right over it with a coarse `dt`, and tunnel through the infeasible region.
-                if (const auto segment = *cache.path_cursor; next_point.s > segment.end()) {
+                // Quantize to segment boundaries. If the step crossed or landed within epsilon of
+                // the segment end, snap to it and lerp the velocity proportionally. When the step
+                // fell just short, this is a mild extrapolation (t > 1), which
+                // std::lerp handles correctly. This prevents leaving tiny slivers of segments that
+                // cause geometry mismatches at the boundary. We use a doubled epsilon here because we want
+                // a residual segment to have a length greater than epsilon.
+                const auto double_epsilon = traj.options_.epsilon * 2.0;
+                if (const auto segment = *cache.path_cursor; double_epsilon.wrap(next_point.s) >= double_epsilon.wrap(segment.end())) {
                     const auto delta_s_desired = next_point.s - current_point.s;
                     const auto delta_s_achieved = segment.end() - current_point.s;
                     next_point.s = segment.end();
@@ -1545,7 +1571,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
         // The `where` parameter is `const` because we intend to return it so that it will feed back
         // into `integrate_forward`. Intentional or accidental alteration would likely result in a bug.
-        auto integrate_backwards_from = [&traj, &cache, backwards_points = trajectory::integration_points{}](
+        auto integrate_backwards_from = [&traj, &cache, &s_dot_upper_bound, backwards_points = trajectory::integration_points{}](
                                             const switching_point where) mutable {
             // Clear out any old state.
             backwards_points.clear();
@@ -1593,11 +1619,11 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                 backwards_cursor.seek(current_point.s);
 
                 // Compute the acceleration we should use at this phase point..
-                const auto s_ddot_desired = [&] {
+                const auto [s_ddot_desired, s_ddot_mandated] = [&] {
                     // If this is the first point in the backwards trajectory, then this is a switching point. If it has
                     // a backward acceleration set, we need to respect it.
                     if ((backwards_points.size() == 1) && where.backward_accel) {
-                        return *where.backward_accel;
+                        return std::make_tuple(*where.backward_accel, true);
                     }
 
                     // If we are standing at the beginning of a segment (possibly because backward integration got
@@ -1615,21 +1641,22 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     const auto [s_ddot_min, _1] = compute_acceleration_bounds(
                         q_prime, q_double_prime, current_point.s_dot, traj.options_.max_acceleration, traj.options_.epsilon);
 
-                    return s_ddot_min;
+                    return std::make_tuple(s_ddot_min, false);
                 }();
 
                 // Compute candidate next point via Euler integration with negative dt and minimum acceleration.
                 // Negative dt reverses time direction, reconstructing velocities that led to current point.
                 // With s_ddot_min < 0 and dt < 0, s_dot increases (up) while s decreases (left).
-                //
-                // TODO(RSDK-12981): There's no guarantee that the candidate we select here by going
-                // backwards with `s_ddot_to_use` as determined at the switching point would then
-                // integrate forwards from the candidate to the switching point.
                 auto next_point =
                     euler_step(current_point.s, current_point.s_dot, s_ddot_desired, -traj.options_.delta, traj.options_.epsilon);
 
-                // Do not integrate across segment boundaries. Behavior can be very different on the other side.
-                if (const auto seg = *backwards_cursor; current_point.s != seg.start() && next_point.s < seg.start()) {
+                // Quantize to segment boundaries, just like we do for forward integration. However,
+                // don't snap if we are already at the segment start: the backward cursor's natural
+                // segment resolution keeps us on the segment we just stopped at, so without this
+                // guard the next iteration would re-snap to the same boundary and stall.
+                const auto double_epsilon = traj.options_.epsilon * 2.0;
+                if (const auto seg = *backwards_cursor;
+                    current_point.s != seg.start() && double_epsilon.wrap(next_point.s) <= double_epsilon.wrap(seg.start())) {
                     const auto ds_desired = next_point.s - current_point.s;
                     const auto ds_achieved = seg.start() - current_point.s;
                     next_point.s = seg.start();
@@ -1638,7 +1665,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
                 // Backward integration must decrease s.
                 if ((next_point.s >= current_point.s)) [[unlikely]] {
-                    throw std::runtime_error{"TOTG algorithm error: backward integration must decrease s and not decrease s_dot"};
+                    throw std::runtime_error{"TOTG algorithm error: backward integration must decrease s"};
                 }
 
                 // It should not be possible to integrate backwards to the beginning of time without
@@ -1647,6 +1674,116 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     throw std::runtime_error{
                         "TOTG algorithm error: backward integration reached start without intersecting "
                         "forward trajectory - trajectory is infeasible (would require non-zero initial velocity)"};
+                }
+
+                // `Elaboration 1`: The naive Euler step uses s_ddot_min evaluated at current_point, but on curved
+                // segments the acceleration field varies with position and velocity. Lock next_point.s from the naive
+                // step and bisect on s_dot to find a velocity such that the acceleration connecting (next_point.s,
+                // s_dot) to current_point equals s_ddot_min(next_point.s, s_dot). This makes each backward point
+                // forward-reachable from its neighbor within acceleration bounds.
+                if (!s_ddot_mandated) {
+                    const auto delta_s = current_point.s - next_point.s;
+
+                    // Compute geometry at next_point.s once. Since s is locked, q' and q'' are
+                    // constant across all eval_residual calls. Use the cursor's natural segment
+                    // resolution: at next_point.s the relevant geometry is the segment a forward-
+                    // traversing particle is entering, which is the segment forward replay will
+                    // depart from at this point. This is the same land-side semantics applied
+                    // above when computing s_ddot_desired at current_point.
+                    backwards_cursor.seek(next_point.s);
+                    const auto q_prime = backwards_cursor.tangent();
+                    const auto q_double_prime = backwards_cursor.curvature();
+
+                    // Residual residual(s_dot) = required_s_ddot(s_dot) - s_ddot_min(next_point.s,
+                    // s_dot). The root is the velocity where kinematic consistency and the
+                    // acceleration field agree. required_s_ddot uses the same delta_s_dot / dt
+                    // factoring as the forward and splice inter-point acceleration computations.
+                    const auto eval_residual = [&](arc_velocity s_dot) {
+                        const auto delta_s_dot = current_point.s_dot - s_dot;
+                        const auto s_dot_average = midpoint(s_dot, current_point.s_dot);
+                        const auto dt = delta_s / s_dot_average;
+                        const auto required_s_ddot = delta_s_dot / dt;
+                        const auto bounds = compute_acceleration_bounds_unchecked(
+                            q_prime, q_double_prime, s_dot, traj.options_.max_acceleration, traj.options_.epsilon);
+                        return required_s_ddot - bounds.s_ddot_min;
+                    };
+
+                    // Fast path: if naive is already within epsilon of the root, skip the bisection.
+                    // At our resolution, residuals within tolerance of zero are indistinguishable from
+                    // zero, and no further refinement could change the answer. Common on same-segment
+                    // steps where s_ddot_min varies little with s_dot (linears, mild curvature).
+                    const auto residual_naive = eval_residual(next_point.s_dot);
+                    if (traj.options_.epsilon.wrap(residual_naive) != traj.options_.epsilon.wrap(arc_acceleration{0.0})) {
+                        // Slow path: solve required_s_ddot(s_dot) = s_ddot_min(next_point.s, s_dot) for
+                        // s_dot. The residual is monotone in s_dot under the acceleration field, so a
+                        // bracketed bisection finds the root.
+                        constexpr auto straddles_zero = [k_zero_acceleration = arc_acceleration{0.0}](arc_acceleration a,
+                                                                                                      arc_acceleration b) {
+                            return (a <= k_zero_acceleration && b >= k_zero_acceleration) ||
+                                   (a >= k_zero_acceleration && b <= k_zero_acceleration);
+                        };
+
+                        // Initial bracket: the realized s_dot delta around naive, padded by epsilon on each
+                        // side. Wide enough to enclose the root in most cases; the expansion loop below
+                        // handles the rest.
+                        auto delta_s_dot = next_point.s_dot - current_point.s_dot;
+                        const auto other_bound = next_point.s_dot - delta_s_dot;
+                        auto s_dot_low =
+                            std::max(arc_velocity{0.0}, std::min(next_point.s_dot, other_bound) - arc_velocity{traj.options_.epsilon});
+                        auto s_dot_high = std::max(next_point.s_dot, other_bound) + arc_velocity{traj.options_.epsilon};
+                        auto residual_low = eval_residual(s_dot_low);
+                        auto residual_high = eval_residual(s_dot_high);
+                        delta_s_dot = abs(delta_s_dot);
+
+                        // Expansion: geometric doubling until the residuals straddle zero. The cap is twice
+                        // the phase plane's northern wall -- one full doubling above the supremum of feasible
+                        // s_dot -- and no kinematic root can live above it, so we throw rather than search further.
+                        const auto s_dot_high_upper_bound = 2 * s_dot_upper_bound;
+                        while (!straddles_zero(residual_low, residual_high)) {
+                            delta_s_dot *= 2;
+                            s_dot_low = std::max(arc_velocity{0.0}, s_dot_low - delta_s_dot);
+                            s_dot_high += delta_s_dot;
+
+                            if (s_dot_high > s_dot_high_upper_bound) [[unlikely]] {
+                                throw std::runtime_error{
+                                    "Backward integration solver bracket expansion exceeded phase plane velocity ceiling"};
+                            }
+
+                            residual_low = eval_residual(s_dot_low);
+                            residual_high = eval_residual(s_dot_high);
+                        }
+
+                        // Bisection: halve the bracket until the midpoint residual is within epsilon of
+                        // zero (indistinguishable from the root at our resolution) or the bracket pinches
+                        // sub-ULP (the FP-precision floor, ~53 halvings for double -- mechanically bounded,
+                        // so no iteration counter). If the bracket ever loses its zero-straddle,
+                        // monotonicity has broken down -- throw rather than silently wander.
+                        while (true) {
+                            if (!straddles_zero(residual_low, residual_high)) [[unlikely]] {
+                                throw std::runtime_error{"Backward integration solver bracket lost zero-straddle invariant"};
+                            }
+                            const auto s_dot_mid = midpoint(s_dot_low, s_dot_high);
+                            if (s_dot_mid == s_dot_low || s_dot_mid == s_dot_high) [[unlikely]] {
+                                break;
+                            }
+                            const auto residual_mid = eval_residual(s_dot_mid);
+                            if (traj.options_.epsilon.wrap(residual_mid) == traj.options_.epsilon.wrap(arc_acceleration{0.0})) {
+                                s_dot_low = s_dot_high = s_dot_mid;
+                                residual_low = residual_high = residual_mid;
+                                break;
+                            }
+                            if (straddles_zero(residual_low, residual_mid)) {
+                                s_dot_high = s_dot_mid;
+                                residual_high = residual_mid;
+                            } else {
+                                s_dot_low = s_dot_mid;
+                                residual_low = residual_mid;
+                            }
+                        }
+
+                        // Take whichever bracket endpoint has the smaller residual.
+                        next_point.s_dot = (abs(residual_low) <= abs(residual_high)) ? s_dot_low : s_dot_high;
+                    }
                 }
 
                 // Detect intersection between the backward step [next_point, current_point] and the
@@ -1757,11 +1894,9 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     // Compute the acceleration that connects last_forward_point to first_backward_point.
                     const auto computed_s_ddot = (first_backward_point.s_dot - last_forward_point.s_dot) / dt;
 
-                    // TODO(RSDK-12981): Disabled because backward integration uses the acceleration
-                    // at the switching point rather than an implicit solve, which can place the first
-                    // backward point close enough to the forward trajectory that the splice requires
-                    // infeasible deceleration. Once the backward step uses a fixed-point iteration to
-                    // find the correct acceleration, this check should be re-enabled.
+                    // TODO(RSDK-12981): Disabled because the acceleration required for the simple bridge from the
+                    // penultimate forward to the penultimate backwards point is not guaranteed to fall within the
+                    // feasible acceleration bounds at the penultimate forward point.
 
 #ifdef TRAJEX_VALIDATE_ACCEL_BOUNDS_AT_SPLICE
                     // Query the path geometry at last_forward_point to validate that our computed acceleration is
@@ -1837,13 +1972,18 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     throw std::runtime_error{"TOTG algorithm error: backward integration exceeded limit curve - trajectory is infeasible"};
                 }
 
-                // The point is feasible, so append it to the backwards trajectory points. Note that the timestamps are
-                // are stored as deltas, not absolutes. The times will be fixed up when we splice.
-                const auto delta_s_dot = current_point.s_dot - next_point.s_dot;
-                const auto dt = (s_ddot_desired != arc_acceleration{0.0}) ? delta_s_dot / s_ddot_desired
-                                                                          : (current_point.s - next_point.s) / current_point.s_dot;
+                // The point is feasible. Back-compute the acceleration that kinematically connects
+                // this point to its predecessor, and derive dt from the average velocity over the step.
+                // These are exact for the converged bisection velocity, and a reasonable approximation
+                // when the bisection fell back to the naive velocity. Uses the same delta_v / dt
+                // factoring as the forward inter-point and splice acceleration computations.
+                const auto ds = current_point.s - next_point.s;
+                const auto mean_v = midpoint(next_point.s_dot, current_point.s_dot);
+                const auto dt = ds / mean_v;
+                const auto delta_v = current_point.s_dot - next_point.s_dot;
+                const auto back_computed_s_ddot = delta_v / dt;
 
-                backwards_points.push_back({.time = dt, .s = next_point.s, .s_dot = next_point.s_dot, .s_ddot = s_ddot_desired});
+                backwards_points.push_back({.time = dt, .s = next_point.s, .s_dot = next_point.s_dot, .s_ddot = back_computed_s_ddot});
             }
         };
 
