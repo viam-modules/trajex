@@ -127,12 +127,12 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Minimum required version for each external dependency. An empty value means
 # we do not enforce a minimum; the package's `find_package` (or its
 # `FIND_PACKAGE_ARGS`-mediated equivalent) accepts whatever is found.
-set(VIAM_TRAJEX_BOOST_VERSION_MINIMUM        "")  # TODO: Decide this
-set(VIAM_TRAJEX_EIGEN3_VERSION_MINIMUM       "")  # TODO: Decide this
-set(VIAM_TRAJEX_JSONCPP_VERSION_MINIMUM      "")  # TODO: Decide this
+set(VIAM_TRAJEX_BOOST_VERSION_MINIMUM "")    # TODO: Decide this
+set(VIAM_TRAJEX_EIGEN3_VERSION_MINIMUM "")   # TODO: Decide this
+set(VIAM_TRAJEX_JSONCPP_VERSION_MINIMUM "")  # TODO: Decide this
 set(VIAM_TRAJEX_VIAMCPPSDK_VERSION_MINIMUM 0.31.0)
-set(VIAM_TRAJEX_XTENSOR_VERSION_MINIMUM      0.24.3)
-set(VIAM_TRAJEX_XTL_VERSION_MINIMUM          0.7.2)
+set(VIAM_TRAJEX_XTENSOR_VERSION_MINIMUM 0.24.3)
+set(VIAM_TRAJEX_XTL_VERSION_MINIMUM 0.7.2)
 
 # Each external dependency is acquired here, gated to the feature flag(s) whose
 # enablement requires it. The gates below mirror but do not duplicate the
@@ -358,10 +358,19 @@ if (VIAM_TRAJEX_ENABLE_SERVICE)
       $<INSTALL_INTERFACE:include>
   )
 
+  # NOTE: viam::trajex::totg::tools is linked PUBLIC rather than PRIVATE so that the
+  # `VIAM_TRAJEX_LEGACY_ENABLED` compile definition (set INTERFACE on the legacy library
+  # and re-exported by tools) reaches viam-trajex-service-test. Without it, service's
+  # public header `mlmodel.hpp` would compile with a different `config::generator_sequence`
+  # default initializer in the test TU than in service's own TU -- a latent ODR mismatch
+  # and a source of silently-skipped tests in the LEGACY-conditional branches. Strictly
+  # speaking the service is not "really" a library for external consumers (it exists so
+  # service-exe and service-test can both link it), so the PRIVATE/PUBLIC compile
+  # firewall isn't load-bearing here. Once the legacy generator is removed entirely,
+  # this can revert to PRIVATE.
   target_link_libraries(viam-trajex-service
     PUBLIC
       viam-cpp-sdk::viamsdk
-    PRIVATE
       viam::trajex::totg::tools
   )
 
