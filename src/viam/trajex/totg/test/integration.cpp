@@ -23,10 +23,10 @@
 #include <xtensor/xadapt.hpp>
 #endif
 
-#include <viam/trajex/totg/json_serialization.hpp>
 #include <viam/trajex/totg/observers.hpp>
 #include <viam/trajex/totg/path.hpp>
 #include <viam/trajex/totg/test/test_utils.hpp>
+#include <viam/trajex/totg/tools/json_serialization.hpp>
 #include <viam/trajex/totg/trajectory.hpp>
 #include <viam/trajex/totg/uniform_sampler.hpp>
 #include <viam/trajex/types/angles.hpp>

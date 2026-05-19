@@ -11,8 +11,6 @@
 #include <stdexcept>
 #include <utility>
 
-#include <boost/range/adaptors.hpp>
-
 #include <viam/trajex/totg/path.hpp>
 #include <viam/trajex/totg/private/phase_plane_slope.hpp>
 #include <viam/trajex/totg/uniform_sampler.hpp>

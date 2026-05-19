@@ -182,7 +182,6 @@ add_library(viam-trajex-totg)
 target_sources(viam-trajex-totg
   PRIVATE
     src/viam/trajex/trajex.cpp
-    src/viam/trajex/totg/json_serialization.cpp
     src/viam/trajex/totg/observers.cpp
     src/viam/trajex/totg/path.cpp
     src/viam/trajex/totg/trajectory.cpp
@@ -201,9 +200,6 @@ target_link_libraries(viam-trajex-totg
   PUBLIC
     xtensor
     xtl
-  PRIVATE
-    Boost::boost
-    jsoncpp_lib
 )
 
 apply_wall_werror(viam-trajex-totg)
@@ -211,21 +207,52 @@ apply_wall_werror(viam-trajex-totg)
 add_library(viam::trajex::totg ALIAS viam-trajex-totg)
 
 
+# Tools-legacy library: colinearization helpers in the `viam::trajex::totg::legacy` namespace,
+# used only by the legacy generator code path. Only contains meaningful content if
+# `VIAM_TRAJEX_ENABLE_LEGACY` is truthy.
+
+if (VIAM_TRAJEX_ENABLE_LEGACY)
+  add_library(viam-trajex-totg-tools-legacy)
+
+  target_sources(viam-trajex-totg-tools-legacy
+    PRIVATE
+    src/viam/trajex/totg/tools/legacy.cpp
+  )
+
+  target_include_directories(viam-trajex-totg-tools-legacy
+    PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+    $<INSTALL_INTERFACE:include>
+  )
+
+  target_link_libraries(viam-trajex-totg-tools-legacy
+    PUBLIC
+    Eigen3::Eigen
+  )
+
+  apply_wall_werror(viam-trajex-totg-tools-legacy)
+else()
+  add_library(viam-trajex-totg-tools-legacy INTERFACE)
+endif()
+
+add_library(viam::trajex::totg::tools::legacy ALIAS viam-trajex-totg-tools-legacy)
+
+
 # Support and tooling for new TOTG and legacy
 add_library(viam-trajex-totg-tools)
 
 target_sources(viam-trajex-totg-tools
   PRIVATE
-    src/viam/trajex/totg/tools/legacy.cpp
+    src/viam/trajex/totg/tools/json_serialization.cpp
     src/viam/trajex/totg/tools/planner.cpp
     src/viam/trajex/totg/tools/replay.cpp
 )
 
 target_link_libraries(viam-trajex-totg-tools
   PUBLIC
-    Eigen3::Eigen
     viam::trajex::totg
     viam::trajex::totg::legacy
+    viam::trajex::totg::tools::legacy
   PRIVATE
     jsoncpp_lib
 )
@@ -358,9 +385,15 @@ if (VIAM_TRAJEX_BUILD_TESTS)
   target_sources(viam-trajex-totg-tools-test
     PRIVATE
     src/viam/trajex/totg/tools/test/main.cpp
-    src/viam/trajex/totg/tools/test/legacy.cpp
     src/viam/trajex/totg/tools/test/planner.cpp
   )
+
+  if (VIAM_TRAJEX_ENABLE_LEGACY)
+    target_sources(viam-trajex-totg-tools-test
+      PRIVATE
+      src/viam/trajex/totg/tools/test/legacy.cpp
+    )
+  endif()
 
   target_link_libraries(viam-trajex-totg-tools-test
     PRIVATE
@@ -434,6 +467,7 @@ install(
   TARGETS
   viam-trajex-totg-legacy
   viam-trajex-totg
+  viam-trajex-totg-tools-legacy
   viam-trajex-totg-tools
   viam-trajex-service
   viam-trajex-totg-replay-exe
