@@ -124,12 +124,38 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Dependencies
 #
 
-# In standalone mode, use FetchContent to obtain viam-cpp-sdk, which will
-# transitively provide xtl and xtensor. In FetchContent mode (included by UR),
-# the parent project provides the SDK.
-if(VIAM_TRAJEX_STANDALONE_BUILD)
-  include(FetchContent)
+# Minimum required version for each external dependency. An empty value means
+# we do not enforce a minimum; the package's `find_package` (or its
+# `FIND_PACKAGE_ARGS`-mediated equivalent) accepts whatever is found.
+set(VIAM_TRAJEX_BOOST_VERSION_MINIMUM        "")  # TODO: Decide this
+set(VIAM_TRAJEX_EIGEN3_VERSION_MINIMUM       "")  # TODO: Decide this
+set(VIAM_TRAJEX_JSONCPP_VERSION_MINIMUM      "")  # TODO: Decide this
+set(VIAM_TRAJEX_VIAMCPPSDK_VERSION_MINIMUM 0.31.0)
+set(VIAM_TRAJEX_XTENSOR_VERSION_MINIMUM      0.24.3)
+set(VIAM_TRAJEX_XTL_VERSION_MINIMUM          0.7.2)
 
+# Each external dependency is acquired here, gated to the feature flag(s) whose
+# enablement requires it. The gates below mirror but do not duplicate the
+# target-construction gates further down: each is a single boolean check that
+# documents which flag activates which dependency.
+#
+#   xtl, xtensor   core; FetchContent with system fallback via FIND_PACKAGE_ARGS.
+#                  When ENABLE_SERVICE is on, viam-cpp-sdk is fetched first and its
+#                  own xtl/xtensor declares win by first-wins; our declarations
+#                  below become silent no-ops. Pins match the SDK's current pins so
+#                  the no-SDK path tracks the same versions.
+#   viam-cpp-sdk   ENABLE_SERVICE; FetchContent with find_package fallback.
+#   Eigen3         ENABLE_LEGACY (reference impl + colinearization helpers).
+#   Boost          BUILD_TESTS (boost.test framework, consumed in header-only mode
+#                  via `<boost/test/included/unit_test.hpp>`; we still declare the
+#                  `unit_test_framework` component to validate it is installed.
+#                  The service code path uses Boost headers too but receives them
+#                  transitively through viam-cpp-sdk).
+#   jsoncpp        ENABLE_TOOLS (planner / replay / serialization sources).
+
+include(FetchContent)
+
+if (VIAM_TRAJEX_ENABLE_SERVICE)
   FetchContent_Declare(
     viam-cpp-sdk
     GIT_REPOSITORY https://github.com/viamrobotics/viam-cpp-sdk
@@ -138,23 +164,42 @@ if(VIAM_TRAJEX_STANDALONE_BUILD)
     SYSTEM
     # Delete conflicting protobuf headers
     PATCH_COMMAND find ./src/viam/api -name "*.pb.h" -type f -exec rm {} +
-    FIND_PACKAGE_ARGS
+    FIND_PACKAGE_ARGS ${VIAM_TRAJEX_VIAMCPPSDK_VERSION_MINIMUM} CONFIG COMPONENTS viamsdk
   )
-
   FetchContent_MakeAvailable(viam-cpp-sdk)
 endif()
 
-find_package(Eigen3 CONFIG REQUIRED)
-find_package(xtl CONFIG REQUIRED)
-find_package(xtensor CONFIG REQUIRED)
+FetchContent_Declare(
+  xtl
+  GIT_REPOSITORY https://github.com/xtensor-stack/xtl.git
+  GIT_TAG        e0f00666d90086bb245ae73abb6123d0e2c1b30b # 0.7.2
+  FIND_PACKAGE_ARGS ${VIAM_TRAJEX_XTL_VERSION_MINIMUM} CONFIG
+)
 
-find_package(Boost CONFIG REQUIRED COMPONENTS headers)
+FetchContent_Declare(
+  xtensor
+  GIT_REPOSITORY https://github.com/xtensor-stack/xtensor
+  GIT_TAG        9e8662ddad7fcd1a96969b96bf8955e59cf44978 # 0.24.3
+  FIND_PACKAGE_ARGS ${VIAM_TRAJEX_XTENSOR_VERSION_MINIMUM} CONFIG
+)
 
-# jsoncppConfig.cmake doesn't guard against re-import, so a second
-# find_package creates a duplicate imported target and fails. Guard it
-# for the FetchContent case where the parent already found jsoncpp.
-if(NOT TARGET jsoncpp_lib)
-  find_package(jsoncpp CONFIG REQUIRED)
+FetchContent_MakeAvailable(xtl xtensor)
+
+if (VIAM_TRAJEX_ENABLE_LEGACY)
+  find_package(Eigen3 ${VIAM_TRAJEX_EIGEN3_VERSION_MINIMUM} CONFIG REQUIRED)
+endif()
+
+if (VIAM_TRAJEX_BUILD_TESTS)
+  find_package(Boost ${VIAM_TRAJEX_BOOST_VERSION_MINIMUM} CONFIG REQUIRED COMPONENTS unit_test_framework)
+endif()
+
+if (VIAM_TRAJEX_ENABLE_TOOLS)
+  # jsoncppConfig.cmake doesn't guard against re-import, so a second find_package
+  # creates a duplicate imported target and fails. Guard for the FetchContent case
+  # where a parent project already provided it.
+  if (NOT TARGET jsoncpp_lib)
+    find_package(jsoncpp ${VIAM_TRAJEX_JSONCPP_VERSION_MINIMUM} CONFIG REQUIRED)
+  endif()
 endif()
 
 
@@ -298,10 +343,6 @@ add_library(viam::trajex::totg::tools ALIAS viam-trajex-totg-tools)
 if (VIAM_TRAJEX_ENABLE_SERVICE)
   if (NOT VIAM_TRAJEX_ENABLE_TOOLS)
     message(FATAL_ERROR "VIAM_TRAJEX_ENABLE_SERVICE=ON requires VIAM_TRAJEX_ENABLE_TOOLS=ON")
-  endif()
-
-  if(NOT TARGET viam-cpp-sdk::viamsdk)
-    find_package(viam-cpp-sdk CONFIG REQUIRED viamsdk)
   endif()
 
   add_library(viam-trajex-service)
