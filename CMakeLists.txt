@@ -9,12 +9,15 @@ project(trajex VERSION 0.1.0
 # Detect if we're building trajex as a standalone module
 # vs being included via FetchContent by universal-robots
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-  set(TRAJEX_STANDALONE_BUILD ON)
+  set(VIAM_TRAJEX_STANDALONE_BUILD ON)
   message(STATUS "Trajex: Standalone build mode")
 else()
-  set(TRAJEX_STANDALONE_BUILD OFF)
+  set(VIAM_TRAJEX_STANDALONE_BUILD OFF)
   message(STATUS "Trajex: FetchContent mode (included by parent project)")
 endif()
+
+option(VIAM_TRAJEX_BUILD_TESTS "Build the Trajex test programs" ${VIAM_TRAJEX_STANDALONE_BUILD})
+option(VIAM_TRAJEX_USE_WALL_WERROR "Build with -Wall and -Werror flags" ${VIAM_TRAJEX_STANDALONE_BUILD})
 
 # Set minimum macOS deployment target to 14.0 (Sonoma) for mature
 # C++20 support in Xcode 15's libc++.
@@ -23,7 +26,7 @@ if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
 endif()
 
 # Configure RPATH for relocatable installs (standalone builds only)
-if(TRAJEX_STANDALONE_BUILD)
+if(VIAM_TRAJEX_STANDALONE_BUILD)
   set(CMAKE_BUILD_WITH_INSTALL_RPATH false)
   set(CMAKE_BUILD_RPATH_USE_ORIGIN true)
   set(CMAKE_INSTALL_RPATH_USE_LINK_PATH true)
@@ -48,8 +51,6 @@ if(TRAJEX_STANDALONE_BUILD)
     endif()
   endif()
 endif()
-
-option(VIAM_TRAJEX_USE_WALL_WERROR "Build with -Wall and -Werror flags" ON)
 
 function(apply_wall_werror target_name)
   if (NOT VIAM_TRAJEX_USE_WALL_WERROR)
@@ -101,7 +102,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # In standalone mode, use FetchContent to obtain viam-cpp-sdk, which will
 # transitively provide xtl and xtensor. In FetchContent mode (included by UR),
 # the parent project provides the SDK.
-if(TRAJEX_STANDALONE_BUILD)
+if(VIAM_TRAJEX_STANDALONE_BUILD)
   include(FetchContent)
 
   FetchContent_Declare(
@@ -299,12 +300,14 @@ apply_wall_werror(viam-trajex-totg-replay-exe)
 # Tests
 #
 
-enable_testing()
+if (VIAM_TRAJEX_BUILD_TESTS)
 
-add_executable(viam-trajex-totg-test)
+  enable_testing()
 
-target_sources(viam-trajex-totg-test
-  PRIVATE
+  add_executable(viam-trajex-totg-test)
+
+  target_sources(viam-trajex-totg-test
+    PRIVATE
     src/viam/trajex/totg/test/main.cpp
     src/viam/trajex/totg/test/test_utils.cpp
     src/viam/trajex/totg/test/waypoint_accumulator.cpp
@@ -317,95 +320,96 @@ target_sources(viam-trajex-totg-test
     src/viam/trajex/totg/test/uniform_sampler.cpp
     src/viam/trajex/totg/test/integration.cpp
     src/viam/trajex/totg/test/observers.cpp
-)
+  )
 
-target_link_libraries(viam-trajex-totg-test
-  PRIVATE
+  target_link_libraries(viam-trajex-totg-test
+    PRIVATE
     viam::trajex::totg::tools
     Boost::boost
     jsoncpp_lib
-)
+  )
 
-target_compile_definitions(viam-trajex-totg-test PRIVATE
+  target_compile_definitions(viam-trajex-totg-test PRIVATE
     VIAM_TRAJEX_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/viam/trajex/totg/test/data"
-)
+  )
 
-apply_wall_werror(viam-trajex-totg-test)
+  apply_wall_werror(viam-trajex-totg-test)
 
-add_test(
-  NAME viam-trajex-totg-test
-  COMMAND viam-trajex-totg-test
-)
+  add_test(
+    NAME viam-trajex-totg-test
+    COMMAND viam-trajex-totg-test
+  )
 
 
-add_executable(viam-trajex-totg-tools-test)
+  add_executable(viam-trajex-totg-tools-test)
 
-target_sources(viam-trajex-totg-tools-test
-  PRIVATE
+  target_sources(viam-trajex-totg-tools-test
+    PRIVATE
     src/viam/trajex/totg/tools/test/main.cpp
     src/viam/trajex/totg/tools/test/legacy.cpp
     src/viam/trajex/totg/tools/test/planner.cpp
-)
+  )
 
-target_link_libraries(viam-trajex-totg-tools-test
-  PRIVATE
+  target_link_libraries(viam-trajex-totg-tools-test
+    PRIVATE
     viam::trajex::totg::tools
     Boost::boost
-)
+  )
 
-apply_wall_werror(viam-trajex-totg-tools-test)
+  apply_wall_werror(viam-trajex-totg-tools-test)
 
-add_test(
-  NAME viam-trajex-totg-tools-test
-  COMMAND viam-trajex-totg-tools-test
-)
+  add_test(
+    NAME viam-trajex-totg-tools-test
+    COMMAND viam-trajex-totg-tools-test
+  )
 
 
-add_executable(viam-trajex-types-test)
+  add_executable(viam-trajex-types-test)
 
-target_sources(viam-trajex-types-test
-  PRIVATE
+  target_sources(viam-trajex-types-test
+    PRIVATE
     src/viam/trajex/types/test.cpp
-)
+  )
 
-target_include_directories(viam-trajex-types-test
-  PRIVATE
+  target_include_directories(viam-trajex-types-test
+    PRIVATE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
-)
+  )
 
-target_link_libraries(viam-trajex-types-test
-  PRIVATE
+  target_link_libraries(viam-trajex-types-test
+    PRIVATE
     Boost::boost
-)
+  )
 
-apply_wall_werror(viam-trajex-types-test)
+  apply_wall_werror(viam-trajex-types-test)
 
-add_test(
-  NAME viam-trajex-types-test
-  COMMAND viam-trajex-types-test
-)
+  add_test(
+    NAME viam-trajex-types-test
+    COMMAND viam-trajex-types-test
+  )
 
 
-add_executable(viam-trajex-service-test)
+  add_executable(viam-trajex-service-test)
 
-target_sources(viam-trajex-service-test
-  PRIVATE
+  target_sources(viam-trajex-service-test
+    PRIVATE
     src/viam/trajex/service/test/mlmodel.cpp
-)
+  )
 
-target_link_libraries(viam-trajex-service-test
-  PRIVATE
+  target_link_libraries(viam-trajex-service-test
+    PRIVATE
     viam::trajex::service
     Boost::boost
-)
+  )
 
-apply_wall_werror(viam-trajex-service-test)
+  apply_wall_werror(viam-trajex-service-test)
 
-add_test(
-  NAME viam-trajex-service-test
-  COMMAND viam-trajex-service-test
-)
+  add_test(
+    NAME viam-trajex-service-test
+    COMMAND viam-trajex-service-test
+  )
 
+endif()
 
 #
 # Installation
@@ -426,7 +430,7 @@ install(
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
 )
 
-if(TRAJEX_STANDALONE_BUILD)
+if(VIAM_TRAJEX_STANDALONE_BUILD)
   # Install service executable (standalone only)
   install(
     TARGETS
