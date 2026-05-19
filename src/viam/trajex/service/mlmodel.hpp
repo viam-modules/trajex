@@ -26,7 +26,11 @@ class mlmodel final : public ::viam::sdk::MLModelService, public ::viam::sdk::Re
 
    private:
     struct config {
+#if defined(VIAM_TRAJEX_LEGACY_ENABLED)
         std::vector<std::string> generator_sequence = {"totg", "legacy"};
+#else
+        std::vector<std::string> generator_sequence = {"totg"};
+#endif
         bool segment_for_trajex = false;
     };
 

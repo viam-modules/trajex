@@ -9,8 +9,6 @@
 #include <string_view>
 #include <vector>
 
-#include <Eigen/Dense>
-
 #include <boost/variant/get.hpp>
 
 #if __has_include(<xtensor/containers/xarray.hpp>)
@@ -21,11 +19,15 @@
 
 #include <viam/sdk/log/logging.hpp>
 
-#include <viam/trajex/totg/tools/legacy.hpp>
 #include <viam/trajex/totg/tools/planner.hpp>
 #include <viam/trajex/totg/uniform_sampler.hpp>
 #include <viam/trajex/totg/waypoint_utils.hpp>
 #include <viam/trajex/types/hertz.hpp>
+
+#if defined(VIAM_TRAJEX_LEGACY_ENABLED)
+#include <Eigen/Dense>
+#include <viam/trajex/totg/tools/legacy.hpp>
+#endif
 
 namespace viam::trajex::service {
 
@@ -243,6 +245,7 @@ std::shared_ptr<mlmodel::named_tensor_views> mlmodel::infer(const named_tensor_v
                 }
             });
         } else if (algo == "legacy") {
+#if defined(VIAM_TRAJEX_LEGACY_ENABLED)
             planner.with_legacy(
                 [&, dof](const auto&, service_result& acc, const totg::waypoint_accumulator&, Path&&, Trajectory&& traj, auto) {
                     acc.dof = dof;
@@ -258,14 +261,19 @@ std::shared_ptr<mlmodel::named_tensor_views> mlmodel::infer(const named_tensor_v
                         }
                     });
                 });
+#else
+            throw std::invalid_argument("Legacy TOTG algorithm unsupported in this build");
+#endif
         }
     }
 
     // Execute the planner
-    auto planner_result = planner.execute([](const auto& p, auto totg_out, auto legacy) -> std::optional<service_result> {
+    auto planner_result = planner.execute([](const auto& p, auto totg_out, auto legacy [[maybe_unused]]) -> std::optional<service_result> {
         if (totg_out.receiver) {
             return std::move(totg_out.receiver);
         }
+
+#if defined(VIAM_TRAJEX_LEGACY_ENABLED)
         if (legacy.receiver) {
             return std::move(legacy.receiver);
         }
@@ -274,6 +282,8 @@ std::shared_ptr<mlmodel::named_tensor_views> mlmodel::infer(const named_tensor_v
         if (legacy.error) {
             std::rethrow_exception(legacy.error);
         }
+#endif
+
         if (totg_out.error) {
             std::rethrow_exception(totg_out.error);
         }

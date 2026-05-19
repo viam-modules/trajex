@@ -23,8 +23,6 @@
 #include <xtensor/xadapt.hpp>
 #endif
 
-#include <Eigen/Core>
-
 #include <viam/trajex/totg/json_serialization.hpp>
 #include <viam/trajex/totg/observers.hpp>
 #include <viam/trajex/totg/path.hpp>
@@ -36,9 +34,12 @@
 #include <viam/trajex/types/arc_operations.hpp>
 #include <viam/trajex/types/hertz.hpp>
 
-// Legacy trajectory generator
+#if defined(VIAM_TRAJEX_LEGACY_ENABLED)
+#include <Eigen/Core>
+
 #include <third_party/trajectories/Path.h>
 #include <third_party/trajectories/Trajectory.h>
+#endif
 
 #include <viam/trajex/totg/tools/replay.hpp>
 
@@ -615,7 +616,8 @@ struct trajectory_test_fixture {
         return *this;
     }
 
-    void try_legacy_comparison(const xt::xarray<double>& waypoints) {
+    void try_legacy_comparison(const xt::xarray<double>& waypoints [[maybe_unused]]) {
+#if defined(VIAM_TRAJEX_LEGACY_ENABLED)
         try {
             // Convert waypoints to legacy format (std::list<Eigen::VectorXd>)
             std::list<Eigen::VectorXd> legacy_waypoints;
@@ -652,6 +654,7 @@ struct trajectory_test_fixture {
         } catch (const std::exception& e) {
             std::cout << "[LEGACY] FAILED: " << e.what() << "\n";
         }
+#endif
     }
 
     void validate_against_legacy(const trajectory& traj) {

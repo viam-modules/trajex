@@ -17,6 +17,7 @@ else()
 endif()
 
 option(VIAM_TRAJEX_BUILD_TESTS "Build the Trajex test programs" ${VIAM_TRAJEX_STANDALONE_BUILD})
+option(VIAM_TRAJEX_ENABLE_LEGACY "Enable the reference implementation" ON)
 option(VIAM_TRAJEX_USE_WALL_WERROR "Build with -Wall and -Werror flags" ${VIAM_TRAJEX_STANDALONE_BUILD})
 
 # Set minimum macOS deployment target to 14.0 (Sonoma) for mature
@@ -137,29 +138,40 @@ endif()
 # Library targets
 #
 
-# Legacy library: reference implementation from third_party/trajectories submodule
-add_library(viam-trajex-totg-legacy)
+# Legacy library: reference implementation from third_party/trajectories submodule. Only contains
+# meaningful content if `VIAM_TRAJEX_ENABLE_LEGACY` is truthy.
 
-set_target_properties(viam-trajex-totg-legacy PROPERTIES SYSTEM TRUE)
+if (VIAM_TRAJEX_ENABLE_LEGACY)
+  add_library(viam-trajex-totg-legacy)
 
-target_sources(viam-trajex-totg-legacy
-  PRIVATE
+  set_target_properties(viam-trajex-totg-legacy PROPERTIES SYSTEM TRUE)
+
+  target_sources(viam-trajex-totg-legacy
+    PRIVATE
     src/third_party/trajectories/Trajectory.cpp
     src/third_party/trajectories/Path.cpp
-)
+  )
 
-target_include_directories(viam-trajex-totg-legacy
-  INTERFACE
+  target_compile_definitions(viam-trajex-totg-legacy
+    INTERFACE
+    VIAM_TRAJEX_LEGACY_ENABLED=1
+  )
+
+  target_include_directories(viam-trajex-totg-legacy
+    INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
     $<INSTALL_INTERFACE:include>
-)
+  )
 
-target_precompile_headers(viam-trajex-totg-legacy PRIVATE <assert.h>)
+  target_precompile_headers(viam-trajex-totg-legacy PRIVATE <assert.h>)
 
-target_link_libraries(viam-trajex-totg-legacy
-  PUBLIC
+  target_link_libraries(viam-trajex-totg-legacy
+    PUBLIC
     Eigen3::Eigen
-)
+  )
+else()
+  add_library(viam-trajex-totg-legacy INTERFACE)
+endif()
 
 add_library(viam::trajex::totg::legacy ALIAS viam-trajex-totg-legacy)
 
