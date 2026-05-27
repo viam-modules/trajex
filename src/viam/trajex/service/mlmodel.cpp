@@ -120,12 +120,11 @@ std::vector<std::string> mlmodel::validate(const vsdk::ResourceConfig& cfg) {
 }
 
 // NOLINTNEXTLINE(performance-unnecessary-value-param): Signature fixed by ModelRegistration factory.
-mlmodel::mlmodel(vsdk::Dependencies deps, vsdk::ResourceConfig config) : MLModelService(config.name()) {
-    reconfigure(deps, config);
-}
+mlmodel::mlmodel(vsdk::Dependencies /*deps*/, vsdk::ResourceConfig config)
+    : MLModelService(config.name()), config_(parse_config(config)) {}
 
-void mlmodel::reconfigure(const vsdk::Dependencies&, const vsdk::ResourceConfig& cfg) {
-    config new_config;
+mlmodel::config mlmodel::parse_config(const vsdk::ResourceConfig& cfg) {
+    config out;
 
     // Parse generator_sequence
     auto seq_attr = cfg.attributes().find("generator_sequence");
@@ -134,7 +133,7 @@ void mlmodel::reconfigure(const vsdk::Dependencies&, const vsdk::ResourceConfig&
         if (!arr || arr->empty()) {
             throw std::invalid_argument("generator_sequence must be a non-empty array of strings");
         }
-        new_config.generator_sequence.clear();
+        out.generator_sequence.clear();
         for (const auto& elem : *arr) {
             const auto* str = elem.get<std::string>();
             if (!str) {
@@ -143,7 +142,7 @@ void mlmodel::reconfigure(const vsdk::Dependencies&, const vsdk::ResourceConfig&
             if (*str != "totg" && *str != "legacy") {
                 throw std::invalid_argument("generator_sequence: unknown algorithm '" + *str + "' (expected 'totg' or 'legacy')");
             }
-            new_config.generator_sequence.push_back(*str);
+            out.generator_sequence.push_back(*str);
         }
     }
 
@@ -154,21 +153,13 @@ void mlmodel::reconfigure(const vsdk::Dependencies&, const vsdk::ResourceConfig&
         if (!val) {
             throw std::invalid_argument("segment_for_trajex must be a boolean");
         }
-        new_config.segment_for_trajex = *val;
+        out.segment_for_trajex = *val;
     }
 
-    const std::unique_lock lock{config_mutex_};
-    config_ = std::move(new_config);
+    return out;
 }
 
 std::shared_ptr<mlmodel::named_tensor_views> mlmodel::infer(const named_tensor_views& inputs, const vsdk::ProtoStruct&) {
-    // Snapshot config under the read lock, then release
-    config local_config;
-    {
-        const std::shared_lock lock{config_mutex_};
-        local_config = config_;
-    }
-
     // Parse inputs
     const auto& waypoints_view = get_double_tensor(inputs, "waypoints_rads");
     if (waypoints_view.dimension() != 2) {
@@ -211,7 +202,7 @@ std::shared_ptr<mlmodel::named_tensor_views> mlmodel::infer(const named_tensor_v
         .acceleration_limits = std::move(acceleration_limits),
         .path_blend_tolerance = path_tolerance,
         .colinearization_ratio = colinearization_ratio,
-        .segment_totg = local_config.segment_for_trajex,
+        .segment_totg = config_.segment_for_trajex,
     });
 
     planner
@@ -227,7 +218,7 @@ std::shared_ptr<mlmodel::named_tensor_views> mlmodel::infer(const named_tensor_v
         .with_segmenter([](auto&, totg::waypoint_accumulator accumulator) { return totg::segment_at_reversals(std::move(accumulator)); });
 
     // Register algorithms based on configured sequence
-    for (const auto& algo : local_config.generator_sequence) {
+    for (const auto& algo : config_.generator_sequence) {
         if (algo == "totg") {
             planner.with_totg([&, dof](const auto&, service_result& acc, const totg::waypoint_accumulator&, totg::trajectory&& traj, auto) {
                 acc.dof = dof;
@@ -339,7 +330,6 @@ std::shared_ptr<mlmodel::named_tensor_views> mlmodel::infer(const named_tensor_v
 }
 
 struct mlmodel::metadata mlmodel::metadata(const vsdk::ProtoStruct&) {
-    const std::shared_lock lock{config_mutex_};
     return {
         .name = "trajex",
         .type = "other",
