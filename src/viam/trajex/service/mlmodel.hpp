@@ -2,25 +2,28 @@
 
 #include <memory>
 #include <optional>
-#include <shared_mutex>
 #include <string>
 #include <vector>
 
 #include <viam/sdk/config/resource.hpp>
-#include <viam/sdk/resource/reconfigurable.hpp>
 #include <viam/sdk/services/mlmodel.hpp>
 
 namespace viam::trajex::service {
 
-class mlmodel final : public ::viam::sdk::MLModelService, public ::viam::sdk::Reconfigurable {
+class mlmodel final : public ::viam::sdk::MLModelService {
    public:
     mlmodel(::viam::sdk::Dependencies deps, ::viam::sdk::ResourceConfig config);
-
-    void reconfigure(const ::viam::sdk::Dependencies&, const ::viam::sdk::ResourceConfig&) override;
 
     std::shared_ptr<named_tensor_views> infer(const named_tensor_views& inputs, const ::viam::sdk::ProtoStruct& extra) override;
 
     struct metadata metadata(const ::viam::sdk::ProtoStruct& extra) override;
+
+    // SDK lifecycle hook (added in viam-cpp-sdk after v0.31.0). We don't
+    // surface any service-level status today; an empty ProtoStruct
+    // matches the SDK's bundled examples.
+    ::viam::sdk::ProtoStruct get_status() override {
+        return {};
+    }
 
     static std::vector<std::string> validate(const ::viam::sdk::ResourceConfig& cfg);
 
@@ -30,8 +33,9 @@ class mlmodel final : public ::viam::sdk::MLModelService, public ::viam::sdk::Re
         bool segment_for_trajex = false;
     };
 
-    mutable std::shared_mutex config_mutex_;
-    config config_;
+    static config parse_config(const ::viam::sdk::ResourceConfig& cfg);
+
+    const config config_;
 };
 
 }  // namespace viam::trajex::service

@@ -1,50 +1,148 @@
 #include <viam/trajex/jacobian/jacobian.hpp>
 
-#include <array>
-#include <cassert>
-#include <cstddef>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <Eigen/Geometry>
+
+#include <viam/sdk/referenceframe/urdf_model_table.hpp>
 
 namespace viam::trajex::jacobian {
 
 namespace {
 
-// 3-element cross product written into J(0..2, col).
-inline void write_cross_into_J_col(
-    const std::array<double, 3>& a,
-    const std::array<double, 3>& b,
-    xt::xarray<double>& J,
-    std::size_t col) {
-    J(0, col) = a[1] * b[2] - a[2] * b[1];
-    J(1, col) = a[2] * b[0] - a[0] * b[2];
-    J(2, col) = a[0] * b[1] - a[1] * b[0];
+// The SDK's ModelTable carries xyz/rpy/axis as viam::sdk::Vector3 (a thin
+// wrapper around std::array<double, 3>, no linalg ops). trajex internally
+// uses Eigen, so we adapt at the boundary.
+inline Eigen::Vector3d to_eigen(const viam::sdk::Vector3& v) {
+    return Eigen::Vector3d(v.x(), v.y(), v.z());
+}
+
+// Build the per-link 4x4 transform from URDF (xyz, rpy). URDF rpy is
+// fixed-axis XYZ, equivalent to Rz(yaw) * Ry(pitch) * Rx(roll).
+inline Eigen::Matrix4d link_transform(const Eigen::Vector3d& xyz,
+                                      const Eigen::Vector3d& rpy) {
+    const Eigen::Matrix3d R =
+        (Eigen::AngleAxisd(rpy.z(), Eigen::Vector3d::UnitZ()) *
+         Eigen::AngleAxisd(rpy.y(), Eigen::Vector3d::UnitY()) *
+         Eigen::AngleAxisd(rpy.x(), Eigen::Vector3d::UnitX()))
+            .toRotationMatrix();
+    Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
+    T.block<3, 3>(0, 0) = R;
+    T.block<3, 1>(0, 3) = xyz;
+    return T;
+}
+
+// Validate types and return revolute count. Throws std::invalid_argument
+// for unsupported joint types or zero-magnitude revolute axes.
+std::size_t validate_and_count_actuated(const viam::sdk::ModelTable& table) {
+    std::size_t n_actuated = 0;
+    for (std::size_t i = 0; i < table.size(); ++i) {
+        const auto& r = table[i];
+        switch (r.type) {
+            case viam::sdk::JointType::revolute:
+                if (to_eigen(r.axis).squaredNorm() < 1e-24) {
+                    throw std::invalid_argument(
+                        "viam::trajex::jacobian: row " + std::to_string(i) +
+                        " is a revolute joint with zero-magnitude axis");
+                }
+                ++n_actuated;
+                break;
+            case viam::sdk::JointType::fixed:
+                break;
+            case viam::sdk::JointType::continuous:
+            case viam::sdk::JointType::prismatic:
+                throw std::invalid_argument(
+                    "viam::trajex::jacobian: row " + std::to_string(i) +
+                    " has unsupported joint type (only revolute and fixed are supported)");
+        }
+    }
+    return n_actuated;
+}
+
+void check_q_size(std::size_t n_actuated, std::size_t q_size) {
+    if (q_size != n_actuated) {
+        throw std::invalid_argument(
+            "viam::trajex::jacobian: q size mismatch: expected " +
+            std::to_string(n_actuated) + " (actuated joints), got " +
+            std::to_string(q_size));
+    }
 }
 
 }  // namespace
 
-void compute_jacobian(const model& m, data& d) {
-    assert(d.fk_computed && "compute_jacobian: FK must be computed first "
-                            "(call compute_forward_kinematics or the 3-argument overload)");
-    const auto& T_e = d.end_effector_transform;
-    const std::array<double, 3> p_e{T_e(0, 3), T_e(1, 3), T_e(2, 3)};
+xt::xarray<double> compute_jacobian(const xt::xarray<double>& model_table,
+                                    const xt::xarray<double>& q) {
+    const auto table = viam::sdk::tensor_to_model_table(model_table);
+    const std::size_t n_actuated = validate_and_count_actuated(table);
+    check_q_size(n_actuated, q.size());
 
-    for (std::size_t i = 0; i < m.joints.size(); ++i) {
-        const auto& T = d.joint_transforms[i];
-        // Standard DH: joint i rotates about Z of frame i-1. The 3rd column
-        // of the stored rotation matrix is local Z expressed in the base frame.
-        const std::array<double, 3> z{T(0, 2), T(1, 2), T(2, 2)};
-        const std::array<double, 3> p{T(0, 3), T(1, 3), T(2, 3)};
-        const std::array<double, 3> r{p_e[0] - p[0], p_e[1] - p[1], p_e[2] - p[2]};
+    // Walk the chain. For each revolute joint, capture its world-frame axis
+    // and origin BEFORE applying joint motion (equivalent to post-motion for
+    // rotation about own axis; using pre-motion is clearer). After the walk,
+    // p_e = translation of final T.
+    std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>> per_joint;
+    per_joint.reserve(n_actuated);
 
-        write_cross_into_J_col(z, r, d.J, i);
-        d.J(3, i) = z[0];
-        d.J(4, i) = z[1];
-        d.J(5, i) = z[2];
+    Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
+    std::size_t qi = 0;
+    for (const auto& row : table) {
+        T = T * link_transform(to_eigen(row.xyz), to_eigen(row.rpy));
+
+        if (row.type == viam::sdk::JointType::revolute) {
+            const Eigen::Vector3d axis_local = to_eigen(row.axis).normalized();
+            const Eigen::Vector3d w_world = T.block<3, 3>(0, 0) * axis_local;
+            const Eigen::Vector3d p_joint = T.block<3, 1>(0, 3);
+            per_joint.emplace_back(w_world, p_joint);
+
+            Eigen::Matrix4d T_motion = Eigen::Matrix4d::Identity();
+            T_motion.block<3, 3>(0, 0) =
+                Eigen::AngleAxisd(q(qi), axis_local).toRotationMatrix();
+            T = T * T_motion;
+            ++qi;
+        }
+        // fixed: no motion to apply.
     }
+
+    const Eigen::Vector3d p_e = T.block<3, 1>(0, 3);
+
+    xt::xarray<double> J = xt::zeros<double>({std::size_t{6}, n_actuated});
+    for (std::size_t i = 0; i < n_actuated; ++i) {
+        const auto& [w, p] = per_joint[i];
+        const Eigen::Vector3d Jv = w.cross(p_e - p);
+        J(0, i) = Jv.x();
+        J(1, i) = Jv.y();
+        J(2, i) = Jv.z();
+        J(3, i) = w.x();
+        J(4, i) = w.y();
+        J(5, i) = w.z();
+    }
+    return J;
 }
 
-void compute_jacobian(const model& m, const xt::xarray<double>& q, data& d) {
-    compute_forward_kinematics(m, q, d);
-    compute_jacobian(m, d);
+Eigen::Matrix4d forward_kinematics(const xt::xarray<double>& model_table,
+                                   const xt::xarray<double>& q) {
+    const auto table = viam::sdk::tensor_to_model_table(model_table);
+    const std::size_t n_actuated = validate_and_count_actuated(table);
+    check_q_size(n_actuated, q.size());
+
+    Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
+    std::size_t qi = 0;
+    for (const auto& row : table) {
+        T = T * link_transform(to_eigen(row.xyz), to_eigen(row.rpy));
+
+        if (row.type == viam::sdk::JointType::revolute) {
+            const Eigen::Vector3d axis_local = to_eigen(row.axis).normalized();
+            Eigen::Matrix4d T_motion = Eigen::Matrix4d::Identity();
+            T_motion.block<3, 3>(0, 0) =
+                Eigen::AngleAxisd(q(qi), axis_local).toRotationMatrix();
+            T = T * T_motion;
+            ++qi;
+        }
+    }
+    return T;
 }
 
 }  // namespace viam::trajex::jacobian

@@ -104,15 +104,22 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 if(TRAJEX_STANDALONE_BUILD)
   include(FetchContent)
 
+  # TEMPORARY: pinned to commit 35be728 on the SDK branch
+  # 20250514-RSDK-13982-construct-model-table because trajex's jacobian
+  # module consumes sdk::tensor_to_model_table / sdk::ModelTable, which are
+  # not yet in any release. That branch lives only on the nfranczak fork
+  # (not viamrobotics/viam-cpp-sdk), so GIT_REPOSITORY points at the fork.
+  # GIT_SHALLOW is FALSE so the non-tip commit resolves. Switch back to
+  # viamrobotics/viam-cpp-sdk + a release tag once the work ships.
+  # See RSDK-13546.
   FetchContent_Declare(
     viam-cpp-sdk
-    GIT_REPOSITORY https://github.com/viamrobotics/viam-cpp-sdk
-    GIT_TAG        releases/v0.31.0
-    GIT_SHALLOW    TRUE
+    GIT_REPOSITORY https://github.com/nfranczak/viam-cpp-sdk
+    GIT_TAG        35be728
+    GIT_SHALLOW    FALSE
     SYSTEM
     # Delete conflicting protobuf headers
     PATCH_COMMAND find ./src/viam/api -name "*.pb.h" -type f -exec rm {} +
-    FIND_PACKAGE_ARGS
   )
 
   FetchContent_MakeAvailable(viam-cpp-sdk)
@@ -169,7 +176,6 @@ add_library(viam-trajex-totg)
 target_sources(viam-trajex-totg
   PRIVATE
     src/viam/trajex/trajex.cpp
-    src/viam/trajex/jacobian/forward_kinematics.cpp
     src/viam/trajex/jacobian/jacobian.cpp
     src/viam/trajex/totg/json_serialization.cpp
     src/viam/trajex/totg/observers.cpp
@@ -189,6 +195,7 @@ target_include_directories(viam-trajex-totg
 target_link_libraries(viam-trajex-totg
   PUBLIC
     Eigen3::Eigen
+    viam-cpp-sdk::viamsdk
     xtensor
     xtl
   PRIVATE
