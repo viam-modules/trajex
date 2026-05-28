@@ -32,9 +32,9 @@ class mlmodel final : public ::viam::sdk::MLModelService {
         std::vector<std::string> generator_sequence = {"totg"};
 #endif
         bool segment_for_trajex = false;
-    };
 
-    static config parse_config(const ::viam::sdk::ResourceConfig& cfg);
+        static config from_resource_config(const ::viam::sdk::ResourceConfig& cfg);
+    };
 
     const config config_;
 };

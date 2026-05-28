@@ -120,9 +120,9 @@ std::vector<std::string> mlmodel::validate(const vsdk::ResourceConfig& cfg) {
 }
 
 // NOLINTNEXTLINE(performance-unnecessary-value-param): Signature fixed by ModelRegistration factory.
-mlmodel::mlmodel(vsdk::Dependencies /*deps*/, vsdk::ResourceConfig config) : MLModelService(config.name()), config_(parse_config(config)) {}
+mlmodel::mlmodel(vsdk::Dependencies, vsdk::ResourceConfig config) : MLModelService(config.name()), config_(mlmodel::config::from_resource_config(config)) {}
 
-mlmodel::config mlmodel::parse_config(const vsdk::ResourceConfig& cfg) {
+mlmodel::config mlmodel::config::from_resource_config(const vsdk::ResourceConfig& cfg) {
     config out;
 
     // Parse generator_sequence
