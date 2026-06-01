@@ -14,7 +14,7 @@ namespace viam::trajex::jacobian {
 // positions q.
 //
 // model_table: (n, 10) tensor in the viam::sdk::ModelTable format
-//              (see viam/sdk/referenceframe/urdf_model_table.hpp).
+//              (see viam/sdk/referenceframe/kinematics_model_table.hpp).
 // q:           (N_actuated,) vector. One element per revolute row in the
 //              table, in chain order. Fixed rows do not consume a q entry.
 //
@@ -28,7 +28,7 @@ namespace viam::trajex::jacobian {
 //   - std::invalid_argument on q-size mismatch, unsupported joint type
 //     (continuous or prismatic), or revolute row with zero-magnitude axis.
 //   - viam::sdk::Exception on malformed tensor shape or invalid joint-type
-//     encoding (propagated from sdk::tensor_to_model_table).
+//     encoding (propagated from sdk::ModelTable::from).
 xt::xarray<double> compute_jacobian(const xt::xarray<double>& model_table,
                                     const xt::xarray<double>& q);
 

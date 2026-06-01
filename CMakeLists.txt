@@ -104,18 +104,18 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 if(TRAJEX_STANDALONE_BUILD)
   include(FetchContent)
 
-  # TEMPORARY: pinned to commit 35be728 on the SDK branch
+  # TEMPORARY: pinned to commit 7f45e51 on the SDK branch
   # 20250514-RSDK-13982-construct-model-table because trajex's jacobian
-  # module consumes sdk::tensor_to_model_table / sdk::ModelTable, which are
-  # not yet in any release. That branch lives only on the nfranczak fork
-  # (not viamrobotics/viam-cpp-sdk), so GIT_REPOSITORY points at the fork.
-  # GIT_SHALLOW is FALSE so the non-tip commit resolves. Switch back to
-  # viamrobotics/viam-cpp-sdk + a release tag once the work ships.
+  # module consumes sdk::ModelTable, which is not yet in any release. That
+  # branch lives only on the nfranczak fork (not viamrobotics/viam-cpp-sdk),
+  # so GIT_REPOSITORY points at the fork. GIT_SHALLOW is FALSE so the non-tip
+  # commit resolves. Switch back to viamrobotics/viam-cpp-sdk + a release tag
+  # once the work ships.
   # See RSDK-13546.
   FetchContent_Declare(
     viam-cpp-sdk
     GIT_REPOSITORY https://github.com/nfranczak/viam-cpp-sdk
-    GIT_TAG        35be728
+    GIT_TAG        7f45e51
     GIT_SHALLOW    FALSE
     SYSTEM
     # Delete conflicting protobuf headers

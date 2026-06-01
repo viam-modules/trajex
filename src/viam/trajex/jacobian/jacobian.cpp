@@ -7,7 +7,7 @@
 
 #include <Eigen/Geometry>
 
-#include <viam/sdk/referenceframe/urdf_model_table.hpp>
+#include <viam/sdk/referenceframe/kinematics_model_table.hpp>
 
 namespace viam::trajex::jacobian {
 
@@ -39,10 +39,11 @@ inline Eigen::Matrix4d link_transform(const Eigen::Vector3d& xyz,
 // for unsupported joint types or zero-magnitude revolute axes.
 std::size_t validate_and_count_actuated(const viam::sdk::ModelTable& table) {
     std::size_t n_actuated = 0;
-    for (std::size_t i = 0; i < table.size(); ++i) {
-        const auto& r = table[i];
+    const auto& rows = table.rows();
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        const auto& r = rows[i];
         switch (r.type) {
-            case viam::sdk::JointType::revolute:
+            case viam::sdk::ModelTable::JointType::k_revolute:
                 if (to_eigen(r.axis).squaredNorm() < 1e-24) {
                     throw std::invalid_argument(
                         "viam::trajex::jacobian: row " + std::to_string(i) +
@@ -50,10 +51,10 @@ std::size_t validate_and_count_actuated(const viam::sdk::ModelTable& table) {
                 }
                 ++n_actuated;
                 break;
-            case viam::sdk::JointType::fixed:
+            case viam::sdk::ModelTable::JointType::k_fixed:
                 break;
-            case viam::sdk::JointType::continuous:
-            case viam::sdk::JointType::prismatic:
+            case viam::sdk::ModelTable::JointType::k_continuous:
+            case viam::sdk::ModelTable::JointType::k_prismatic:
                 throw std::invalid_argument(
                     "viam::trajex::jacobian: row " + std::to_string(i) +
                     " has unsupported joint type (only revolute and fixed are supported)");
@@ -75,7 +76,7 @@ void check_q_size(std::size_t n_actuated, std::size_t q_size) {
 
 xt::xarray<double> compute_jacobian(const xt::xarray<double>& model_table,
                                     const xt::xarray<double>& q) {
-    const auto table = viam::sdk::tensor_to_model_table(model_table);
+    const auto table = viam::sdk::ModelTable::from(model_table);
     const std::size_t n_actuated = validate_and_count_actuated(table);
     check_q_size(n_actuated, q.size());
 
@@ -88,10 +89,10 @@ xt::xarray<double> compute_jacobian(const xt::xarray<double>& model_table,
 
     Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
     std::size_t qi = 0;
-    for (const auto& row : table) {
+    for (const auto& row : table.rows()) {
         T = T * link_transform(to_eigen(row.xyz), to_eigen(row.rpy));
 
-        if (row.type == viam::sdk::JointType::revolute) {
+        if (row.type == viam::sdk::ModelTable::JointType::k_revolute) {
             const Eigen::Vector3d axis_local = to_eigen(row.axis).normalized();
             const Eigen::Vector3d w_world = T.block<3, 3>(0, 0) * axis_local;
             const Eigen::Vector3d p_joint = T.block<3, 1>(0, 3);
@@ -124,16 +125,16 @@ xt::xarray<double> compute_jacobian(const xt::xarray<double>& model_table,
 
 Eigen::Matrix4d forward_kinematics(const xt::xarray<double>& model_table,
                                    const xt::xarray<double>& q) {
-    const auto table = viam::sdk::tensor_to_model_table(model_table);
+    const auto table = viam::sdk::ModelTable::from(model_table);
     const std::size_t n_actuated = validate_and_count_actuated(table);
     check_q_size(n_actuated, q.size());
 
     Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
     std::size_t qi = 0;
-    for (const auto& row : table) {
+    for (const auto& row : table.rows()) {
         T = T * link_transform(to_eigen(row.xyz), to_eigen(row.rpy));
 
-        if (row.type == viam::sdk::JointType::revolute) {
+        if (row.type == viam::sdk::ModelTable::JointType::k_revolute) {
             const Eigen::Vector3d axis_local = to_eigen(row.axis).normalized();
             Eigen::Matrix4d T_motion = Eigen::Matrix4d::Identity();
             T_motion.block<3, 3>(0, 0) =
