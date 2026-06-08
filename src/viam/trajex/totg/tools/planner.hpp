@@ -13,16 +13,20 @@
 #include <utility>
 #include <vector>
 
-#include <Eigen/Dense>
-
 #include <viam/trajex/totg/path.hpp>
-#include <viam/trajex/totg/tools/legacy.hpp>
+
 #include <viam/trajex/totg/trajectory.hpp>
 #include <viam/trajex/totg/waypoint_accumulator.hpp>
 #include <viam/trajex/totg/waypoint_utils.hpp>
 
+#if defined(VIAM_TRAJEX_LEGACY_ENABLED)
+#include <Eigen/Dense>
+
 #include <third_party/trajectories/Path.h>
 #include <third_party/trajectories/Trajectory.h>
+
+#include <viam/trajex/totg/tools/legacy.hpp>
+#endif
 
 namespace viam::trajex::totg {
 
@@ -153,8 +157,10 @@ class planner : public planner_base {
 
     using success_fn = std::function<void(const planner&, Receiver&, const waypoint_accumulator&, trajectory&&, std::chrono::microseconds)>;
 
+#if defined(VIAM_TRAJEX_LEGACY_ENABLED)
     using legacy_success_fn =
         std::function<void(const planner&, Receiver&, const waypoint_accumulator&, Path&&, Trajectory&&, std::chrono::microseconds)>;
+#endif
 
     using algorithm_failure_fn = std::function<void(const planner&, const Receiver&, const waypoint_accumulator&, const std::exception&)>;
     /// @}
@@ -227,6 +233,7 @@ class planner : public planner_base {
         return *this;
     }
 
+#if defined(VIAM_TRAJEX_LEGACY_ENABLED)
     ///
     /// Enables the legacy generator.
     ///
@@ -235,6 +242,7 @@ class planner : public planner_base {
         legacy_on_failure_ = std::move(on_failure);
         return *this;
     }
+#endif
 
     /// @}
 
@@ -250,9 +258,15 @@ class planner : public planner_base {
             throw std::logic_error("waypoint provider not set");
         }
 
+#if defined(VIAM_TRAJEX_LEGACY_ENABLED)
         if (!on_success_ && !legacy_on_success_) {
             throw std::logic_error("no algorithms registered");
         }
+#else
+        if (!on_success_) {
+            throw std::logic_error("no algorithms registered");
+        }
+#endif
 
         auto& timing = mutable_timing();
 
@@ -350,7 +364,8 @@ class planner : public planner_base {
         return outcome;
     }
 
-    algorithm_outcome run_legacy_(const std::vector<waypoint_accumulator>& segments) {
+    algorithm_outcome run_legacy_(const std::vector<waypoint_accumulator>& segments [[maybe_unused]]) {
+#if defined(VIAM_TRAJEX_LEGACY_ENABLED)
         if (!legacy_on_success_) {
             return {};
         }
@@ -417,6 +432,9 @@ class planner : public planner_base {
             timing.colinearization = total_colinear;
         }
         return outcome;
+#else
+        return {};
+#endif
     }
 
     std::vector<std::shared_ptr<void>> stashed_;
@@ -429,8 +447,10 @@ class planner : public planner_base {
     success_fn on_success_;
     algorithm_failure_fn on_failure_;
 
+#if defined(VIAM_TRAJEX_LEGACY_ENABLED)
     legacy_success_fn legacy_on_success_;
     algorithm_failure_fn legacy_on_failure_;
+#endif
 };
 
 }  // namespace viam::trajex::totg

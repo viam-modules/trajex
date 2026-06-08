@@ -13,7 +13,7 @@ help:
 	@echo "Available CI targets:"
 	@echo "  make -f .github/scripts/Makefile [format-check,configure,build,install,test,module.tar.gz,run-clang-tidy[-parallel],run-clang-check]"
 
-SOURCE_FILES := $(shell find src/viam -type f \( -name '*.cpp' -o -name '*.hpp' \))
+SOURCE_FILES := $(shell find src/viam -type f \( -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \))
 CPP_FILES := $(filter %.cpp,$(SOURCE_FILES))
 
 format-check:

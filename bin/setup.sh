@@ -27,7 +27,7 @@ fi
 
 # NOTE: If you change this version, also change it in the `conanfile.py` requirements
 # and in the Dockerfile and CMakeLists.txt
-git checkout releases/v0.31.0
+git checkout releases/v0.38.0
 
 # Export the recipe to the cache so we can skip rebuilds gracefully
 conan export .
@@ -74,4 +74,5 @@ conan install --update \
       -s:a "&:build_type=RelWithDebInfo" \
       -s:a compiler.cppstd=20 \
       -o:a "*:shared=False" \
-      -o:a "&:shared=False"
+      -o:a "&:shared=False" \
+      -o:a "boost/*:without_cobalt=True"

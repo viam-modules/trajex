@@ -124,6 +124,8 @@ const trajectory_integration_event_collector& replay_planner::collector() const 
     return *collector_;
 }
 
+#if defined(VIAM_TRAJEX_LEGACY_ENABLED)
+
 legacy_replay_planner legacy_replay_planner::create(std::istream& in) {
     auto [cfg, waypoints] = parse_replay_record(in);
 
@@ -146,5 +148,7 @@ legacy_replay_planner legacy_replay_planner::create(const std::filesystem::path&
     }
     return create(in);
 }
+
+#endif
 
 }  // namespace viam::trajex::totg

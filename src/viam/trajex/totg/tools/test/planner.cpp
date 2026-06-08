@@ -89,6 +89,7 @@ BOOST_AUTO_TEST_CASE(totg_only_success) {
     BOOST_CHECK_GT(result->total_duration, 0.0);
 }
 
+#if defined(VIAM_TRAJEX_LEGACY_ENABLED)
 BOOST_AUTO_TEST_CASE(legacy_only_success) {
     bool success_called = false;
 
@@ -141,6 +142,7 @@ BOOST_AUTO_TEST_CASE(both_algorithms_success) {
     BOOST_CHECK(legacy_called);
     BOOST_REQUIRE(result);
 }
+#endif
 
 BOOST_AUTO_TEST_CASE(preprocessor_runs_before_algorithms) {
     auto result = planner<test_receiver>(simple_config())
@@ -236,7 +238,7 @@ BOOST_AUTO_TEST_CASE(stash_extends_data_lifetime) {
 
 BOOST_AUTO_TEST_CASE(segment_totg_false_passes_unsegmented_to_totg) {
     int totg_segments_seen = 0;
-    int legacy_segments_seen = 0;
+    int legacy_segments_seen [[maybe_unused]] = 0;
 
     auto cfg = simple_config();
     cfg.segment_totg = false;
@@ -245,11 +247,16 @@ BOOST_AUTO_TEST_CASE(segment_totg_false_passes_unsegmented_to_totg) {
         .with_waypoint_provider([](auto& p) { return stash_waypoints(p, {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, {0.0, 0.0, 0.0}}); })
         .with_segmenter([](auto&, waypoint_accumulator accumulator) { return segment_at_reversals(std::move(accumulator)); })
         .with_totg([&](const auto&, test_receiver&, const waypoint_accumulator&, const trajectory&, auto) { totg_segments_seen++; })
+#if defined(VIAM_TRAJEX_LEGACY_ENABLED)
         .with_legacy([&](const auto&, test_receiver&, const waypoint_accumulator&, Path&&, Trajectory&&, auto) { legacy_segments_seen++; })
+#endif
         .execute([](const auto&, const auto&, const auto&) -> std::optional<test_receiver> { return std::nullopt; });
 
     BOOST_CHECK_EQUAL(totg_segments_seen, 1);
+
+#if defined(VIAM_TRAJEX_LEGACY_ENABLED)
     BOOST_CHECK_EQUAL(legacy_segments_seen, 2);
+#endif
 }
 
 BOOST_AUTO_TEST_CASE(processed_waypoint_count_reflects_preprocessing) {

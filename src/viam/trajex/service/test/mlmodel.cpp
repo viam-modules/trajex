@@ -91,6 +91,7 @@ BOOST_AUTO_TEST_CASE(totg_only_config) {
     BOOST_CHECK(result->count("accelerations_rads_per_sec2") > 0);
 }
 
+#if defined(VIAM_TRAJEX_LEGACY_ENABLED)
 BOOST_AUTO_TEST_CASE(legacy_only_config) {
     vsdk::ProtoStruct attrs;
     attrs.emplace("generator_sequence", std::vector<vsdk::ProtoValue>{vsdk::ProtoValue{"legacy"}});
@@ -102,6 +103,7 @@ BOOST_AUTO_TEST_CASE(legacy_only_config) {
     // Should NOT have accelerations (legacy doesn't produce them)
     BOOST_CHECK(result->count("accelerations_rads_per_sec2") == 0);
 }
+#endif
 
 BOOST_AUTO_TEST_CASE(unknown_algorithm_rejects) {
     vsdk::ProtoStruct attrs;
@@ -215,6 +217,7 @@ BOOST_AUTO_TEST_CASE(totg_trajectory_has_samples_and_accelerations) {
     }
 }
 
+#if defined(VIAM_TRAJEX_LEGACY_ENABLED)
 BOOST_AUTO_TEST_CASE(legacy_trajectory_has_samples_but_no_accelerations) {
     vsdk::ProtoStruct attrs;
     attrs.emplace("generator_sequence", std::vector<vsdk::ProtoValue>{vsdk::ProtoValue{"legacy"}});
@@ -228,6 +231,7 @@ BOOST_AUTO_TEST_CASE(legacy_trajectory_has_samples_but_no_accelerations) {
     BOOST_CHECK(result->count("velocities_rads_per_sec") > 0);
     BOOST_CHECK_EQUAL(result->count("accelerations_rads_per_sec2"), 0U);
 }
+#endif
 
 BOOST_AUTO_TEST_CASE(dual_algorithm_prefers_totg) {
     auto service = std::make_shared<mlmodel>(vsdk::Dependencies{}, make_config());

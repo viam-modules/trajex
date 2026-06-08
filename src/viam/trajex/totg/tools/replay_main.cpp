@@ -10,7 +10,7 @@
 #include <iostream>
 #include <stdexcept>
 
-#include <viam/trajex/totg/json_serialization.hpp>
+#include <viam/trajex/totg/tools/json_serialization.hpp>
 #include <viam/trajex/totg/tools/replay.hpp>
 
 using viam::trajex::totg::replay_planner;

@@ -19,6 +19,7 @@ struct replay_receiver {
     std::optional<trajectory> traj;
 };
 
+#if defined(VIAM_TRAJEX_LEGACY_ENABLED)
 ///
 /// Receiver for legacy_replay_planner. Holds the path and trajectory produced
 /// by the legacy generator so callers can access them after execute() completes.
@@ -26,6 +27,7 @@ struct replay_receiver {
 struct legacy_replay_receiver {
     std::optional<std::pair<Path, Trajectory>> result;
 };
+#endif
 
 ///
 /// Replay planner for the TOTG algorithm.
@@ -73,6 +75,7 @@ class replay_planner : public planner<replay_receiver> {
     explicit replay_planner(config cfg, std::unique_ptr<trajectory_integration_event_collector> collector);
 };
 
+#if defined(VIAM_TRAJEX_LEGACY_ENABLED)
 ///
 /// Replay planner for the legacy trajectory algorithm.
 ///
@@ -93,5 +96,7 @@ class legacy_replay_planner : public planner<legacy_replay_receiver> {
     ///
     static legacy_replay_planner create(const std::filesystem::path& path);
 };
+
+#endif
 
 }  // namespace viam::trajex::totg
