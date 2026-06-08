@@ -18,9 +18,6 @@ class mlmodel final : public ::viam::sdk::MLModelService {
 
     struct metadata metadata(const ::viam::sdk::ProtoStruct& extra) override;
 
-    // SDK lifecycle hook (added in viam-cpp-sdk after v0.31.0). We don't
-    // surface any service-level status today; an empty ProtoStruct
-    // matches the SDK's bundled examples.
     ::viam::sdk::ProtoStruct get_status() override {
         return {};
     }
