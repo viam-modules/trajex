@@ -17,10 +17,10 @@ namespace {
 using vec3 = std::array<double, 3>;
 
 double dot(const vec3& a, const vec3& b) {
-    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    return (a[0] * b[0]) + (a[1] * b[1]) + (a[2] * b[2]);
 }
 vec3 cross(const vec3& a, const vec3& b) {
-    return {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};
+    return {(a[1] * b[2]) - (a[2] * b[1]), (a[2] * b[0]) - (a[0] * b[2]), (a[0] * b[1]) - (a[1] * b[0])};
 }
 double norm(const vec3& a) {
     return std::sqrt(dot(a, a));
@@ -62,24 +62,24 @@ xt::xarray<double> axis_rotation4(const vec3& axis, double theta) {
     const double z = axis[2];
 
     xt::xarray<double> r = identity4();
-    r(0, 0) = t * x * x + c;
-    r(0, 1) = t * x * y - s * z;
-    r(0, 2) = t * x * z + s * y;
-    r(1, 0) = t * x * y + s * z;
-    r(1, 1) = t * y * y + c;
-    r(1, 2) = t * y * z - s * x;
-    r(2, 0) = t * x * z - s * y;
-    r(2, 1) = t * y * z + s * x;
-    r(2, 2) = t * z * z + c;
+    r(0, 0) = (t * x * x) + c;
+    r(0, 1) = (t * x * y) - (s * z);
+    r(0, 2) = (t * x * z) + (s * y);
+    r(1, 0) = (t * x * y) + (s * z);
+    r(1, 1) = (t * y * y) + c;
+    r(1, 2) = (t * y * z) - (s * x);
+    r(2, 0) = (t * x * z) - (s * y);
+    r(2, 1) = (t * y * z) + (s * x);
+    r(2, 2) = (t * z * z) + c;
     return r;
 }
 
 // 4x4 transform for a URDF link: rotation Rz(yaw) * Ry(pitch) * Rx(roll) with
 // translation xyz.
 xt::xarray<double> link_transform(const viam::sdk::Vector3& xyz, const viam::sdk::Vector3& rpy) {
-    xt::xarray<double> rx = axis_rotation4({1.0, 0.0, 0.0}, rpy.x());
-    xt::xarray<double> ry = axis_rotation4({0.0, 1.0, 0.0}, rpy.y());
-    xt::xarray<double> rz = axis_rotation4({0.0, 0.0, 1.0}, rpy.z());
+    const xt::xarray<double> rx = axis_rotation4({1.0, 0.0, 0.0}, rpy.x());
+    const xt::xarray<double> ry = axis_rotation4({0.0, 1.0, 0.0}, rpy.y());
+    const xt::xarray<double> rz = axis_rotation4({0.0, 0.0, 1.0}, rpy.z());
     xt::xarray<double> out = matmul4(matmul4(rz, ry), rx);
     out(0, 3) = xyz.x();
     out(1, 3) = xyz.y();
@@ -90,9 +90,9 @@ xt::xarray<double> link_transform(const viam::sdk::Vector3& xyz, const viam::sdk
 // Rotate a 3-vector by the rotation part of a 4x4 transform.
 vec3 rotate(const xt::xarray<double>& transform, const vec3& v) {
     return {
-        transform(0, 0) * v[0] + transform(0, 1) * v[1] + transform(0, 2) * v[2],
-        transform(1, 0) * v[0] + transform(1, 1) * v[1] + transform(1, 2) * v[2],
-        transform(2, 0) * v[0] + transform(2, 1) * v[1] + transform(2, 2) * v[2],
+        (transform(0, 0) * v[0]) + (transform(0, 1) * v[1]) + (transform(0, 2) * v[2]),
+        (transform(1, 0) * v[0]) + (transform(1, 1) * v[1]) + (transform(1, 2) * v[2]),
+        (transform(2, 0) * v[0]) + (transform(2, 1) * v[1]) + (transform(2, 2) * v[2]),
     };
 }
 

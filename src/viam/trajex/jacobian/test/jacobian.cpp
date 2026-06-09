@@ -61,7 +61,7 @@ double vec3_diff_norm(const std::array<double, 3>& a, const std::array<double, 3
     const double dx = a[0] - b[0];
     const double dy = a[1] - b[1];
     const double dz = a[2] - b[2];
-    return std::sqrt(dx * dx + dy * dy + dz * dz);
+    return std::sqrt((dx * dx) + (dy * dy) + (dz * dz));
 }
 
 struct twist {
@@ -72,10 +72,12 @@ twist J_times_qdot(const xt::xarray<double>& J, const xt::xarray<double>& q_dot)
     twist t{{0, 0, 0}, {0, 0, 0}};
     const std::size_t n = q_dot.size();
     for (std::size_t j = 0; j < n; ++j) {
-        for (std::size_t i = 0; i < 3; ++i)
+        for (std::size_t i = 0; i < 3; ++i) {
             t.v[i] += J(i, j) * q_dot(j);
-        for (std::size_t i = 0; i < 3; ++i)
+        }
+        for (std::size_t i = 0; i < 3; ++i) {
             t.w[i] += J(3 + i, j) * q_dot(j);
+        }
     }
     return t;
 }
@@ -146,15 +148,15 @@ xt::xarray<double> oracle_axis_rotation(double x, double y, double z, double ang
     const double s = std::sin(angle);
     const double t = 1.0 - c;
     xt::xarray<double> r = oracle_identity4();
-    r(0, 0) = t * x * x + c;
-    r(0, 1) = t * x * y - s * z;
-    r(0, 2) = t * x * z + s * y;
-    r(1, 0) = t * x * y + s * z;
-    r(1, 1) = t * y * y + c;
-    r(1, 2) = t * y * z - s * x;
-    r(2, 0) = t * x * z - s * y;
-    r(2, 1) = t * y * z + s * x;
-    r(2, 2) = t * z * z + c;
+    r(0, 0) = (t * x * x) + c;
+    r(0, 1) = (t * x * y) - (s * z);
+    r(0, 2) = (t * x * z) + (s * y);
+    r(1, 0) = (t * x * y) + (s * z);
+    r(1, 1) = (t * y * y) + c;
+    r(1, 2) = (t * y * z) - (s * x);
+    r(2, 0) = (t * x * z) - (s * y);
+    r(2, 1) = (t * y * z) + (s * x);
+    r(2, 2) = (t * z * z) + c;
     return r;
 }
 
@@ -174,8 +176,10 @@ xt::xarray<double> forward_transform(const xt::xarray<double>& table, const xt::
         T = oracle_matmul(T, link);
 
         if (table(r, 9) == kRev) {
-            const double ax = table(r, 6), ay = table(r, 7), az = table(r, 8);
-            const double an = std::sqrt(ax * ax + ay * ay + az * az);
+            const double ax = table(r, 6);
+            const double ay = table(r, 7);
+            const double az = table(r, 8);
+            const double an = std::sqrt((ax * ax) + (ay * ay) + (az * az));
             T = oracle_matmul(T, oracle_axis_rotation(ax / an, ay / an, az / an, q(qi)));
             ++qi;
         }
@@ -438,7 +442,7 @@ BOOST_AUTO_TEST_CASE(rejects_zero_axis_for_revolute) {
 // The SDK throws viam::sdk::Exception on malformed tensor input. Verify
 // we don't swallow or wrap it.
 BOOST_AUTO_TEST_CASE(propagates_sdk_exception_on_bad_shape) {
-    xt::xarray<double> bad = xt::zeros<double>({std::size_t{1}, std::size_t{9}});
+    const xt::xarray<double> bad = xt::zeros<double>({std::size_t{1}, std::size_t{9}});
     const xt::xarray<double> q = {0.0};
     BOOST_CHECK_THROW(compute_jacobian(bad, q), viam::sdk::Exception);
 }
