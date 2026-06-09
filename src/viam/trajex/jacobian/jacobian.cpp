@@ -111,9 +111,8 @@ std::size_t validate_and_count_actuated(const viam::sdk::ModelTable& table) {
             case viam::sdk::ModelTable::JointType::k_revolute: {
                 const vec3 axis = to_vec3(r.axis);
                 if (dot(axis, axis) < 1e-24) {
-                    throw std::invalid_argument(
-                        "viam::trajex::jacobian: row " + std::to_string(i) +
-                        " is a revolute joint with zero-magnitude axis");
+                    throw std::invalid_argument("viam::trajex::jacobian: row " + std::to_string(i) +
+                                                " is a revolute joint with zero-magnitude axis");
                 }
                 ++n_actuated;
                 break;
@@ -122,9 +121,8 @@ std::size_t validate_and_count_actuated(const viam::sdk::ModelTable& table) {
                 break;
             case viam::sdk::ModelTable::JointType::k_continuous:
             case viam::sdk::ModelTable::JointType::k_prismatic:
-                throw std::invalid_argument(
-                    "viam::trajex::jacobian: row " + std::to_string(i) +
-                    " has unsupported joint type (only revolute and fixed are supported)");
+                throw std::invalid_argument("viam::trajex::jacobian: row " + std::to_string(i) +
+                                            " has unsupported joint type (only revolute and fixed are supported)");
         }
     }
     return n_actuated;
@@ -132,10 +130,8 @@ std::size_t validate_and_count_actuated(const viam::sdk::ModelTable& table) {
 
 void check_q_size(std::size_t n_actuated, std::size_t q_size) {
     if (q_size != n_actuated) {
-        throw std::invalid_argument(
-            "viam::trajex::jacobian: q size mismatch: expected " +
-            std::to_string(n_actuated) + " (actuated joints), got " +
-            std::to_string(q_size));
+        throw std::invalid_argument("viam::trajex::jacobian: q size mismatch: expected " + std::to_string(n_actuated) +
+                                    " (actuated joints), got " + std::to_string(q_size));
     }
 }
 
@@ -179,8 +175,7 @@ chain_state run_chain(const viam::sdk::ModelTable& table, const xt::xarray<doubl
 
 }  // namespace
 
-xt::xarray<double> compute_jacobian(const xt::xarray<double>& model_table,
-                                    const xt::xarray<double>& q) {
+xt::xarray<double> compute_jacobian(const xt::xarray<double>& model_table, const xt::xarray<double>& q) {
     const auto table = viam::sdk::ModelTable::from(model_table);
     const chain_state state = run_chain(table, q);
     const std::size_t n_actuated = state.axes.size();

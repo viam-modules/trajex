@@ -72,8 +72,10 @@ twist J_times_qdot(const xt::xarray<double>& J, const xt::xarray<double>& q_dot)
     twist t{{0, 0, 0}, {0, 0, 0}};
     const std::size_t n = q_dot.size();
     for (std::size_t j = 0; j < n; ++j) {
-        for (std::size_t i = 0; i < 3; ++i) t.v[i] += J(i, j) * q_dot(j);
-        for (std::size_t i = 0; i < 3; ++i) t.w[i] += J(3 + i, j) * q_dot(j);
+        for (std::size_t i = 0; i < 3; ++i)
+            t.v[i] += J(i, j) * q_dot(j);
+        for (std::size_t i = 0; i < 3; ++i)
+            t.w[i] += J(3 + i, j) * q_dot(j);
     }
     return t;
 }
@@ -102,13 +104,13 @@ xt::xarray<double> threelink_with_spacers_table() {
 // 6-revolute spatial chain mimicking a UR-like structure.
 xt::xarray<double> sixdof_arm_table() {
     return xt::xarray<double>{
-        {0,   0,    0.10, 0,    0,    0,    0,   0,   1,   kRev},
-        {0,   0,    0.15, 0,    0,    0,    0,   1,   0,   kRev},
-        {0.4, 0,    0,    0,    0,    0,    0,   1,   0,   kRev},
-        {0.4, 0,    0,    0,    0,    0,    0,   1,   0,   kRev},
-        {0,   0,    0.10, 0,    0,    0,    1,   0,   0,   kRev},
-        {0,   0,    0.10, 0,    0,    0,    0,   0,   1,   kRev},
-        {0,   0,    0.05, 0,    0,    0,    0,   0,   0,   kFix},
+        {0, 0, 0.10, 0, 0, 0, 0, 0, 1, kRev},
+        {0, 0, 0.15, 0, 0, 0, 0, 1, 0, kRev},
+        {0.4, 0, 0, 0, 0, 0, 0, 1, 0, kRev},
+        {0.4, 0, 0, 0, 0, 0, 0, 1, 0, kRev},
+        {0, 0, 0.10, 0, 0, 0, 1, 0, 0, kRev},
+        {0, 0, 0.10, 0, 0, 0, 0, 0, 1, kRev},
+        {0, 0, 0.05, 0, 0, 0, 0, 0, 0, kFix},
     };
 }
 
@@ -164,8 +166,7 @@ xt::xarray<double> forward_transform(const xt::xarray<double>& table, const xt::
     const std::size_t n = table.shape()[0];
     for (std::size_t r = 0; r < n; ++r) {
         xt::xarray<double> link =
-            oracle_matmul(oracle_matmul(oracle_axis_rotation(0.0, 0.0, 1.0, table(r, 5)),
-                                        oracle_axis_rotation(0.0, 1.0, 0.0, table(r, 4))),
+            oracle_matmul(oracle_matmul(oracle_axis_rotation(0.0, 0.0, 1.0, table(r, 5)), oracle_axis_rotation(0.0, 1.0, 0.0, table(r, 4))),
                           oracle_axis_rotation(1.0, 0.0, 0.0, table(r, 3)));
         link(0, 3) = table(r, 0);
         link(1, 3) = table(r, 1);
@@ -184,9 +185,7 @@ xt::xarray<double> forward_transform(const xt::xarray<double>& table, const xt::
 
 // Numerical geometric Jacobian via central differences on the reference
 // forward_transform, which returns a 4x4 homogeneous transform.
-xt::xarray<double> numerical_jacobian(const xt::xarray<double>& table,
-                                       const xt::xarray<double>& q,
-                                       double delta = 1e-7) {
+xt::xarray<double> numerical_jacobian(const xt::xarray<double>& table, const xt::xarray<double>& q, double delta = 1e-7) {
     const std::size_t n_actuated = q.size();
     xt::xarray<double> J_num = xt::zeros<double>({std::size_t{6}, n_actuated});
 
@@ -223,9 +222,7 @@ xt::xarray<double> numerical_jacobian(const xt::xarray<double>& table,
     return J_num;
 }
 
-void check_matches_numerical(const xt::xarray<double>& table,
-                              const xt::xarray<double>& q,
-                              double tol = 1e-6) {
+void check_matches_numerical(const xt::xarray<double>& table, const xt::xarray<double>& q, double tol = 1e-6) {
     const auto J = compute_jacobian(table, q);
     const auto J_num = numerical_jacobian(table, q);
     BOOST_CHECK_SMALL(matrix_diff_norm(J, J_num), tol);
@@ -277,7 +274,6 @@ BOOST_AUTO_TEST_CASE(twolink_base_spin_bent) {
 
 BOOST_AUTO_TEST_SUITE_END()
 
-
 // ============================================================================
 // Ground-truth tests: hand-computed Jacobian values.
 // ============================================================================
@@ -307,11 +303,11 @@ BOOST_AUTO_TEST_CASE(twolink_q1_ninety) {
 
     const xt::xarray<double> J_expected = {
         {-2.0, -1.0},
-        { 0.0,  0.0},
-        { 0.0,  0.0},
-        { 0.0,  0.0},
-        { 0.0,  0.0},
-        { 1.0,  1.0},
+        {0.0, 0.0},
+        {0.0, 0.0},
+        {0.0, 0.0},
+        {0.0, 0.0},
+        {1.0, 1.0},
     };
     BOOST_CHECK_SMALL(matrix_diff_norm(J, J_expected), 1e-10);
 }
@@ -323,17 +319,16 @@ BOOST_AUTO_TEST_CASE(twolink_q2_ninety) {
 
     const xt::xarray<double> J_expected = {
         {-1.0, -1.0},
-        { 1.0,  0.0},
-        { 0.0,  0.0},
-        { 0.0,  0.0},
-        { 0.0,  0.0},
-        { 1.0,  1.0},
+        {1.0, 0.0},
+        {0.0, 0.0},
+        {0.0, 0.0},
+        {0.0, 0.0},
+        {1.0, 1.0},
     };
     BOOST_CHECK_SMALL(matrix_diff_norm(J, J_expected), 1e-10);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
-
 
 // ============================================================================
 // FK basic checks. The numerical-consistency suite depends on FK being
@@ -370,7 +365,6 @@ BOOST_AUTO_TEST_CASE(twolink_q2_pi_over_2_ee_at_1_1_0) {
 
 BOOST_AUTO_TEST_SUITE_END()
 
-
 // ============================================================================
 // Numerical consistency: analytical Jacobian == central-difference Jacobian.
 // ============================================================================
@@ -392,8 +386,7 @@ BOOST_AUTO_TEST_CASE(twolink_folded_back) {
 }
 
 BOOST_AUTO_TEST_CASE(threelink_with_spacers_zero) {
-    check_matches_numerical(threelink_with_spacers_table(),
-                            xt::zeros<double>({std::size_t{3}}));
+    check_matches_numerical(threelink_with_spacers_table(), xt::zeros<double>({std::size_t{3}}));
 }
 
 BOOST_AUTO_TEST_CASE(threelink_with_spacers_typical) {
@@ -411,7 +404,6 @@ BOOST_AUTO_TEST_CASE(sixdof_typical) {
 }
 
 BOOST_AUTO_TEST_SUITE_END()
-
 
 // ============================================================================
 // Error handling.

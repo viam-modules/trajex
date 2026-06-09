@@ -26,7 +26,6 @@ namespace viam::trajex::jacobian {
 //     (continuous or prismatic), or revolute row with zero-magnitude axis.
 //   - viam::sdk::Exception on malformed tensor shape or invalid joint-type
 //     encoding (propagated from sdk::ModelTable::from).
-xt::xarray<double> compute_jacobian(const xt::xarray<double>& model_table,
-                                    const xt::xarray<double>& q);
+xt::xarray<double> compute_jacobian(const xt::xarray<double>& model_table, const xt::xarray<double>& q);
 
 }  // namespace viam::trajex::jacobian
