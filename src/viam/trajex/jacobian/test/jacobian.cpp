@@ -38,7 +38,7 @@ xt::xarray<double> make_table(std::initializer_list<std::initializer_list<double
     std::size_t i = 0;
     for (const auto& r : rows) {
         std::size_t j = 0;
-        for (double v : r) {
+        for (const double v : r) {
             t(i, j++) = v;
         }
         ++i;
@@ -48,8 +48,8 @@ xt::xarray<double> make_table(std::initializer_list<std::initializer_list<double
 
 double matrix_diff_norm(const xt::xarray<double>& A, const xt::xarray<double>& B) {
     double s = 0.0;
-    auto a = A.begin();
-    auto b = B.begin();
+    const auto* a = A.begin();
+    const auto* b = B.begin();
     for (; a != A.end(); ++a, ++b) {
         const double d = *a - *b;
         s += d * d;
