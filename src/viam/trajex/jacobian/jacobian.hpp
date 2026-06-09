@@ -1,7 +1,5 @@
 #pragma once
 
-#include <Eigen/Core>
-
 #if __has_include(<xtensor/containers/xarray.hpp>)
 #include <xtensor/containers/xarray.hpp>
 #else
@@ -13,8 +11,7 @@ namespace viam::trajex::jacobian {
 // Compute the geometric Jacobian for a URDF-style model table at joint
 // positions q.
 //
-// model_table: (n, 10) tensor in the viam::sdk::ModelTable format
-//              (see viam/sdk/referenceframe/kinematics_model_table.hpp).
+// model_table: (n, 10) tensor in the viam::sdk::ModelTable format.
 // q:           (N_actuated,) vector. One element per revolute row in the
 //              table, in chain order. Fixed rows do not consume a q entry.
 //
@@ -31,11 +28,5 @@ namespace viam::trajex::jacobian {
 //     encoding (propagated from sdk::ModelTable::from).
 xt::xarray<double> compute_jacobian(const xt::xarray<double>& model_table,
                                     const xt::xarray<double>& q);
-
-// Compute the end-effector pose (4x4 homogeneous transform in the base
-// frame) for a URDF-style model table at joint positions q. Same
-// arguments and same throw contract as compute_jacobian.
-Eigen::Matrix4d forward_kinematics(const xt::xarray<double>& model_table,
-                                   const xt::xarray<double>& q);
 
 }  // namespace viam::trajex::jacobian

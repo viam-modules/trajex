@@ -10,8 +10,6 @@
 #include <stdexcept>
 #include <utility>
 
-#include <Eigen/Core>
-
 #if __has_include(<xtensor/containers/xarray.hpp>)
 #include <xtensor/containers/xarray.hpp>
 #else
@@ -25,7 +23,6 @@
 namespace {
 
 using viam::trajex::jacobian::compute_jacobian;
-using viam::trajex::jacobian::forward_kinematics;
 
 // Joint-type encodings for column 9 of the model-table tensor.
 // These match viam::sdk::JointType: revolute=0, continuous=1,
@@ -115,7 +112,78 @@ xt::xarray<double> sixdof_arm_table() {
     };
 }
 
-// Numerical geometric Jacobian via central differences on forward_kinematics.
+// Reference forward kinematics (test oracle). Independent of compute_jacobian:
+// builds the end-effector 4x4 transform straight from the (n, 10) model-table
+// tensor, used to numerically validate the Jacobian.
+
+xt::xarray<double> oracle_identity4() {
+    xt::xarray<double> t = xt::zeros<double>({std::size_t{4}, std::size_t{4}});
+    for (std::size_t i = 0; i < 4; ++i) {
+        t(i, i) = 1.0;
+    }
+    return t;
+}
+
+xt::xarray<double> oracle_matmul(const xt::xarray<double>& a, const xt::xarray<double>& b) {
+    xt::xarray<double> c = xt::zeros<double>({std::size_t{4}, std::size_t{4}});
+    for (std::size_t i = 0; i < 4; ++i) {
+        for (std::size_t j = 0; j < 4; ++j) {
+            double s = 0.0;
+            for (std::size_t k = 0; k < 4; ++k) {
+                s += a(i, k) * b(k, j);
+            }
+            c(i, j) = s;
+        }
+    }
+    return c;
+}
+
+// 4x4 rotation about a unit axis by angle radians (Rodrigues).
+xt::xarray<double> oracle_axis_rotation(double x, double y, double z, double angle) {
+    const double c = std::cos(angle);
+    const double s = std::sin(angle);
+    const double t = 1.0 - c;
+    xt::xarray<double> r = oracle_identity4();
+    r(0, 0) = t * x * x + c;
+    r(0, 1) = t * x * y - s * z;
+    r(0, 2) = t * x * z + s * y;
+    r(1, 0) = t * x * y + s * z;
+    r(1, 1) = t * y * y + c;
+    r(1, 2) = t * y * z - s * x;
+    r(2, 0) = t * x * z - s * y;
+    r(2, 1) = t * y * z + s * x;
+    r(2, 2) = t * z * z + c;
+    return r;
+}
+
+// End-effector 4x4 transform read straight off the model-table tensor: columns
+// 0..2 xyz, 3..5 rpy (fixed-axis XYZ), 6..8 axis, 9 joint type.
+xt::xarray<double> forward_transform(const xt::xarray<double>& table, const xt::xarray<double>& q) {
+    xt::xarray<double> T = oracle_identity4();
+    std::size_t qi = 0;
+    const std::size_t n = table.shape()[0];
+    for (std::size_t r = 0; r < n; ++r) {
+        xt::xarray<double> link =
+            oracle_matmul(oracle_matmul(oracle_axis_rotation(0.0, 0.0, 1.0, table(r, 5)),
+                                        oracle_axis_rotation(0.0, 1.0, 0.0, table(r, 4))),
+                          oracle_axis_rotation(1.0, 0.0, 0.0, table(r, 3)));
+        link(0, 3) = table(r, 0);
+        link(1, 3) = table(r, 1);
+        link(2, 3) = table(r, 2);
+        T = oracle_matmul(T, link);
+
+        if (table(r, 9) == kRev) {
+            const double ax = table(r, 6), ay = table(r, 7), az = table(r, 8);
+            const double an = std::sqrt(ax * ax + ay * ay + az * az);
+            T = oracle_matmul(T, oracle_axis_rotation(ax / an, ay / an, az / an, q(qi)));
+            ++qi;
+        }
+    }
+    return T;
+}
+
+// Numerical geometric Jacobian via central differences on the reference
+// forward_transform, which returns a 4x4 homogeneous transform.
 xt::xarray<double> numerical_jacobian(const xt::xarray<double>& table,
                                        const xt::xarray<double>& q,
                                        double delta = 1e-7) {
@@ -128,20 +196,29 @@ xt::xarray<double> numerical_jacobian(const xt::xarray<double>& table,
         q_plus(i) += delta;
         q_minus(i) -= delta;
 
-        const Eigen::Matrix4d Tp = forward_kinematics(table, q_plus);
-        const Eigen::Matrix4d Tm = forward_kinematics(table, q_minus);
+        const xt::xarray<double> Tp = forward_transform(table, q_plus);
+        const xt::xarray<double> Tm = forward_transform(table, q_minus);
 
         for (std::size_t r = 0; r < 3; ++r) {
             J_num(r, i) = (Tp(r, 3) - Tm(r, 3)) / (2.0 * delta);
         }
 
-        // dR = R_plus * R_minus^T, extract omega from skew-symmetric part.
-        const Eigen::Matrix3d dR =
-            Tp.block<3, 3>(0, 0) * Tm.block<3, 3>(0, 0).transpose();
+        // dR = R_plus * R_minus^T (top-left 3x3 blocks); extract omega from the
+        // skew-symmetric part.
+        std::array<std::array<double, 3>, 3> dR{};
+        for (std::size_t a = 0; a < 3; ++a) {
+            for (std::size_t b = 0; b < 3; ++b) {
+                double s = 0.0;
+                for (std::size_t k = 0; k < 3; ++k) {
+                    s += Tp(a, k) * Tm(b, k);
+                }
+                dR[a][b] = s;
+            }
+        }
         const double scale = 1.0 / (2.0 * delta);
-        J_num(3, i) = 0.5 * (dR(2, 1) - dR(1, 2)) * scale;
-        J_num(4, i) = 0.5 * (dR(0, 2) - dR(2, 0)) * scale;
-        J_num(5, i) = 0.5 * (dR(1, 0) - dR(0, 1)) * scale;
+        J_num(3, i) = 0.5 * (dR[2][1] - dR[1][2]) * scale;
+        J_num(4, i) = 0.5 * (dR[0][2] - dR[2][0]) * scale;
+        J_num(5, i) = 0.5 * (dR[1][0] - dR[0][1]) * scale;
     }
     return J_num;
 }
@@ -267,7 +344,7 @@ BOOST_AUTO_TEST_SUITE(fk_tests)
 
 BOOST_AUTO_TEST_CASE(twolink_zero_ee_at_2_0_0) {
     const auto table = twolink_table();
-    const Eigen::Matrix4d T = forward_kinematics(table, xt::zeros<double>({std::size_t{2}}));
+    const xt::xarray<double> T = forward_transform(table, xt::zeros<double>({std::size_t{2}}));
     BOOST_CHECK_CLOSE(T(0, 3), 2.0, 1e-9);
     BOOST_CHECK_SMALL(std::abs(T(1, 3)), 1e-12);
     BOOST_CHECK_SMALL(std::abs(T(2, 3)), 1e-12);
@@ -276,7 +353,7 @@ BOOST_AUTO_TEST_CASE(twolink_zero_ee_at_2_0_0) {
 BOOST_AUTO_TEST_CASE(twolink_q1_pi_over_2_ee_at_0_2_0) {
     const auto table = twolink_table();
     const xt::xarray<double> q = {std::numbers::pi / 2.0, 0.0};
-    const Eigen::Matrix4d T = forward_kinematics(table, q);
+    const xt::xarray<double> T = forward_transform(table, q);
     BOOST_CHECK_SMALL(std::abs(T(0, 3)), 1e-9);
     BOOST_CHECK_CLOSE(T(1, 3), 2.0, 1e-9);
     BOOST_CHECK_SMALL(std::abs(T(2, 3)), 1e-12);
@@ -285,7 +362,7 @@ BOOST_AUTO_TEST_CASE(twolink_q1_pi_over_2_ee_at_0_2_0) {
 BOOST_AUTO_TEST_CASE(twolink_q2_pi_over_2_ee_at_1_1_0) {
     const auto table = twolink_table();
     const xt::xarray<double> q = {0.0, std::numbers::pi / 2.0};
-    const Eigen::Matrix4d T = forward_kinematics(table, q);
+    const xt::xarray<double> T = forward_transform(table, q);
     BOOST_CHECK_CLOSE(T(0, 3), 1.0, 1e-9);
     BOOST_CHECK_CLOSE(T(1, 3), 1.0, 1e-9);
     BOOST_CHECK_SMALL(std::abs(T(2, 3)), 1e-12);
