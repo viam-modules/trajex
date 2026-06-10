@@ -22,10 +22,9 @@ namespace viam::trajex::jacobian {
 ///         angular-velocity columns J_w_i = w_i, with w_i the world-frame axis
 ///         of revolute joint i, p_i its world position, and p_e the
 ///         end-effector position.
-/// @throws std::invalid_argument on q-size mismatch, unsupported joint type
-///         (continuous or prismatic), or revolute row with zero-magnitude axis
-/// @throws viam::sdk::Exception on malformed tensor shape or invalid
-///         joint-type encoding (propagated from sdk::ModelTable::from)
+/// @throws std::invalid_argument on malformed tensor shape, invalid joint-type
+///         encoding, q-size mismatch, unsupported joint type (continuous or
+///         prismatic), or revolute row with zero-magnitude axis
 ///
 xt::xarray<double> compute_jacobian(const xt::xarray<double>& model_table, const xt::xarray<double>& q);
 

@@ -17,14 +17,12 @@
 
 #include <boost/test/unit_test.hpp>
 
-#include <viam/sdk/common/exception.hpp>
-
 namespace {
 
 using viam::trajex::jacobian::compute_jacobian;
 
 // Joint-type encodings for column 9 of the model-table tensor.
-// These match viam::sdk::JointType: revolute=0, continuous=1,
+// These match viam::sdk::ModelTable::JointType: revolute=0, continuous=1,
 // prismatic=2, fixed=3.
 constexpr double k_rev = 0.0;
 constexpr double k_cont = 1.0;
@@ -426,12 +424,34 @@ BOOST_AUTO_TEST_CASE(rejects_zero_axis_for_revolute) {
     BOOST_CHECK_THROW(compute_jacobian(table, q), std::invalid_argument);
 }
 
-// The SDK throws viam::sdk::Exception on malformed tensor input. Verify
-// we don't swallow or wrap it.
-BOOST_AUTO_TEST_CASE(propagates_sdk_exception_on_bad_shape) {
+BOOST_AUTO_TEST_CASE(rejects_wrong_column_count) {
     const xt::xarray<double> bad = xt::zeros<double>({std::size_t{1}, std::size_t{9}});
     const xt::xarray<double> q = {0.0};
-    BOOST_CHECK_THROW(compute_jacobian(bad, q), viam::sdk::Exception);
+    BOOST_CHECK_THROW(compute_jacobian(bad, q), std::invalid_argument);
+}
+
+BOOST_AUTO_TEST_CASE(rejects_non_2d_tensor) {
+    const xt::xarray<double> bad = xt::zeros<double>({std::size_t{10}});
+    const xt::xarray<double> q = {0.0};
+    BOOST_CHECK_THROW(compute_jacobian(bad, q), std::invalid_argument);
+}
+
+BOOST_AUTO_TEST_CASE(rejects_empty_table) {
+    const xt::xarray<double> bad = xt::zeros<double>({std::size_t{0}, std::size_t{10}});
+    const xt::xarray<double> q = xt::zeros<double>({std::size_t{0}});
+    BOOST_CHECK_THROW(compute_jacobian(bad, q), std::invalid_argument);
+}
+
+BOOST_AUTO_TEST_CASE(rejects_non_integer_joint_type) {
+    const auto table = make_table({{0, 0, 0, 0, 0, 0, 0, 0, 1, 0.5}});
+    const xt::xarray<double> q = {0.0};
+    BOOST_CHECK_THROW(compute_jacobian(table, q), std::invalid_argument);
+}
+
+BOOST_AUTO_TEST_CASE(rejects_unknown_joint_type) {
+    const auto table = make_table({{0, 0, 0, 0, 0, 0, 0, 0, 1, 7.0}});
+    const xt::xarray<double> q = {0.0};
+    BOOST_CHECK_THROW(compute_jacobian(table, q), std::invalid_argument);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

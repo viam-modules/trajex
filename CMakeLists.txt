@@ -279,8 +279,6 @@ target_link_libraries(viam-trajex-totg
   PUBLIC
     xtensor
     xtl
-  PRIVATE
-    viam-cpp-sdk::viamsdk
 )
 
 apply_wall_werror(viam-trajex-totg)
@@ -503,7 +501,6 @@ if (VIAM_TRAJEX_BUILD_TESTS)
     target_link_libraries(viam-trajex-totg-test
       PRIVATE
       viam::trajex::totg::tools
-      viam-cpp-sdk::viamsdk
       Boost::boost
       jsoncpp_lib
     )
