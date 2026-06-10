@@ -1,6 +1,5 @@
-// Tests for the simplified jacobian module (Option B: plain-return API,
-// model table consumed as an xt::xarray<double> tensor in the
-// viam::sdk::ModelTable format).
+// Tests for the jacobian module. compute_jacobian consumes the model table as
+// an xt::xarray<double> tensor in the viam::sdk::ModelTable format.
 
 #include <viam/trajex/jacobian/jacobian.hpp>
 
@@ -27,10 +26,10 @@ using viam::trajex::jacobian::compute_jacobian;
 // Joint-type encodings for column 9 of the model-table tensor.
 // These match viam::sdk::JointType: revolute=0, continuous=1,
 // prismatic=2, fixed=3.
-constexpr double kRev = 0.0;
-constexpr double kCont = 1.0;
-constexpr double kPris = 2.0;
-constexpr double kFix = 3.0;
+constexpr double k_rev = 0.0;
+constexpr double k_cont = 1.0;
+constexpr double k_pris = 2.0;
+constexpr double k_fix = 3.0;
 
 xt::xarray<double> make_table(std::initializer_list<std::initializer_list<double>> rows) {
     const std::size_t n = rows.size();
@@ -85,34 +84,34 @@ twist J_times_qdot(const xt::xarray<double>& J, const xt::xarray<double>& q_dot)
 // Two 1m planar links rotating about z, ending in a 1m fixed flange.
 xt::xarray<double> twolink_table() {
     return xt::xarray<double>{
-        {0, 0, 0, 0, 0, 0, 0, 0, 1, kRev},
-        {1, 0, 0, 0, 0, 0, 0, 0, 1, kRev},
-        {1, 0, 0, 0, 0, 0, 0, 0, 0, kFix},
+        {0, 0, 0, 0, 0, 0, 0, 0, 1, k_rev},
+        {1, 0, 0, 0, 0, 0, 0, 0, 1, k_rev},
+        {1, 0, 0, 0, 0, 0, 0, 0, 0, k_fix},
     };
 }
 
 // 3 revolute joints separated by fixed 1m spacers, ending in a 1m flange.
 xt::xarray<double> threelink_with_spacers_table() {
     return xt::xarray<double>{
-        {0, 0, 0, 0, 0, 0, 0, 0, 1, kRev},
-        {1, 0, 0, 0, 0, 0, 0, 0, 0, kFix},
-        {0, 0, 0, 0, 0, 0, 0, 0, 1, kRev},
-        {1, 0, 0, 0, 0, 0, 0, 0, 0, kFix},
-        {0, 0, 0, 0, 0, 0, 0, 0, 1, kRev},
-        {1, 0, 0, 0, 0, 0, 0, 0, 0, kFix},
+        {0, 0, 0, 0, 0, 0, 0, 0, 1, k_rev},
+        {1, 0, 0, 0, 0, 0, 0, 0, 0, k_fix},
+        {0, 0, 0, 0, 0, 0, 0, 0, 1, k_rev},
+        {1, 0, 0, 0, 0, 0, 0, 0, 0, k_fix},
+        {0, 0, 0, 0, 0, 0, 0, 0, 1, k_rev},
+        {1, 0, 0, 0, 0, 0, 0, 0, 0, k_fix},
     };
 }
 
 // 6-revolute spatial chain mimicking a UR-like structure.
 xt::xarray<double> sixdof_arm_table() {
     return xt::xarray<double>{
-        {0, 0, 0.10, 0, 0, 0, 0, 0, 1, kRev},
-        {0, 0, 0.15, 0, 0, 0, 0, 1, 0, kRev},
-        {0.4, 0, 0, 0, 0, 0, 0, 1, 0, kRev},
-        {0.4, 0, 0, 0, 0, 0, 0, 1, 0, kRev},
-        {0, 0, 0.10, 0, 0, 0, 1, 0, 0, kRev},
-        {0, 0, 0.10, 0, 0, 0, 0, 0, 1, kRev},
-        {0, 0, 0.05, 0, 0, 0, 0, 0, 0, kFix},
+        {0, 0, 0.10, 0, 0, 0, 0, 0, 1, k_rev},
+        {0, 0, 0.15, 0, 0, 0, 0, 1, 0, k_rev},
+        {0.4, 0, 0, 0, 0, 0, 0, 1, 0, k_rev},
+        {0.4, 0, 0, 0, 0, 0, 0, 1, 0, k_rev},
+        {0, 0, 0.10, 0, 0, 0, 1, 0, 0, k_rev},
+        {0, 0, 0.10, 0, 0, 0, 0, 0, 1, k_rev},
+        {0, 0, 0.05, 0, 0, 0, 0, 0, 0, k_fix},
     };
 }
 
@@ -175,7 +174,7 @@ xt::xarray<double> forward_transform(const xt::xarray<double>& table, const xt::
         link(2, 3) = table(r, 2);
         T = oracle_matmul(T, link);
 
-        if (table(r, 9) == kRev) {
+        if (table(r, 9) == k_rev) {
             const double ax = table(r, 6);
             const double ay = table(r, 7);
             const double az = table(r, 8);
@@ -234,10 +233,8 @@ void check_matches_numerical(const xt::xarray<double>& table, const xt::xarray<d
 
 }  // namespace
 
-// ============================================================================
-// Velocity tests: J * q_dot produces the expected Cartesian velocity.
-// ============================================================================
-
+// The tests in this suite validate that `J * q_dot` produces the expected
+// Cartesian velocity.
 BOOST_AUTO_TEST_SUITE(jacobian_velocity_tests)
 
 BOOST_AUTO_TEST_CASE(twolink_base_spin_extended) {
@@ -278,10 +275,8 @@ BOOST_AUTO_TEST_CASE(twolink_base_spin_bent) {
 
 BOOST_AUTO_TEST_SUITE_END()
 
-// ============================================================================
-// Ground-truth tests: hand-computed Jacobian values.
-// ============================================================================
-
+// The tests in this suite check compute_jacobian against hand-computed
+// Jacobian values.
 BOOST_AUTO_TEST_SUITE(jacobian_ground_truth_tests)
 
 BOOST_AUTO_TEST_CASE(twolink_zero) {
@@ -334,11 +329,8 @@ BOOST_AUTO_TEST_CASE(twolink_q2_ninety) {
 
 BOOST_AUTO_TEST_SUITE_END()
 
-// ============================================================================
-// FK basic checks. The numerical-consistency suite depends on FK being
-// correct, so verify a few easy cases directly.
-// ============================================================================
-
+// The numerical-consistency suite depends on the reference forward kinematics
+// being correct, so the tests in this suite verify a few easy cases directly.
 BOOST_AUTO_TEST_SUITE(fk_tests)
 
 BOOST_AUTO_TEST_CASE(twolink_zero_ee_at_2_0_0) {
@@ -369,10 +361,8 @@ BOOST_AUTO_TEST_CASE(twolink_q2_pi_over_2_ee_at_1_1_0) {
 
 BOOST_AUTO_TEST_SUITE_END()
 
-// ============================================================================
-// Numerical consistency: analytical Jacobian == central-difference Jacobian.
-// ============================================================================
-
+// The tests in this suite check the analytical Jacobian against a
+// central-difference numerical Jacobian.
 BOOST_AUTO_TEST_SUITE(jacobian_numerical_consistency_tests)
 
 BOOST_AUTO_TEST_CASE(twolink_zero) {
@@ -409,10 +399,7 @@ BOOST_AUTO_TEST_CASE(sixdof_typical) {
 
 BOOST_AUTO_TEST_SUITE_END()
 
-// ============================================================================
-// Error handling.
-// ============================================================================
-
+// The tests in this suite verify error handling for invalid inputs.
 BOOST_AUTO_TEST_SUITE(jacobian_error_tests)
 
 BOOST_AUTO_TEST_CASE(rejects_wrong_q_size) {
@@ -422,19 +409,19 @@ BOOST_AUTO_TEST_CASE(rejects_wrong_q_size) {
 }
 
 BOOST_AUTO_TEST_CASE(rejects_continuous_joint) {
-    const auto table = make_table({{0, 0, 0, 0, 0, 0, 0, 0, 1, kCont}});
+    const auto table = make_table({{0, 0, 0, 0, 0, 0, 0, 0, 1, k_cont}});
     const xt::xarray<double> q = {0.0};
     BOOST_CHECK_THROW(compute_jacobian(table, q), std::invalid_argument);
 }
 
 BOOST_AUTO_TEST_CASE(rejects_prismatic_joint) {
-    const auto table = make_table({{0, 0, 0, 0, 0, 0, 0, 0, 1, kPris}});
+    const auto table = make_table({{0, 0, 0, 0, 0, 0, 0, 0, 1, k_pris}});
     const xt::xarray<double> q = {0.0};
     BOOST_CHECK_THROW(compute_jacobian(table, q), std::invalid_argument);
 }
 
 BOOST_AUTO_TEST_CASE(rejects_zero_axis_for_revolute) {
-    const auto table = make_table({{0, 0, 0, 0, 0, 0, 0, 0, 0, kRev}});
+    const auto table = make_table({{0, 0, 0, 0, 0, 0, 0, 0, 0, k_rev}});
     const xt::xarray<double> q = {0.0};
     BOOST_CHECK_THROW(compute_jacobian(table, q), std::invalid_argument);
 }
