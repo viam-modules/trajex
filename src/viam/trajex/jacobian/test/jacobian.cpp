@@ -24,9 +24,8 @@ xt::xarray<double> compute_jacobian(const xt::xarray<double>& table, const xt::x
     return kinematic_chain::from(table).jacobian(q);
 }
 
-// Joint-type encodings for column 9 of the model-table tensor.
-// These match viam::sdk::ModelTable::JointType: revolute=0, continuous=1,
-// prismatic=2, fixed=3.
+// Joint-type encodings for column 9 of the model-table tensor; values match
+// viam::sdk::ModelTable::JointType.
 constexpr double k_rev = 0.0;
 constexpr double k_cont = 1.0;
 constexpr double k_pris = 2.0;
@@ -116,9 +115,10 @@ xt::xarray<double> sixdof_arm_table() {
     };
 }
 
-// Reference forward kinematics (test oracle). Independent of kinematic_chain:
-// builds the end-effector 4x4 transform straight from the (n, 10) model-table
-// tensor, used to numerically validate the Jacobian.
+// Reference forward kinematics used as the test oracle. It rebuilds the
+// end-effector transform straight from the tensor, deliberately independent
+// of kinematic_chain, so checking the analytical Jacobian against numerical
+// derivatives of this oracle is not circular.
 
 xt::xarray<double> oracle_identity4() {
     xt::xarray<double> t = xt::zeros<double>({std::size_t{4}, std::size_t{4}});
@@ -160,8 +160,8 @@ xt::xarray<double> oracle_axis_rotation(double x, double y, double z, double ang
     return r;
 }
 
-// End-effector 4x4 transform read straight off the model-table tensor: columns
-// 0..2 xyz, 3..5 rpy (fixed-axis XYZ), 6..8 axis, 9 joint type.
+// Tensor columns: 0..2 xyz, 3..5 rpy (fixed-axis XYZ), 6..8 axis, 9 joint
+// type.
 xt::xarray<double> forward_transform(const xt::xarray<double>& table, const xt::xarray<double>& q) {
     xt::xarray<double> T = oracle_identity4();
     std::size_t qi = 0;
@@ -187,8 +187,8 @@ xt::xarray<double> forward_transform(const xt::xarray<double>& table, const xt::
     return T;
 }
 
-// Numerical geometric Jacobian via central differences on the reference
-// forward_transform, which returns a 4x4 homogeneous transform.
+// Numerical geometric Jacobian via central differences on the oracle's
+// forward_transform.
 xt::xarray<double> numerical_jacobian(const xt::xarray<double>& table, const xt::xarray<double>& q, double delta = 1e-7) {
     const std::size_t n_actuated = q.size();
     xt::xarray<double> J_num = xt::zeros<double>({std::size_t{6}, n_actuated});
