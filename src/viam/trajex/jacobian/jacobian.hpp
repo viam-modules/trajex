@@ -18,29 +18,11 @@ namespace viam::trajex::jacobian {
 /// A validated URDF-style serial kinematic chain, parsed from an (n, 10)
 /// model-table tensor and held in chain order.
 ///
-/// Build one with the `from` factory. Construction validates the chain, so a
-/// constructed chain always satisfies the class invariant: every row is
-/// revolute or fixed, and every revolute row has a non-zero axis. Parse once
-/// and reuse across `jacobian()` calls to avoid re-validating the tensor on
-/// every evaluation.
-///
-/// **Thread safety**: All const methods are thread-safe for concurrent access.
-///
-/// Example usage:
-/// @code
-///   const auto chain = kinematic_chain::from(tensor);  // (n, 10) tensor
-///   xt::xarray<double> J = chain.jacobian(q);          // (6, N_actuated)
-/// @endcode
-///
 class kinematic_chain {
    public:
     ///
     /// Parses an (n, 10) tensor in the viam::sdk::ModelTable format into a
     /// kinematic chain.
-    ///
-    /// Columns: 0..2 xyz, 3..5 rpy, 6..8 axis, 9 joint type encoded as
-    /// revolute=0, continuous=1, prismatic=2, fixed=3 (matching
-    /// viam::sdk::ModelTable::JointType).
     ///
     /// @param tensor (n, 10) tensor in the viam::sdk::ModelTable format
     /// @return Validated kinematic chain
@@ -68,10 +50,6 @@ class kinematic_chain {
     ///
     /// Computes the linear-velocity block of the geometric Jacobian at joint
     /// positions q.
-    ///
-    /// Equivalent to rows 0..2 of `jacobian(q)`: column i is
-    /// J_v_i = w_i x (p_e - p_i). Use when only the Cartesian linear velocity
-    /// is needed.
     ///
     /// @param q (N_actuated,) vector with one element per revolute row in the
     ///        table, in chain order. Fixed rows do not consume a q entry.
@@ -101,17 +79,18 @@ class kinematic_chain {
         joint_type type = joint_type::k_fixed;
     };
 
-    // Accumulated chain-walk results shared by both Jacobian assemblies;
-    // defined in jacobian.cpp.
+    // Per-revolute-joint world-frame axes and origins plus the end-effector
+    // position.
     struct chain_state;
 
     // Validates the rows (joint types, axes) and counts actuated joints; all
     // public construction funnels through here via `from`.
     explicit kinematic_chain(std::vector<joint_row> rows);
 
-    // Walks the chain at joint positions q. Throws std::invalid_argument on
-    // q-size mismatch.
-    chain_state walk_chain(const xt::xarray<double>& q) const;
+    // Evaluates the forward kinematics at joint positions q, capturing the
+    // per-joint quantities the Jacobian assemblies need. Throws
+    // std::invalid_argument on q-size mismatch.
+    chain_state compute_chain_state(const xt::xarray<double>& q) const;
 
     std::vector<joint_row> rows_;
     std::size_t actuated_count_ = 0;

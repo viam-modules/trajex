@@ -446,7 +446,7 @@ BOOST_AUTO_TEST_CASE(rejects_wrong_q_size) {
 BOOST_AUTO_TEST_CASE(linear_jacobian_rejects_wrong_q_size) {
     const auto chain = kinematic_chain::from(twolink_table());
     const xt::xarray<double> q_bad = {0.0, 0.0, 0.0};
-    BOOST_CHECK_THROW(chain.linear_jacobian(q_bad), std::invalid_argument);
+    BOOST_CHECK_THROW(static_cast<void>(chain.linear_jacobian(q_bad)), std::invalid_argument);
 }
 
 BOOST_AUTO_TEST_CASE(rejects_continuous_joint) {

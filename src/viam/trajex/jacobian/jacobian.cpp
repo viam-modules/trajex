@@ -100,8 +100,8 @@ vec3 translation(const xt::xarray<double>& transform) {
 
 }  // namespace
 
-// Accumulated chain-walk results: per-revolute-joint world-frame axis and
-// origin, plus the end-effector position after the full walk. With these in
+// Per-revolute-joint world-frame axis and origin, plus the end-effector
+// position, captured while evaluating the forward kinematics. With these in
 // hand, Jacobian column i is J_v_i = axes[i] x (p_e - positions[i]) (linear)
 // stacked on J_w_i = axes[i] (angular).
 struct kinematic_chain::chain_state {
@@ -110,10 +110,10 @@ struct kinematic_chain::chain_state {
     vec3 p_e;
 };
 
-// Walk the chain. For each revolute joint, capture its world-frame axis and
-// origin before applying joint motion (equivalent to post-motion for rotation
-// about own axis; using pre-motion is clearer).
-kinematic_chain::chain_state kinematic_chain::walk_chain(const xt::xarray<double>& q) const {
+// Evaluate the forward kinematics row by row (base to end-effector),
+// accumulating the running link transform. For each revolute joint, capture
+// its world-frame axis and origin before applying joint motion.
+kinematic_chain::chain_state kinematic_chain::compute_chain_state(const xt::xarray<double>& q) const {
     if (q.size() != actuated_count_) {
         throw std::invalid_argument("viam::trajex::jacobian: q size mismatch: expected " + std::to_string(actuated_count_) +
                                     " (actuated joints), got " + std::to_string(q.size()));
@@ -200,7 +200,7 @@ kinematic_chain kinematic_chain::from(const xt::xarray<double>& tensor) {
 }
 
 xt::xarray<double> kinematic_chain::jacobian(const xt::xarray<double>& q) const {
-    const chain_state state = walk_chain(q);
+    const chain_state state = compute_chain_state(q);
 
     xt::xarray<double> J = xt::zeros<double>({std::size_t{6}, actuated_count_});
     for (std::size_t i = 0; i < actuated_count_; ++i) {
@@ -218,7 +218,7 @@ xt::xarray<double> kinematic_chain::jacobian(const xt::xarray<double>& q) const 
 }
 
 xt::xarray<double> kinematic_chain::linear_jacobian(const xt::xarray<double>& q) const {
-    const chain_state state = walk_chain(q);
+    const chain_state state = compute_chain_state(q);
 
     xt::xarray<double> J = xt::zeros<double>({std::size_t{3}, actuated_count_});
     for (std::size_t i = 0; i < actuated_count_; ++i) {
