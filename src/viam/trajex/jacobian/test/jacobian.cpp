@@ -1,8 +1,10 @@
-// Tests for the jacobian module. compute_jacobian consumes the model table as
-// an xt::xarray<double> tensor in the viam::sdk::ModelTable format.
+// Tests for the jacobian module. kinematic_chain parses an xt::xarray<double>
+// tensor in the viam::sdk::ModelTable format and computes the geometric
+// Jacobian at given joint positions.
 
 #include <viam/trajex/jacobian/jacobian.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <numbers>
@@ -19,7 +21,12 @@
 
 namespace {
 
-using viam::trajex::jacobian::compute_jacobian;
+using viam::trajex::jacobian::kinematic_chain;
+
+// One-shot convenience for tests: parse the tensor and evaluate at q.
+xt::xarray<double> compute_jacobian(const xt::xarray<double>& table, const xt::xarray<double>& q) {
+    return kinematic_chain::from(table).jacobian(q);
+}
 
 // Joint-type encodings for column 9 of the model-table tensor.
 // These match viam::sdk::ModelTable::JointType: revolute=0, continuous=1,
@@ -113,7 +120,7 @@ xt::xarray<double> sixdof_arm_table() {
     };
 }
 
-// Reference forward kinematics (test oracle). Independent of compute_jacobian:
+// Reference forward kinematics (test oracle). Independent of kinematic_chain:
 // builds the end-effector 4x4 transform straight from the (n, 10) model-table
 // tensor, used to numerically validate the Jacobian.
 
@@ -273,7 +280,7 @@ BOOST_AUTO_TEST_CASE(twolink_base_spin_bent) {
 
 BOOST_AUTO_TEST_SUITE_END()
 
-// The tests in this suite check compute_jacobian against hand-computed
+// The tests in this suite check kinematic_chain::jacobian against hand-computed
 // Jacobian values.
 BOOST_AUTO_TEST_SUITE(jacobian_ground_truth_tests)
 
@@ -397,6 +404,40 @@ BOOST_AUTO_TEST_CASE(sixdof_typical) {
 
 BOOST_AUTO_TEST_SUITE_END()
 
+// The tests in this suite cover kinematic_chain itself: reuse of one parsed
+// chain across evaluations and agreement between the two Jacobian entry
+// points.
+BOOST_AUTO_TEST_SUITE(kinematic_chain_tests)
+
+BOOST_AUTO_TEST_CASE(parsed_chain_is_reusable_across_evaluations) {
+    const auto chain = kinematic_chain::from(twolink_table());
+    const xt::xarray<double> q1 = {0.3, -0.7};
+    const xt::xarray<double> q2 = {-1.1, 0.4};
+
+    BOOST_CHECK_SMALL(matrix_diff_norm(chain.jacobian(q1), compute_jacobian(twolink_table(), q1)), 1e-15);
+    BOOST_CHECK_SMALL(matrix_diff_norm(chain.jacobian(q2), compute_jacobian(twolink_table(), q2)), 1e-15);
+}
+
+BOOST_AUTO_TEST_CASE(linear_jacobian_matches_jacobian_linear_block) {
+    const auto chain = kinematic_chain::from(sixdof_arm_table());
+    const xt::xarray<double> q = {0.1, -0.5, 1.2, -0.3, 0.6, -0.1};
+
+    const auto J = chain.jacobian(q);
+    const auto J_lin = chain.linear_jacobian(q);
+    BOOST_REQUIRE_EQUAL(J_lin.shape()[0], 3u);
+    BOOST_REQUIRE_EQUAL(J_lin.shape()[1], 6u);
+
+    double max_abs_diff = 0.0;
+    for (std::size_t i = 0; i < 3; ++i) {
+        for (std::size_t j = 0; j < 6; ++j) {
+            max_abs_diff = std::max(max_abs_diff, std::abs(J_lin(i, j) - J(i, j)));
+        }
+    }
+    BOOST_CHECK_SMALL(max_abs_diff, 1e-15);
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
 // The tests in this suite verify error handling for invalid inputs.
 BOOST_AUTO_TEST_SUITE(jacobian_error_tests)
 
@@ -404,6 +445,12 @@ BOOST_AUTO_TEST_CASE(rejects_wrong_q_size) {
     const auto table = twolink_table();
     const xt::xarray<double> q_bad = {0.0, 0.0, 0.0};
     BOOST_CHECK_THROW(compute_jacobian(table, q_bad), std::invalid_argument);
+}
+
+BOOST_AUTO_TEST_CASE(linear_jacobian_rejects_wrong_q_size) {
+    const auto chain = kinematic_chain::from(twolink_table());
+    const xt::xarray<double> q_bad = {0.0, 0.0, 0.0};
+    BOOST_CHECK_THROW(chain.linear_jacobian(q_bad), std::invalid_argument);
 }
 
 BOOST_AUTO_TEST_CASE(rejects_continuous_joint) {

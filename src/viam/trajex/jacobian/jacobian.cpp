@@ -5,28 +5,14 @@
 #include <cstddef>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace viam::trajex::jacobian {
 
 namespace {
 
-// TODO(RSDK-14104): Remove duplicated code that exists in the viam-cpp-sdk
 using vec3 = std::array<double, 3>;
-
-// Joint-type encodings for column 9 of the model-table tensor. These match
-// viam::sdk::ModelTable::JointType: revolute=0, continuous=1, prismatic=2,
-// fixed=3.
-enum class joint_type : int { k_revolute = 0, k_continuous = 1, k_prismatic = 2, k_fixed = 3 };
-
-// One unpacked row of the model-table tensor: columns 0..2 xyz, 3..5 rpy
-// (fixed-axis XYZ), 6..8 axis, 9 joint type.
-struct joint_row {
-    vec3 xyz;
-    vec3 rpy;
-    vec3 axis;
-    joint_type type;
-};
 
 double dot(const vec3& a, const vec3& b) {
     return (a[0] * b[0]) + (a[1] * b[1]) + (a[2] * b[2]);
@@ -37,60 +23,9 @@ vec3 cross(const vec3& a, const vec3& b) {
 double norm(const vec3& a) {
     return std::sqrt(dot(a, a));
 }
-
-// Validate the model-table tensor and unpack it into rows. Throws
-// std::invalid_argument on malformed shape, invalid joint-type encoding,
-// unsupported joint type (continuous or prismatic), or revolute row with
-// zero-magnitude axis.
-std::vector<joint_row> parse_model_table(const xt::xarray<double>& tensor) {
-    if (tensor.dimension() != 2) {
-        throw std::invalid_argument("viam::trajex::jacobian: expected 2D model-table tensor, got " + std::to_string(tensor.dimension()) +
-                                    "D");
-    }
-    if (tensor.shape()[1] != 10) {
-        throw std::invalid_argument("viam::trajex::jacobian: expected model-table shape (n, 10), got (n, " +
-                                    std::to_string(tensor.shape()[1]) + ")");
-    }
-    if (tensor.shape()[0] == 0) {
-        throw std::invalid_argument("viam::trajex::jacobian: empty model table");
-    }
-
-    std::vector<joint_row> rows;
-    rows.reserve(tensor.shape()[0]);
-    for (std::size_t i = 0; i < tensor.shape()[0]; ++i) {
-        const double type_value = tensor(i, 9);
-        const int type_int = static_cast<int>(type_value);
-        if (static_cast<double>(type_int) != type_value) {
-            throw std::invalid_argument("viam::trajex::jacobian: row " + std::to_string(i) + " joint type value " +
-                                        std::to_string(type_value) + " is not an integer");
-        }
-
-        joint_row row;
-        row.xyz = {tensor(i, 0), tensor(i, 1), tensor(i, 2)};
-        row.rpy = {tensor(i, 3), tensor(i, 4), tensor(i, 5)};
-        row.axis = {tensor(i, 6), tensor(i, 7), tensor(i, 8)};
-        row.type = static_cast<joint_type>(type_int);
-
-        switch (row.type) {
-            case joint_type::k_revolute:
-                if (dot(row.axis, row.axis) < 1e-24) {
-                    throw std::invalid_argument("viam::trajex::jacobian: row " + std::to_string(i) +
-                                                " is a revolute joint with zero-magnitude axis");
-                }
-                break;
-            case joint_type::k_fixed:
-                break;
-            case joint_type::k_continuous:
-            case joint_type::k_prismatic:
-                throw std::invalid_argument("viam::trajex::jacobian: row " + std::to_string(i) +
-                                            " has unsupported joint type (only revolute and fixed are supported)");
-            default:
-                throw std::invalid_argument("viam::trajex::jacobian: row " + std::to_string(i) + " joint type value " +
-                                            std::to_string(type_int) + " does not match any joint type");
-        }
-        rows.push_back(row);
-    }
-    return rows;
+vec3 normalized(const vec3& a) {
+    const double n = norm(a);
+    return {a[0] / n, a[1] / n, a[2] / n};
 }
 
 xt::xarray<double> identity4() {
@@ -163,74 +98,136 @@ vec3 translation(const xt::xarray<double>& transform) {
     return {transform(0, 3), transform(1, 3), transform(2, 3)};
 }
 
-void check_q_size(std::size_t n_actuated, std::size_t q_size) {
-    if (q_size != n_actuated) {
-        throw std::invalid_argument("viam::trajex::jacobian: q size mismatch: expected " + std::to_string(n_actuated) +
-                                    " (actuated joints), got " + std::to_string(q_size));
-    }
-}
+}  // namespace
 
-// Accumulated end-effector transform plus, for each revolute joint, its
-// world-frame axis and origin captured before its motion is applied.
-struct chain_state {
-    xt::xarray<double> transform;
+// Accumulated chain-walk results: per-revolute-joint world-frame axis and
+// origin, plus the end-effector position after the full walk. With these in
+// hand, Jacobian column i is J_v_i = axes[i] x (p_e - positions[i]) (linear)
+// stacked on J_w_i = axes[i] (angular).
+struct kinematic_chain::chain_state {
     std::vector<vec3> axes;
     std::vector<vec3> positions;
+    vec3 p_e;
 };
 
 // Walk the chain. For each revolute joint, capture its world-frame axis and
 // origin before applying joint motion (equivalent to post-motion for rotation
 // about own axis; using pre-motion is clearer).
-chain_state run_chain(const std::vector<joint_row>& rows, const xt::xarray<double>& q) {
-    std::size_t n_actuated = 0;
-    for (const auto& row : rows) {
-        if (row.type == joint_type::k_revolute) {
-            ++n_actuated;
-        }
+kinematic_chain::chain_state kinematic_chain::walk_chain(const xt::xarray<double>& q) const {
+    if (q.size() != actuated_count_) {
+        throw std::invalid_argument("viam::trajex::jacobian: q size mismatch: expected " + std::to_string(actuated_count_) +
+                                    " (actuated joints), got " + std::to_string(q.size()));
     }
-    check_q_size(n_actuated, q.size());
 
-    chain_state state{identity4(), {}, {}};
-    state.axes.reserve(n_actuated);
-    state.positions.reserve(n_actuated);
+    chain_state state;
+    state.axes.reserve(actuated_count_);
+    state.positions.reserve(actuated_count_);
 
+    xt::xarray<double> T = identity4();
     std::size_t qi = 0;
-    for (const auto& row : rows) {
-        state.transform = matmul4(state.transform, link_transform(row.xyz, row.rpy));
+    for (const joint_row& row : rows_) {
+        T = matmul4(T, link_transform(row.xyz, row.rpy));
 
         if (row.type == joint_type::k_revolute) {
-            const double n = norm(row.axis);
-            const vec3 axis_local{row.axis[0] / n, row.axis[1] / n, row.axis[2] / n};
-            state.axes.push_back(rotate(state.transform, axis_local));
-            state.positions.push_back(translation(state.transform));
+            const vec3 axis_local = normalized(row.axis);
+            state.axes.push_back(rotate(T, axis_local));
+            state.positions.push_back(translation(T));
 
-            state.transform = matmul4(state.transform, axis_rotation4(axis_local, q(qi)));
+            T = matmul4(T, axis_rotation4(axis_local, q(qi)));
             ++qi;
         }
         // fixed: no motion to apply.
     }
+    state.p_e = translation(T);
     return state;
 }
 
-}  // namespace
+kinematic_chain::kinematic_chain(std::vector<joint_row> rows) : rows_(std::move(rows)) {
+    if (rows_.empty()) {
+        throw std::invalid_argument("viam::trajex::jacobian: empty model table");
+    }
+    for (std::size_t i = 0; i < rows_.size(); ++i) {
+        const joint_row& row = rows_[i];
+        switch (row.type) {
+            case joint_type::k_revolute:
+                if (dot(row.axis, row.axis) < 1e-24) {
+                    throw std::invalid_argument("viam::trajex::jacobian: row " + std::to_string(i) +
+                                                " is a revolute joint with zero-magnitude axis");
+                }
+                ++actuated_count_;
+                break;
+            case joint_type::k_fixed:
+                break;
+            case joint_type::k_continuous:
+            case joint_type::k_prismatic:
+                throw std::invalid_argument("viam::trajex::jacobian: row " + std::to_string(i) +
+                                            " has unsupported joint type (only revolute and fixed are supported)");
+            default:
+                throw std::invalid_argument("viam::trajex::jacobian: row " + std::to_string(i) +
+                                            " joint type does not match any joint_type value");
+        }
+    }
+}
 
-xt::xarray<double> compute_jacobian(const xt::xarray<double>& model_table, const xt::xarray<double>& q) {
-    const std::vector<joint_row> rows = parse_model_table(model_table);
-    const chain_state state = run_chain(rows, q);
-    const std::size_t n_actuated = state.axes.size();
-    const vec3 p_e = translation(state.transform);
+kinematic_chain kinematic_chain::from(const xt::xarray<double>& tensor) {
+    if (tensor.dimension() != 2) {
+        throw std::invalid_argument("viam::trajex::jacobian: expected 2D model-table tensor, got " + std::to_string(tensor.dimension()) +
+                                    "D");
+    }
+    if (tensor.shape()[1] != 10) {
+        throw std::invalid_argument("viam::trajex::jacobian: expected model-table shape (n, 10), got (n, " +
+                                    std::to_string(tensor.shape()[1]) + ")");
+    }
 
-    xt::xarray<double> J = xt::zeros<double>({std::size_t{6}, n_actuated});
-    for (std::size_t i = 0; i < n_actuated; ++i) {
+    std::vector<joint_row> rows;
+    rows.reserve(tensor.shape()[0]);
+    for (std::size_t i = 0; i < tensor.shape()[0]; ++i) {
+        const double type_value = tensor(i, 9);
+        const int type_int = static_cast<int>(type_value);
+        if (static_cast<double>(type_int) != type_value) {
+            throw std::invalid_argument("viam::trajex::jacobian: row " + std::to_string(i) + " joint type value " +
+                                        std::to_string(type_value) + " is not an integer");
+        }
+
+        joint_row row;
+        row.xyz = {tensor(i, 0), tensor(i, 1), tensor(i, 2)};
+        row.rpy = {tensor(i, 3), tensor(i, 4), tensor(i, 5)};
+        row.axis = {tensor(i, 6), tensor(i, 7), tensor(i, 8)};
+        row.type = static_cast<joint_type>(type_int);
+        rows.push_back(row);
+    }
+    return kinematic_chain(std::move(rows));
+}
+
+xt::xarray<double> kinematic_chain::jacobian(const xt::xarray<double>& q) const {
+    const chain_state state = walk_chain(q);
+
+    xt::xarray<double> J = xt::zeros<double>({std::size_t{6}, actuated_count_});
+    for (std::size_t i = 0; i < actuated_count_; ++i) {
         const vec3& w = state.axes[i];
         const vec3& p = state.positions[i];
-        const vec3 jv = cross(w, {p_e[0] - p[0], p_e[1] - p[1], p_e[2] - p[2]});
+        const vec3 jv = cross(w, {state.p_e[0] - p[0], state.p_e[1] - p[1], state.p_e[2] - p[2]});
         J(0, i) = jv[0];
         J(1, i) = jv[1];
         J(2, i) = jv[2];
         J(3, i) = w[0];
         J(4, i) = w[1];
         J(5, i) = w[2];
+    }
+    return J;
+}
+
+xt::xarray<double> kinematic_chain::linear_jacobian(const xt::xarray<double>& q) const {
+    const chain_state state = walk_chain(q);
+
+    xt::xarray<double> J = xt::zeros<double>({std::size_t{3}, actuated_count_});
+    for (std::size_t i = 0; i < actuated_count_; ++i) {
+        const vec3& w = state.axes[i];
+        const vec3& p = state.positions[i];
+        const vec3 jv = cross(w, {state.p_e[0] - p[0], state.p_e[1] - p[1], state.p_e[2] - p[2]});
+        J(0, i) = jv[0];
+        J(1, i) = jv[1];
+        J(2, i) = jv[2];
     }
     return J;
 }
