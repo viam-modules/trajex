@@ -1,7 +1,3 @@
-// Tests for the jacobian module. kinematic_chain parses an xt::xarray<double>
-// tensor in the viam::sdk::ModelTable format and computes the geometric
-// Jacobian at given joint positions.
-
 #include <viam/trajex/jacobian/jacobian.hpp>
 
 #include <algorithm>
