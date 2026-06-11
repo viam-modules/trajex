@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <vector>
 
 #if __has_include(<xtensor/containers/xarray.hpp>)
@@ -62,7 +63,7 @@ class kinematic_chain {
     // URDF joint type, restricted to arm-relevant joints. Underlying values
     // are the column-9 wire encoding accepted by `from`, and match
     // viam::sdk::ModelTable::JointType.
-    enum class joint_type {
+    enum class joint_type : std::uint8_t {
         k_revolute = 0,
         k_continuous = 1,
         k_prismatic = 2,

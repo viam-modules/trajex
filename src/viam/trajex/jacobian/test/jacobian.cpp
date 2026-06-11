@@ -420,8 +420,8 @@ BOOST_AUTO_TEST_CASE(linear_jacobian_matches_jacobian_linear_block) {
 
     const auto J = chain.jacobian(q);
     const auto J_lin = chain.linear_jacobian(q);
-    BOOST_REQUIRE_EQUAL(J_lin.shape()[0], 3u);
-    BOOST_REQUIRE_EQUAL(J_lin.shape()[1], 6u);
+    BOOST_REQUIRE_EQUAL(J_lin.shape()[0], 3U);
+    BOOST_REQUIRE_EQUAL(J_lin.shape()[1], 6U);
 
     double max_abs_diff = 0.0;
     for (std::size_t i = 0; i < 3; ++i) {
