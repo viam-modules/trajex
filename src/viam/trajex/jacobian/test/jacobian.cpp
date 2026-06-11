@@ -115,12 +115,13 @@ xt::xarray<double> sixdof_arm_table() {
     };
 }
 
-// Reference forward kinematics used as the test oracle. It rebuilds the
-// end-effector transform straight from the tensor, deliberately independent
-// of kinematic_chain, so checking the analytical Jacobian against numerical
-// derivatives of this oracle is not circular.
+// The analytic Jacobian in kinematic_chain is the being tested, so it
+// cannot be its own evidence. The Jacobian's defining property is that it is
+// the derivative of the forward kinematics; the numerical-consistency suite
+// verifies exactly that property by finite-differencing the reference forward
+// kinematics below, which is written independently of kinematic_chain.
 
-xt::xarray<double> oracle_identity4() {
+xt::xarray<double> reference_identity4() {
     xt::xarray<double> t = xt::zeros<double>({std::size_t{4}, std::size_t{4}});
     for (std::size_t i = 0; i < 4; ++i) {
         t(i, i) = 1.0;
@@ -128,7 +129,7 @@ xt::xarray<double> oracle_identity4() {
     return t;
 }
 
-xt::xarray<double> oracle_matmul(const xt::xarray<double>& a, const xt::xarray<double>& b) {
+xt::xarray<double> reference_matmul(const xt::xarray<double>& a, const xt::xarray<double>& b) {
     xt::xarray<double> c = xt::zeros<double>({std::size_t{4}, std::size_t{4}});
     for (std::size_t i = 0; i < 4; ++i) {
         for (std::size_t j = 0; j < 4; ++j) {
@@ -143,11 +144,11 @@ xt::xarray<double> oracle_matmul(const xt::xarray<double>& a, const xt::xarray<d
 }
 
 // 4x4 rotation about a unit axis by angle radians (Rodrigues).
-xt::xarray<double> oracle_axis_rotation(double x, double y, double z, double angle) {
+xt::xarray<double> reference_axis_rotation(double x, double y, double z, double angle) {
     const double c = std::cos(angle);
     const double s = std::sin(angle);
     const double t = 1.0 - c;
-    xt::xarray<double> r = oracle_identity4();
+    xt::xarray<double> r = reference_identity4();
     r(0, 0) = (t * x * x) + c;
     r(0, 1) = (t * x * y) - (s * z);
     r(0, 2) = (t * x * z) + (s * y);
@@ -163,31 +164,31 @@ xt::xarray<double> oracle_axis_rotation(double x, double y, double z, double ang
 // Tensor columns: 0..2 xyz, 3..5 rpy (fixed-axis XYZ), 6..8 axis, 9 joint
 // type.
 xt::xarray<double> forward_transform(const xt::xarray<double>& table, const xt::xarray<double>& q) {
-    xt::xarray<double> T = oracle_identity4();
+    xt::xarray<double> T = reference_identity4();
     std::size_t qi = 0;
     const std::size_t n = table.shape()[0];
     for (std::size_t r = 0; r < n; ++r) {
-        xt::xarray<double> link =
-            oracle_matmul(oracle_matmul(oracle_axis_rotation(0.0, 0.0, 1.0, table(r, 5)), oracle_axis_rotation(0.0, 1.0, 0.0, table(r, 4))),
-                          oracle_axis_rotation(1.0, 0.0, 0.0, table(r, 3)));
+        xt::xarray<double> link = reference_matmul(
+            reference_matmul(reference_axis_rotation(0.0, 0.0, 1.0, table(r, 5)), reference_axis_rotation(0.0, 1.0, 0.0, table(r, 4))),
+            reference_axis_rotation(1.0, 0.0, 0.0, table(r, 3)));
         link(0, 3) = table(r, 0);
         link(1, 3) = table(r, 1);
         link(2, 3) = table(r, 2);
-        T = oracle_matmul(T, link);
+        T = reference_matmul(T, link);
 
         if (table(r, 9) == k_rev) {
             const double ax = table(r, 6);
             const double ay = table(r, 7);
             const double az = table(r, 8);
             const double an = std::sqrt((ax * ax) + (ay * ay) + (az * az));
-            T = oracle_matmul(T, oracle_axis_rotation(ax / an, ay / an, az / an, q(qi)));
+            T = reference_matmul(T, reference_axis_rotation(ax / an, ay / an, az / an, q(qi)));
             ++qi;
         }
     }
     return T;
 }
 
-// Numerical geometric Jacobian via central differences on the oracle's
+// Numerical geometric Jacobian via central differences on the reference
 // forward_transform.
 xt::xarray<double> numerical_jacobian(const xt::xarray<double>& table, const xt::xarray<double>& q, double delta = 1e-7) {
     const std::size_t n_actuated = q.size();
@@ -206,8 +207,6 @@ xt::xarray<double> numerical_jacobian(const xt::xarray<double>& table, const xt:
             J_num(r, i) = (Tp(r, 3) - Tm(r, 3)) / (2.0 * delta);
         }
 
-        // dR = R_plus * R_minus^T (top-left 3x3 blocks); extract omega from the
-        // skew-symmetric part.
         std::array<std::array<double, 3>, 3> dR{};
         for (std::size_t a = 0; a < 3; ++a) {
             for (std::size_t b = 0; b < 3; ++b) {
