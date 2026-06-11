@@ -11,6 +11,7 @@ namespace viam::trajex::jacobian {
 
 namespace {
 
+// TODO(RSDK-14104): Remove duplicated code that exists in the viam-cpp-sdk
 using vec3 = std::array<double, 3>;
 
 // Joint-type encodings for column 9 of the model-table tensor. These match
