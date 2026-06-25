@@ -1513,16 +1513,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
                 const auto s_dot_average = midpoint(current_point.s_dot, next_point.s_dot);
                 const auto dt = delta_s / s_dot_average;
-
-                // When bisection toward a breach collapses next_point onto current_point, delta_s falls
-                // to the floating-point noise floor while remaining nonzero (the exact-zero branch above
-                // does not catch it). The finite difference delta_s_dot / dt then divides one noise-floor
-                // quantity by another and yields a spurious s_ddot of arbitrary magnitude. The motion is
-                // still feasible (s and s_dot stay continuous, and the next step restamps this same point
-                // with a valid acceleration), so stamp the feasible acceleration already selected for this
-                // point rather than the noise ratio. dt itself stays tiny and correct for the timestamp.
-                constexpr trajectory::seconds k_degenerate_dt{1e-12};
-                const auto s_ddot = (dt <= k_degenerate_dt) ? s_ddot_desired : (delta_s_dot / dt);
+                const auto s_ddot = delta_s_dot / dt;
                 const auto next_time = current_time + dt;
 
                 traj.integration_points_.push_back(
