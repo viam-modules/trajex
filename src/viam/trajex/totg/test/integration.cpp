@@ -2580,6 +2580,60 @@ BOOST_AUTO_TEST_CASE(lab_sander_05072026_backward_integration_exceeded_limit_cur
     generate_trajectory_from_replay_file("lab_sander_backward_integration_exceeded-20260507.trajex-totg-replay.json");
 }
 
+// Regression test for a forward-integration numerical artifact: when the breach bisection collapses
+// the next point onto the current point, delta_s falls to the floating-point noise floor while
+// staying nonzero, so the finite-difference s_ddot = delta_s_dot / dt divides one noise-floor
+// quantity by another and stamps a spurious arc acceleration of arbitrary magnitude on that point.
+// The underlying motion stays feasible (s and s_dot are continuous, and the next step restamps the
+// same point with a valid acceleration), so every integration point's s_ddot must lie within its
+// feasible [s_ddot_min, s_ddot_max] band. The small tolerance admits genuine float-level overshoot
+// where the trajectory rides the velocity-limit curve; the artifact this guards against exceeds the
+// band by orders of magnitude. This gp12 move produced 22 such out-of-band points before the fix.
+BOOST_AUTO_TEST_CASE(gp12_forward_step_sddot_within_acceleration_bounds) {
+    auto planner = viam::trajex::totg::replay_planner::create(std::filesystem::path(VIAM_TRAJEX_TEST_DATA_DIR) /
+                                                              "gp12_forward_step_sddot_exceeds_bounds-20260624.trajex-totg-replay.json");
+    auto outcome = planner.execute([](const auto&, auto tx, const auto&) { return tx; });
+    BOOST_REQUIRE(outcome.receiver.has_value());
+    BOOST_REQUIRE(outcome.receiver->traj.has_value());
+    const auto& traj = *outcome.receiver->traj;
+
+    auto cursor = traj.path().create_cursor();
+    const auto& points = traj.get_integration_points();
+    BOOST_REQUIRE(!points.empty());
+
+    std::size_t worst_index = 0;
+    double worst_excess = 0.0;
+    double worst_value = 0.0;
+    for (std::size_t i = 0; i < points.size(); ++i) {
+        const double s_ddot = static_cast<double>(points[i].s_ddot);
+        BOOST_REQUIRE_MESSAGE(std::isfinite(s_ddot), "non-finite s_ddot at integration point " << i);
+
+        cursor.seek(points[i].s);
+        const auto bounds = traj.get_acceleration_bounds(cursor, points[i].s_dot);
+        const double lower = static_cast<double>(bounds.s_ddot_min);
+        const double upper = static_cast<double>(bounds.s_ddot_max);
+
+        // Float-level slack for riding the velocity-limit curve, where the feasible band pinches to a
+        // point and the slope-following acceleration carries rounding noise.
+        const double tol = 1e-2 + 1e-2 * std::max(std::abs(lower), std::abs(upper));
+        double excess = 0.0;
+        if (s_ddot > upper + tol) {
+            excess = s_ddot - (upper + tol);
+        } else if (s_ddot < lower - tol) {
+            excess = (lower - tol) - s_ddot;
+        }
+        if (excess > worst_excess) {
+            worst_excess = excess;
+            worst_index = i;
+            worst_value = s_ddot;
+        }
+    }
+
+    BOOST_CHECK_MESSAGE(worst_excess == 0.0,
+                        "integration point " << worst_index << " has s_ddot=" << worst_value
+                                             << " outside its feasible acceleration band by " << worst_excess);
+}
+
 BOOST_AUTO_TEST_SUITE_END()  // replay_regression_tests
 
 BOOST_AUTO_TEST_SUITE(random_trajectory_tests)
