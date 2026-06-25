@@ -63,7 +63,7 @@ class kinematic_chain {
     // URDF joint type, restricted to arm-relevant joints. Underlying values
     // are the column-9 wire encoding accepted by `from`, and match
     // viam::sdk::ModelTable::JointType.
-    enum class joint_type : std::uint8_t {
+    enum class joint_type_ : std::uint8_t {
         k_revolute = 0,
         k_continuous = 1,
         k_prismatic = 2,
@@ -77,7 +77,7 @@ class kinematic_chain {
         std::array<double, 3> xyz{};
         std::array<double, 3> rpy{};
         std::array<double, 3> axis{};
-        joint_type type = joint_type::k_fixed;
+        joint_type_ type = joint_type_::k_fixed;
     };
 
     // Per-revolute-joint world-frame axes and origins plus the end-effector
@@ -91,7 +91,7 @@ class kinematic_chain {
     // Evaluates the forward kinematics at joint positions q, capturing the
     // per-joint quantities the Jacobian assemblies need. Throws
     // std::invalid_argument on q-size mismatch.
-    chain_state compute_chain_state(const xt::xarray<double>& q) const;
+    chain_state compute_chain_state_(const xt::xarray<double>& q) const;
 
     std::vector<joint_row> rows_;
     std::size_t actuated_count_ = 0;

@@ -29,11 +29,7 @@ vec3 normalized(const vec3& a) {
 }
 
 xt::xarray<double> identity4() {
-    xt::xarray<double> t = xt::zeros<double>({std::size_t{4}, std::size_t{4}});
-    for (std::size_t i = 0; i < 4; ++i) {
-        t(i, i) = 1.0;
-    }
-    return t;
+    return xt::eye<double>(4);
 }
 
 xt::xarray<double> matmul4(const xt::xarray<double>& a, const xt::xarray<double>& b) {
@@ -113,7 +109,7 @@ struct kinematic_chain::chain_state {
 // Evaluate the forward kinematics row by row (base to end-effector),
 // accumulating the running link transform. For each revolute joint, capture
 // its world-frame axis and origin before applying joint motion.
-kinematic_chain::chain_state kinematic_chain::compute_chain_state(const xt::xarray<double>& q) const {
+kinematic_chain::chain_state kinematic_chain::compute_chain_state_(const xt::xarray<double>& q) const {
     if (q.size() != actuated_count_) {
         throw std::invalid_argument("viam::trajex::jacobian: q size mismatch: expected " + std::to_string(actuated_count_) +
                                     " (actuated joints), got " + std::to_string(q.size()));
@@ -128,7 +124,7 @@ kinematic_chain::chain_state kinematic_chain::compute_chain_state(const xt::xarr
     for (const joint_row& row : rows_) {
         T = matmul4(T, link_transform(row.xyz, row.rpy));
 
-        if (row.type == joint_type::k_revolute) {
+        if (row.type == joint_type_::k_revolute) {
             const vec3 axis_local = normalized(row.axis);
             state.axes.push_back(rotate(T, axis_local));
             state.positions.push_back(translation(T));
@@ -149,17 +145,17 @@ kinematic_chain::kinematic_chain(std::vector<joint_row> rows) : rows_(std::move(
     for (std::size_t i = 0; i < rows_.size(); ++i) {
         const joint_row& row = rows_[i];
         switch (row.type) {
-            case joint_type::k_revolute:
+            case joint_type_::k_revolute:
                 if (dot(row.axis, row.axis) < 1e-24) {
                     throw std::invalid_argument("viam::trajex::jacobian: row " + std::to_string(i) +
                                                 " is a revolute joint with zero-magnitude axis");
                 }
                 ++actuated_count_;
                 break;
-            case joint_type::k_fixed:
+            case joint_type_::k_fixed:
                 break;
-            case joint_type::k_continuous:
-            case joint_type::k_prismatic:
+            case joint_type_::k_continuous:
+            case joint_type_::k_prismatic:
                 throw std::invalid_argument("viam::trajex::jacobian: row " + std::to_string(i) +
                                             " has unsupported joint type (only revolute and fixed are supported)");
             default:
@@ -193,14 +189,14 @@ kinematic_chain kinematic_chain::from(const xt::xarray<double>& tensor) {
         row.xyz = {tensor(i, 0), tensor(i, 1), tensor(i, 2)};
         row.rpy = {tensor(i, 3), tensor(i, 4), tensor(i, 5)};
         row.axis = {tensor(i, 6), tensor(i, 7), tensor(i, 8)};
-        row.type = static_cast<joint_type>(type_int);
+        row.type = static_cast<joint_type_>(type_int);
         rows.push_back(row);
     }
     return kinematic_chain(std::move(rows));
 }
 
 xt::xarray<double> kinematic_chain::jacobian(const xt::xarray<double>& q) const {
-    const chain_state state = compute_chain_state(q);
+    const chain_state state = compute_chain_state_(q);
 
     xt::xarray<double> J = xt::zeros<double>({std::size_t{6}, actuated_count_});
     for (std::size_t i = 0; i < actuated_count_; ++i) {
@@ -218,7 +214,7 @@ xt::xarray<double> kinematic_chain::jacobian(const xt::xarray<double>& q) const 
 }
 
 xt::xarray<double> kinematic_chain::linear_jacobian(const xt::xarray<double>& q) const {
-    const chain_state state = compute_chain_state(q);
+    const chain_state state = compute_chain_state_(q);
 
     xt::xarray<double> J = xt::zeros<double>({std::size_t{3}, actuated_count_});
     for (std::size_t i = 0; i < actuated_count_; ++i) {
