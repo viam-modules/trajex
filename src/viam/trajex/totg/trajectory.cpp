@@ -1429,8 +1429,15 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                             return integration_observer::limit_hit_event{
                                 .breach = breach_point, .s_dot_max_acc = breach_s_dot_max_acc, .s_dot_max_vel = breach_s_dot_max_vel};
                         }
+
                         // The trajectory naturally escapes back to the feasible region. This was
-                        // numerical overshoot from a source point.
+                        // numerical overshoot from a source point. Commit the breach as our next
+                        // position and clamp s_dot to the acceleration limit, mirroring the
+                        // velocity-case escape patterns below. Without committing here the outer
+                        // integrator's delta_s would be zero (since the bisection collapsed
+                        // next_point onto current_point) and the loop would spin indefinitely.
+                        next_point = breach_point;
+                        next_point.s_dot = breach_s_dot_max_acc;
                         return std::nullopt;
                     }
 
@@ -1506,7 +1513,16 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
                 const auto s_dot_average = midpoint(current_point.s_dot, next_point.s_dot);
                 const auto dt = delta_s / s_dot_average;
-                const auto s_ddot = delta_s_dot / dt;
+
+                // When bisection toward a breach collapses next_point onto current_point, delta_s falls
+                // to the floating-point noise floor while remaining nonzero (the exact-zero branch above
+                // does not catch it). The finite difference delta_s_dot / dt then divides one noise-floor
+                // quantity by another and yields a spurious s_ddot of arbitrary magnitude. The motion is
+                // still feasible (s and s_dot stay continuous, and the next step restamps this same point
+                // with a valid acceleration), so stamp the feasible acceleration already selected for this
+                // point rather than the noise ratio. dt itself stays tiny and correct for the timestamp.
+                constexpr trajectory::seconds k_degenerate_dt{1e-12};
+                const auto s_ddot = (dt <= k_degenerate_dt) ? s_ddot_desired : (delta_s_dot / dt);
                 const auto next_time = current_time + dt;
 
                 traj.integration_points_.push_back(

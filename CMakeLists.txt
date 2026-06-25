@@ -103,6 +103,7 @@ function(apply_wall_werror target_name)
       -Wunused
       # TODO(RSDK-11300): rm after upgrading boost https://github.com/boostorg/mpl/issues/69
       -Wno-enum-constexpr-conversion
+      -Wno-unknown-warning-option
     )
   elseif (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     target_compile_options(${target_name} PRIVATE /W4 /WX)
@@ -137,7 +138,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(VIAM_TRAJEX_BOOST_VERSION_MINIMUM "")    # TODO: Decide this
 set(VIAM_TRAJEX_EIGEN3_VERSION_MINIMUM "")   # TODO: Decide this
 set(VIAM_TRAJEX_JSONCPP_VERSION_MINIMUM "")  # TODO: Decide this
-set(VIAM_TRAJEX_VIAMCPPSDK_VERSION_MINIMUM 0.37.0)
+set(VIAM_TRAJEX_VIAMCPPSDK_VERSION_MINIMUM 0.38.0)
 set(VIAM_TRAJEX_XTENSOR_VERSION_MINIMUM 0.24.3)
 set(VIAM_TRAJEX_XTL_VERSION_MINIMUM 0.7.2)
 
@@ -166,7 +167,7 @@ if (VIAM_TRAJEX_ENABLE_SERVICE)
   FetchContent_Declare(
     viam-cpp-sdk
     GIT_REPOSITORY https://github.com/viamrobotics/viam-cpp-sdk
-    GIT_TAG        releases/v0.37.0
+    GIT_TAG        releases/v0.38.0
     GIT_SHALLOW    TRUE
     SYSTEM
     # Delete conflicting protobuf headers

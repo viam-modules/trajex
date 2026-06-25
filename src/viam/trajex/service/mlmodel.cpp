@@ -228,7 +228,7 @@ std::shared_ptr<mlmodel::named_tensor_views> mlmodel::infer(const named_tensor_v
                 }
 
                 auto sampler = totg::uniform_sampler::quantized_for_trajectory(traj, types::hertz{sampling_freq});
-                for (const auto& sample : traj.samples(sampler) | std::views::drop(1)) {
+                for (const auto& sample : traj.samples(sampler)) {
                     acc.times.push_back(sample.time.count());
                     std::ranges::copy(sample.configuration, std::back_inserter(acc.configurations));
                     std::ranges::copy(sample.velocity, std::back_inserter(acc.velocities));
