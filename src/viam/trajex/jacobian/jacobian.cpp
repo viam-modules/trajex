@@ -32,6 +32,9 @@ xt::xarray<double> identity4() {
     return xt::eye<double>(4);
 }
 
+// Multiply two 4x4 homogeneous transforms. Inputs are always 4x4 here, so the
+// bounds are fixed rather than read from the operands. Hand-rolled because
+// xtensor has no matmul without xtensor-blas, which the core library avoids.
 xt::xarray<double> matmul4(const xt::xarray<double>& a, const xt::xarray<double>& b) {
     xt::xarray<double> c = xt::zeros<double>({std::size_t{4}, std::size_t{4}});
     for (std::size_t i = 0; i < 4; ++i) {
@@ -100,6 +103,11 @@ vec3 translation(const xt::xarray<double>& transform) {
 // position, captured while evaluating the forward kinematics. With these in
 // hand, Jacobian column i is J_v_i = axes[i] x (p_e - positions[i]) (linear)
 // stacked on J_w_i = axes[i] (angular).
+//
+// axes and positions are std::vector<vec3>, not (N, 3) xtensor arrays: they
+// are filled one joint at a time during the walk and read back one row at a
+// time by the per-joint cross product, so a row vector is the natural unit. A
+// vectorized xtensor assembly is deferred to the linear-algebra cleanup.
 struct kinematic_chain::chain_state {
     std::vector<vec3> axes;
     std::vector<vec3> positions;
@@ -119,22 +127,22 @@ kinematic_chain::chain_state kinematic_chain::compute_chain_state_(const xt::xar
     state.axes.reserve(actuated_count_);
     state.positions.reserve(actuated_count_);
 
-    xt::xarray<double> T = identity4();
+    xt::xarray<double> running_transform = identity4();
     std::size_t qi = 0;
     for (const joint_row& row : rows_) {
-        T = matmul4(T, link_transform(row.xyz, row.rpy));
+        running_transform = matmul4(running_transform, link_transform(row.xyz, row.rpy));
 
         if (row.type == joint_type_::k_revolute) {
             const vec3 axis_local = normalized(row.axis);
-            state.axes.push_back(rotate(T, axis_local));
-            state.positions.push_back(translation(T));
+            state.axes.push_back(rotate(running_transform, axis_local));
+            state.positions.push_back(translation(running_transform));
 
-            T = matmul4(T, axis_rotation4(axis_local, q(qi)));
+            running_transform = matmul4(running_transform, axis_rotation4(axis_local, q(qi)));
             ++qi;
         }
         // fixed: no motion to apply.
     }
-    state.p_e = translation(T);
+    state.p_e = translation(running_transform);
     return state;
 }
 
@@ -146,7 +154,7 @@ kinematic_chain::kinematic_chain(std::vector<joint_row> rows) : rows_(std::move(
         const joint_row& row = rows_[i];
         switch (row.type) {
             case joint_type_::k_revolute:
-                if (dot(row.axis, row.axis) < 1e-24) {
+                if (dot(row.axis, row.axis) == 0.0) {
                     throw std::invalid_argument("viam::trajex::jacobian: row " + std::to_string(i) +
                                                 " is a revolute joint with zero-magnitude axis");
                 }
