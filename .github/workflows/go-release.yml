@@ -5,10 +5,12 @@ name: Trajex Go Module Release
 # works without a build step at the consumer. Separate from main.yml (the C++ Viam
 # module-registry pipeline); the two surfaces are independent.
 #
-# Design: fan-out per-platform build + install + smoke-test from the released tag, then a
-# fan-in job that commits the archives on top of the release commit and tags it `go/<tag>`
-# as the terminal, all-green-gated step. A build failure just means the go tag never
-# appears (absent and retriable), never a broken published tag.
+# Design: fan-out per-platform build + install + smoke-test from the released tag; an
+# abi-check matrix that re-runs the built test binary on the cpp-sdk-system distro images
+# (pure runtime-ABI validation across the target OSes, no toolchain); then a fan-in job that
+# commits the archives on top of the release commit and tags it `go/<tag>` as the terminal,
+# all-green-gated step. A build or abi-check failure just means the go tag never appears
+# (absent and retriable), never a broken published tag.
 
 # On push/PR/dispatch this runs as CI: build, install, smoke-test, and assemble the
 # would-be release commit, uploading it as a `git format-patch` artifact -- but nothing is
@@ -128,12 +130,25 @@ jobs:
           # component and are excluded, so they don't bloat the shipped module.
           DESTDIR="$GITHUB_WORKSPACE/go/artifacts" cmake --install build-go --prefix / --component trajex
 
-      - name: Smoke test (link with the SYSTEM-DEFAULT compiler, not gcc-10)
-        # The archives are built with gcc-10, but the point of the whole scheme is that they
-        # then link against whatever toolchain a normal consumer / RDK build uses here. So do
-        # NOT set CC/CXX -- let go use the env default. If that fails, we haven't achieved
-        # cross-toolchain portability, and we want to find out here.
-        run: go -C go test ./totg/
+      - name: Build the go test binary and smoke-test it
+        # Compile the totg tests into a standalone binary and run it here as the in-container
+        # sanity check. Link with the SYSTEM-DEFAULT compiler -- do NOT set CC/CXX to gcc-10.
+        # That IS the ABI-floor test: the archives are gcc-10-built and must link/run against
+        # whatever toolchain the environment provides. The same binary is uploaded and re-run
+        # on other distros by abi-check. It is self-contained (archives baked in, no runtime
+        # file deps -- confirmed), so CWD does not matter.
+        run: |
+          set -euxo pipefail
+          go -C go test -c -o "$GITHUB_WORKSPACE/totg.test" ./totg/
+          "$GITHUB_WORKSPACE/totg.test"
+
+      - name: Upload the go test binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: totg-test-${{ matrix.plat }}
+          path: totg.test
+          if-no-files-found: error
+          retention-days: 3
 
       - name: Upload platform artifacts
         uses: actions/upload-artifact@v4
@@ -143,9 +158,60 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
+  abi-check:
+    name: Run test binary on cpp-sdk-system-${{ matrix.image }} (${{ matrix.arch }})
+    needs: [build]
+    runs-on: ${{ matrix.runner }}
+    container: ghcr.io/viamrobotics/cpp-sdk-system-${{ matrix.image }}
+    strategy:
+      fail-fast: false   # report every distro; one failing one shouldn't hide the rest
+      matrix:
+        arch: [amd64, arm64]
+        # The Focal-built binary should run on every distro at/above the floor. Keep this
+        # list aligned with the tags cpp-sdk-system-{ubuntu,debian} actually publish; these
+        # use floating tags on purpose (test against the CURRENT target images), unlike the
+        # digest-pinned build image.
+        image:
+          - ubuntu:focal
+          - ubuntu:jammy
+          - ubuntu:noble
+          - ubuntu:resolute
+          - debian:bullseye
+          - debian:bookworm
+          - debian:trixie
+          - debian:sid       # unstable/rolling -- gated too: forward-compat must hold even here
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Fetch the ${{ matrix.arch }} test binary
+        uses: actions/download-artifact@v4
+        with:
+          name: totg-test-linux_${{ matrix.arch }}
+      - name: Run it in a clean ${{ matrix.image }} environment
+        # Pure runtime-ABI check: no toolchain, no go/artifacts -- the archives are baked
+        # into the binary. Does this distro's libstdc++/glibc satisfy the gcc-10/Focal
+        # build? A failure here is a real floor violation, not a test bug.
+        run: |
+          set -euxo pipefail
+          chmod +x totg.test
+          # Diagnostics: which libs we resolve against, plus any unresolved symbols/relocs.
+          ldd -r ./totg.test || true
+          # LD_BIND_NOW forces the loader to resolve EVERY referenced symbol at startup, so a
+          # symbol missing (or a version too new) on this distro fails immediately --
+          # independent of whether the test's code path happens to call it. Default lazy
+          # binding resolves on first call, so a binary could otherwise pass while still
+          # referencing a symbol absent here. Belt to ldd -r's suspenders.
+          LD_BIND_NOW=1 ./totg.test
+
   assemble:
     name: Assemble commit (tag on release, patch on dispatch)
-    needs: [build]
+    # Gate the release commit on the ABI matrix too: don't publish a go/ tag if the binary
+    # doesn't run across the target distros. (Decouple by dropping abi-check here if the
+    # cross-distro matrix ever becomes too heavy/flaky to gate on.)
+    needs: [build, abi-check]
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout source
