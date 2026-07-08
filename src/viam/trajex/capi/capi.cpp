@@ -13,6 +13,7 @@
 #include <unordered_map>
 #include <utility>
 #include <variant>
+#include <version>
 
 #if __has_include(<xtensor/containers/xarray.hpp>)
 #include <xtensor/containers/xarray.hpp>
@@ -102,12 +103,27 @@ constexpr viam_trajex_dtype_t dtype_for() noexcept {
     }
 }
 
+// Heterogeneous lookup on std::unordered_map (find by string_view against a
+// std::string key, via the transparent hasher and equality) only reached
+// libstdc++ in GCC 11 (P0919, __cpp_lib_generic_unordered_lookup). On the GCC 10
+// (Focal) floor it is absent, so there we materialize a std::string key -- the
+// transparent hasher/equality still route it correctly, at the cost of one
+// allocation per lookup on that path only. Remove once the floor moves past GCC 10.
+template <typename Map>
+auto find_tensor(const Map& map, std::string_view key) {
+#if defined(__cpp_lib_generic_unordered_lookup) && __cpp_lib_generic_unordered_lookup >= 201811L
+    return map.find(key);
+#else
+    return map.find(std::string(key));
+#endif
+}
+
 // Resolve a required input by key, returning the typed xarray reference.
 // Throws std::invalid_argument if the key is missing or carries a
 // different element type than `T`.
 template <typename T>
 const xt::xarray<T>& require_xarray(const viam_trajex_tensor_map& inputs, std::string_view key) {
-    const auto it = inputs.tensors.find(key);
+    const auto it = find_tensor(inputs.tensors, key);
     if (it == inputs.tensors.end()) {
         std::ostringstream oss;
         oss << "missing required input: " << key;
@@ -127,7 +143,7 @@ const xt::xarray<T>& require_xarray(const viam_trajex_tensor_map& inputs, std::s
 // different element type than `T`.
 template <typename T>
 const xt::xarray<T>* find_xarray(const viam_trajex_tensor_map& inputs, std::string_view key) {
-    const auto it = inputs.tensors.find(key);
+    const auto it = find_tensor(inputs.tensors, key);
     if (it == inputs.tensors.end()) {
         return nullptr;
     }
@@ -388,7 +404,7 @@ int viam_trajex_tensor_map_view(const viam_trajex_tensor_map_t* tensor_map,
         if (!tensor_map || !key || !dtype_out || !rank_out || !dims_out || !data_out) {
             return -1;
         }
-        const auto it = tensor_map->tensors.find(std::string_view{key});
+        const auto it = find_tensor(tensor_map->tensors, key);
         if (it == tensor_map->tensors.end()) {
             return 1;
         }
