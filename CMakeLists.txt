@@ -402,6 +402,10 @@ if (VIAM_TRAJEX_ENABLE_CAPI)
   target_sources(viam-trajex-capi
     PRIVATE
       src/viam/trajex/capi/capi.cpp
+    PUBLIC
+      FILE_SET HEADERS
+      BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/src
+      FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/viam/trajex/capi/capi.h
   )
   target_include_directories(viam-trajex-capi
     PUBLIC
@@ -694,6 +698,7 @@ if (VIAM_TRAJEX_ENABLE_CAPI)
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    FILE_SET HEADERS DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
   )
 endif()
 

@@ -1,10 +1,12 @@
 //go:build !windows && !no_cgo
 
 // Package capi is the single owner of the link directives for the trajex C
-// ABI shared library. Any Go package in this module that calls into the C
+// ABI static archives. Any Go package in this module that calls into the C
 // ABI (directly via `import "C"` and `C.viam_*` symbols) must transitively
 // depend on this package; otherwise the resulting binary will not link
-// against the trajex CAPI library.
+// against the trajex CAPI archives. The per-platform LDFLAGS live in the
+// build-tagged link_release_<goos>_<goarch>.go files, and force_cxx.cc pulls
+// in the C++ runtime by making cgo link through the C++ driver.
 //
 // Beyond carrying linkage, this package owns the small set of C-ABI types
 // and helpers shared by every cgo wrapper in the module: Dtype and CStr.
@@ -13,11 +15,9 @@
 package capi
 
 /*
-#cgo CFLAGS: -I${SRCDIR}/../../../src/viam/trajex/capi
-#cgo darwin LDFLAGS: -L${SRCDIR}/../../../build -lviam-trajex-capi -Wl,-rpath,${SRCDIR}/../../../build
-#cgo linux  LDFLAGS: -L${SRCDIR}/../../../build -lviam-trajex-capi -Wl,-rpath,${SRCDIR}/../../../build
+#cgo CFLAGS: -I${SRCDIR}/../../artifacts/include
 
-#include "capi.h"
+#include <viam/trajex/capi/capi.h>
 */
 import "C"
 

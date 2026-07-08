@@ -1,4 +1,4 @@
-module github.com/viam-modules/trajex
+module github.com/viam-modules/trajex/go
 
 go 1.25.1
 

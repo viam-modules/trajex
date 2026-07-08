@@ -7,10 +7,10 @@
 package trajex
 
 /*
-#cgo CFLAGS: -I${SRCDIR}/../src/viam/trajex/capi
+#cgo CFLAGS: -I${SRCDIR}/artifacts/include
 
 #include <stdlib.h>
-#include "capi.h"
+#include <viam/trajex/capi/capi.h>
 */
 import "C"
 

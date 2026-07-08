@@ -1,0 +1,188 @@
+name: Trajex Go Module Release
+
+# Builds the prebuilt C++ static archives the trajex Go module links against and
+# publishes them under a `go/vX.Y.Z` tag, so `go get github.com/viam-modules/trajex/go`
+# works without a build step at the consumer. Separate from main.yml (the C++ Viam
+# module-registry pipeline); the two surfaces are independent.
+#
+# Design and rationale: trajex-go-release-pipeline.md. Fan-out per-platform
+# build+install+smoke-test from the released tag, then a fan-in job that commits the
+# archives on top of the release commit and tags it `go/<tag>` as the terminal,
+# all-green-gated step. A build failure just means the go tag never appears (absent and
+# retriable), never a broken published tag.
+
+# On push/PR/dispatch this runs as CI: build, install, smoke-test, and assemble the
+# would-be release commit, uploading it as a `git format-patch` artifact -- but nothing is
+# pushed. A published release does all of that AND tags + pushes go/<version>. So the exact
+# release machinery is exercised continuously; only the final tag/push is release-gated.
+# `git am` the patch onto the same ref locally to reconstruct what the release commit would
+# contain, then `go test` against it.
+on:
+  push:
+    branches: ['**']   # every branch -- long-lived topic and release/maintenance branches get CI too
+  pull_request:
+    branches: [main]   # matches main.yml
+  workflow_dispatch:   # the built-in "Use workflow from" picker selects the branch/tag to build
+  release:
+    types: [published]
+    # Triggering on the release event (not `push: tags`) means the go/ tag we create at the
+    # end does not recursively re-trigger this workflow.
+
+permissions:
+  contents: write   # only used to push the tag on a release; every other trigger pushes nothing.
+
+env:
+  # release -> the released tag; every other event -> empty, so checkout falls back to the
+  # triggering/selected ref (push sha, PR merge ref, or the dispatch-picked branch/tag).
+  BUILD_REF: ${{ github.event_name == 'release' && github.event.release.tag_name || '' }}
+
+jobs:
+  build:
+    name: Build archives (${{ matrix.plat }})
+    runs-on: ${{ matrix.runner }}
+    # `env` context is not available in `container:`, so the image name and digest live as
+    # matrix fields, defined once via YAML anchors (update them in one place). darwin has no
+    # image -> empty string -> no container.
+    container: ${{ matrix.image && format('{0}@{1}', matrix.image, matrix.digest) || '' }}
+    strategy:
+      fail-fast: true   # no green matrix, no tag
+      matrix:
+        include:
+          - plat: linux_amd64
+            runner: ubuntu-24.04
+            image: &cpp_sdk_image ghcr.io/viamrobotics/cpp-sdk-system-ubuntu:focal
+            digest: &cpp_sdk_digest sha256:2c79d7f26ee515cdd42c9b15294e496a498bc68b83fb1d6b702f913abad39ad0
+          - plat: linux_arm64
+            runner: ubuntu-24.04-arm
+            image: *cpp_sdk_image
+            digest: *cpp_sdk_digest
+          - plat: darwin_arm64
+            runner: macos-26   # build host only; the 14.0 floor comes from CMAKE_OSX_DEPLOYMENT_TARGET below
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BUILD_REF }}   # released tag, or the dispatch ref (not target_commitish)
+          submodules: true
+
+      - name: Install gcc-10 (linux)
+        if: runner.os == 'Linux'
+        run: |
+          # Only gcc-10/g++-10 -- ninja, git, and ca-certificates are already in the image.
+          # (gcc-10/g++-10 are expected to be baked in eventually; installed here until then.)
+          apt-get update
+          apt-get install -y --no-install-recommends gcc-10 g++-10
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+
+      - name: Configure, build, and install archives into go/artifacts
+        run: |
+          set -euxo pipefail
+          # The trajex C++ must be built with gcc-10 (C++20 + the Focal ABI floor) on linux;
+          # macOS pins the deployment-target floor via a cmake arg.
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            CMAKE_EXTRA_CONFIGURE_ARGS="-DCMAKE_C_COMPILER=gcc-10 -DCMAKE_CXX_COMPILER=g++-10"
+          else
+            CMAKE_EXTRA_CONFIGURE_ARGS="-DCMAKE_OSX_DEPLOYMENT_TARGET=14.0"
+          fi
+          # Distribution profile, all on the command line -- CMakeLists.txt stays unaware.
+          # Minimal deps (legacy/tools/service off) leaves just capi + totg; tests off so a
+          # fresh container needs no Boost (xtl/xtensor come via FetchContent). Static + PIC
+          # so the archive links into Go's PIE.
+          cmake -S . -B build-go -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DVIAM_TRAJEX_ENABLE_LEGACY=OFF \
+            -DVIAM_TRAJEX_ENABLE_TOOLS=OFF \
+            -DVIAM_TRAJEX_ENABLE_SERVICE=OFF \
+            -DVIAM_TRAJEX_BUILD_TESTS=OFF \
+            -DCMAKE_INSTALL_LIBDIR="lib/${{ matrix.plat }}" \
+            -DCMAKE_INSTALL_INCLUDEDIR=include \
+            $CMAKE_EXTRA_CONFIGURE_ARGS
+          # `all`, not a hand-picked target list: the minimal-deps config makes `all` just
+          # capi + totg anyway, and building everything keeps the built set from drifting
+          # out of sync with what the install rules stage (build and install are decoupled).
+          cmake --build build-go --target all
+          # STAGE, don't "install to a prefix": these are relocatable archives + a header
+          # being packaged into go/artifacts for shipping, whose real home is an unknowable
+          # module-cache path -- that is a DESTDIR install, not a CMAKE_INSTALL_PREFIX. A
+          # prefix would bake this machine's absolute path into any generated config/.pc/
+          # rpath (none today, but a landmine). --prefix / gives a neutral logical root so
+          # the staged tree is flat: go/artifacts/{lib/<plat>,include}.
+          DESTDIR="$GITHUB_WORKSPACE/go/artifacts" cmake --install build-go --prefix /
+
+      - name: Smoke test (link with the SYSTEM-DEFAULT compiler, not gcc-10)
+        # The archives are built with gcc-10, but the point of the whole scheme is that they
+        # then link against whatever toolchain a normal consumer / RDK build uses here. So do
+        # NOT set CC/CXX -- let go use the env default. If that fails, we haven't achieved
+        # cross-toolchain portability, and we want to find out here.
+        run: go -C go test ./totg/
+
+      - name: Upload platform artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-artifacts-${{ matrix.plat }}
+          path: go/artifacts   # lib/<plat>/*.a plus the (shared) include/ tree
+          if-no-files-found: error
+          retention-days: 3
+
+  assemble:
+    name: Assemble commit (tag on release, patch on dispatch)
+    needs: [build]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BUILD_REF }}
+          fetch-depth: 0
+
+      - name: Gather all platform artifacts into go/artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: go-artifacts-*
+          path: go/artifacts
+          merge-multiple: true   # union the per-plat lib dirs; identical include/ overwrites
+
+      - name: Assemble the would-be release commit
+        run: |
+          set -euxo pipefail
+          SRC_SHA="$(git rev-parse HEAD)"
+          # Attribute precisely: AUTHOR = whoever authored the source commit we build from
+          # (real human provenance), COMMITTER = the CI bot that actually made this commit.
+          # All cosmetic -- the module zip hashes the file tree, not commit metadata, so
+          # go.sum is unaffected.
+          git config --global user.name  "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # go/artifacts is gitignored; force-add it onto this (source-child) commit.
+          git add -f go/artifacts
+          git commit \
+            --author="$(git log -1 --pretty=format:'%an <%ae>')" \
+            -m "go artifacts for ${BUILD_REF:-$SRC_SHA} (built from ${SRC_SHA})"
+
+      - name: Emit the assembled commit as a patch
+        run: git format-patch -1 --binary -o patch HEAD
+
+      - name: Upload commit patch
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-release-commit-patch
+          path: patch/*.patch
+          if-no-files-found: error
+
+      - name: Publish go/<version> (release only)
+        if: github.event_name == 'release'
+        run: |
+          set -euo pipefail
+          TAG="go/${{ github.event.release.tag_name }}"
+          # Never overwrite: published is forever (proxy caches, go.sum pins).
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "::error::${TAG} already exists; refusing to overwrite."
+            exit 1
+          fi
+          git tag "${TAG}"
+          git push origin "${TAG}"   # tag only, no branch; the tag anchors the commit
