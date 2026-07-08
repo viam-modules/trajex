@@ -5,11 +5,10 @@ name: Trajex Go Module Release
 # works without a build step at the consumer. Separate from main.yml (the C++ Viam
 # module-registry pipeline); the two surfaces are independent.
 #
-# Design and rationale: trajex-go-release-pipeline.md. Fan-out per-platform
-# build+install+smoke-test from the released tag, then a fan-in job that commits the
-# archives on top of the release commit and tags it `go/<tag>` as the terminal,
-# all-green-gated step. A build failure just means the go tag never appears (absent and
-# retriable), never a broken published tag.
+# Design: fan-out per-platform build + install + smoke-test from the released tag, then a
+# fan-in job that commits the archives on top of the release commit and tags it `go/<tag>`
+# as the terminal, all-green-gated step. A build failure just means the go tag never
+# appears (absent and retriable), never a broken published tag.
 
 # On push/PR/dispatch this runs as CI: build, install, smoke-test, and assemble the
 # would-be release commit, uploading it as a `git format-patch` artifact -- but nothing is
