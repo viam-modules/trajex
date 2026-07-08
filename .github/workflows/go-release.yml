@@ -31,6 +31,14 @@ on:
 permissions:
   contents: write   # only used to push the tag on a release; every other trigger pushes nothing.
 
+defaults:
+  run:
+    # Force bash for every job so they share one shell. Otherwise container jobs default to
+    # sh (dash) while the runner jobs use bash -- an inconsistency, and dash rejects pipefail.
+    # The Focal image is ubuntu-based, so bash is present. (If a run ever reports "bash: not
+    # found", add bash to the linux apt-get step.)
+    shell: bash
+
 env:
   # release -> the released tag; every other event -> empty, so checkout falls back to the
   # triggering/selected ref (push sha, PR merge ref, or the dispatch-picked branch/tag).
