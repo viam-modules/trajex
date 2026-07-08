@@ -99,7 +99,9 @@ jobs:
           # Distribution profile, all on the command line -- CMakeLists.txt stays unaware.
           # Minimal deps (legacy/tools/service off) leaves just capi + totg; tests off so a
           # fresh container needs no Boost (xtl/xtensor come via FetchContent). Static + PIC
-          # so the archive links into Go's PIE.
+          # so the archive links into Go's PIE. -Werror off: gcc-10 here may warn where the
+          # pinned dev compiler doesn't, and the artifact build must not fail on that --
+          # warning-gating is main.yml's build-test-lint job, on the pinned toolchain.
           cmake -S . -B build-go -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
@@ -108,6 +110,7 @@ jobs:
             -DVIAM_TRAJEX_ENABLE_TOOLS=OFF \
             -DVIAM_TRAJEX_ENABLE_SERVICE=OFF \
             -DVIAM_TRAJEX_BUILD_TESTS=OFF \
+            -DVIAM_TRAJEX_USE_WALL_WERROR=OFF \
             -DCMAKE_INSTALL_LIBDIR="lib/${{ matrix.plat }}" \
             -DCMAKE_INSTALL_INCLUDEDIR=include \
             $CMAKE_EXTRA_CONFIGURE_ARGS
