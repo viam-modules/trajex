@@ -658,6 +658,16 @@ endif()
 
 include(GNUInstallDirs)
 
+# Put every trajex install() rule below into the `trajex` component -- none of them set a
+# component individually, so this default applies to all of them. This lets
+# `cmake --install --component trajex` stage just trajex's own outputs: the FetchContent'd
+# xtl/xtensor registered their install rules earlier (during FetchContent_MakeAvailable),
+# under the built-in "Unspecified" component, so they are excluded. A full install (no
+# --component) is unaffected -- every component installs. Finer-grained roles/components
+# (dev vs runtime, capi vs tools, ...) are future work; for now the feature flags gate
+# what exists, so one component is enough.
+set(CMAKE_INSTALL_DEFAULT_COMPONENT_NAME trajex)
+
 # Always install core libraries. The legacy alias is always installed; when
 # VIAM_TRAJEX_ENABLE_LEGACY is OFF it is an empty INTERFACE library and install() is a no-op.
 install(

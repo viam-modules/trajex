@@ -124,7 +124,10 @@ jobs:
           # prefix would bake this machine's absolute path into any generated config/.pc/
           # rpath (none today, but a landmine). --prefix / gives a neutral logical root so
           # the staged tree is flat: go/artifacts/{lib/<plat>,include}.
-          DESTDIR="$GITHUB_WORKSPACE/go/artifacts" cmake --install build-go --prefix /
+          # --component trajex stages only trajex's own outputs (capi/totg archives + the
+          # capi header); the FetchContent'd xtl/xtensor install rules are in a different
+          # component and are excluded, so they don't bloat the shipped module.
+          DESTDIR="$GITHUB_WORKSPACE/go/artifacts" cmake --install build-go --prefix / --component trajex
 
       - name: Smoke test (link with the SYSTEM-DEFAULT compiler, not gcc-10)
         # The archives are built with gcc-10, but the point of the whole scheme is that they
