@@ -181,14 +181,14 @@ endif()
 FetchContent_Declare(
   xtl
   GIT_REPOSITORY https://github.com/xtensor-stack/xtl.git
-  GIT_TAG        e0f00666d90086bb245ae73abb6123d0e2c1b30b # 0.7.2
+  GIT_TAG        a7c1c5444dfc57f76620391af4c94785ff82c8d6 # 0.7.7
   FIND_PACKAGE_ARGS ${VIAM_TRAJEX_XTL_VERSION_MINIMUM} CONFIG
 )
 
 FetchContent_Declare(
   xtensor
   GIT_REPOSITORY https://github.com/xtensor-stack/xtensor
-  GIT_TAG        9e8662ddad7fcd1a96969b96bf8955e59cf44978 # 0.24.3
+  GIT_TAG        3634f2ded19e0cf38208c8b86cea9e1d7c8e397d # 0.25.0
   FIND_PACKAGE_ARGS ${VIAM_TRAJEX_XTENSOR_VERSION_MINIMUM} CONFIG
 )
 
