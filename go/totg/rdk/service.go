@@ -1,4 +1,4 @@
-//go:build !windows && !no_cgo
+//go:build !windows && cgo
 
 // Package rdk adapts trajex's TOTG surface to RDK's MLModel service
 // interface, so RDK consumers can use trajex as a drop-in MLModel resource

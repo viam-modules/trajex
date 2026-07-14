@@ -1,4 +1,4 @@
-//go:build !windows && !no_cgo
+//go:build !windows
 
 // Package trajex provides Go bindings for the trajex C ABI defined in
 // src/viam/trajex/capi/capi.h. The public surface is algorithm-agnostic: a

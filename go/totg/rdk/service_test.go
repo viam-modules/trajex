@@ -1,4 +1,4 @@
-//go:build !windows && !no_cgo
+//go:build !windows && cgo
 
 package rdk_test
 
