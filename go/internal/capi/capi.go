@@ -1,4 +1,4 @@
-//go:build !windows && !no_cgo
+//go:build !windows
 
 // Package capi is the single owner of the link directives for the trajex C
 // ABI static archives. Any Go package in this module that calls into the C

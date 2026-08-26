@@ -1,4 +1,4 @@
-//go:build !windows && !no_cgo
+//go:build !windows && cgo
 
 package totg_test
 
@@ -54,7 +54,7 @@ func buildMinimalInputs(t *testing.T) *trajex.TensorMap {
 	test.That(t, in.InsertFloat64s(totg.KeyVelocityLimitsRadsPerSec, []uint64{2}, []float64{1.0, 1.0}), test.ShouldBeNil)
 	test.That(t, in.InsertFloat64s(totg.KeyAccelerationLimitsRadsPerSec2, []uint64{2}, []float64{1.0, 1.0}), test.ShouldBeNil)
 	test.That(t, in.InsertScalarFloat64(totg.KeyPathToleranceDeltaRads, 0.1), test.ShouldBeNil)
-	test.That(t, in.InsertScalarInt64(totg.KeyTrajectorySamplingFreqHz, 100), test.ShouldBeNil)
+	test.That(t, in.InsertScalarFloat64(totg.KeyTrajectorySamplingFreqHz, 100.0), test.ShouldBeNil)
 
 	return in
 }

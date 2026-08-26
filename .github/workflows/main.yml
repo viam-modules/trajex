@@ -52,7 +52,7 @@ jobs:
           container_digest: sha256:5460f0543b915088236902a6f5e8924d2d6f1fd8ee86f5a097483f7d706d8888
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: true
           fetch-depth: 0
@@ -147,7 +147,7 @@ jobs:
           conan profile detect
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: true
           fetch-depth: 0
@@ -160,7 +160,7 @@ jobs:
         run: ./bin/build.sh
 
       - name: Attach build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact_name }}
           path: module.tar.gz
@@ -184,7 +184,7 @@ jobs:
 
     steps:
       - name: Download artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ matrix.artifact_name }}
 

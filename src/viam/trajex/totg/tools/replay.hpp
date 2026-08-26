@@ -4,12 +4,39 @@
 #include <iosfwd>
 #include <memory>
 #include <optional>
+#include <utility>
+
+#if __has_include(<xtensor/containers/xarray.hpp>)
+#include <xtensor/containers/xarray.hpp>
+#else
+#include <xtensor/xarray.hpp>
+#endif
 
 #include <viam/trajex/totg/observers.hpp>
 #include <viam/trajex/totg/tools/planner.hpp>
 #include <viam/trajex/totg/trajectory.hpp>
 
 namespace viam::trajex::totg {
+
+///
+/// Parses a canonical replay JSON record from `in` into a planner config and
+/// a (num_waypoints, dof) xarray of waypoints. Exposed for use by tools and
+/// tests that want the raw record without instantiating a planner.
+///
+/// @param in Stream containing a canonical JSON replay record
+/// @return Pair of (config, waypoints)
+/// @throws std::runtime_error if the stream cannot be parsed or required fields are missing
+///
+std::pair<planner_base::config, xt::xarray<double>> parse_replay_record(std::istream& in);
+
+///
+/// File-path overload of parse_replay_record.
+///
+/// @param path Path to a canonical JSON replay record file
+/// @return Pair of (config, waypoints)
+/// @throws std::runtime_error if the file cannot be opened or parsed
+///
+std::pair<planner_base::config, xt::xarray<double>> parse_replay_record(const std::filesystem::path& path);
 
 ///
 /// Receiver for replay_planner. Holds the most recently generated
@@ -48,18 +75,27 @@ class replay_planner : public planner<replay_receiver> {
     ///
     /// Constructs a replay planner from a replay record stream.
     ///
-    /// @param in Stream containing a canonical JSON replay record
-    /// @throws std::runtime_error if the stream cannot be parsed or required fields are missing
+    /// When `prefix_waypoint_count` is supplied, the planner runs over only the
+    /// first N waypoints of the record instead of the full set. This is intended
+    /// for tests that compare a trajectory generated from a full waypoint set
+    /// against one generated from a prefix of the same set.
     ///
-    static replay_planner create(std::istream& in);
+    /// @param in Stream containing a canonical JSON replay record
+    /// @param prefix_waypoint_count Optional cap on the number of leading waypoints to use
+    /// @throws std::runtime_error if the stream cannot be parsed or required fields are missing
+    /// @throws std::out_of_range if `prefix_waypoint_count` is zero or exceeds the record's waypoint count
+    ///
+    static replay_planner create(std::istream& in, std::optional<std::size_t> prefix_waypoint_count = std::nullopt);
 
     ///
     /// Constructs a replay planner from a replay record file path.
     ///
     /// @param path Path to a canonical JSON replay record file
+    /// @param prefix_waypoint_count Optional cap on the number of leading waypoints to use; see stream overload
     /// @throws std::runtime_error if the file cannot be opened or parsed
+    /// @throws std::out_of_range if `prefix_waypoint_count` is zero or exceeds the record's waypoint count
     ///
-    static replay_planner create(const std::filesystem::path& path);
+    static replay_planner create(const std::filesystem::path& path, std::optional<std::size_t> prefix_waypoint_count = std::nullopt);
 
     ///
     /// Returns the event collector populated during execute().

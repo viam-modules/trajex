@@ -69,7 +69,7 @@ jobs:
             runner: macos-26   # build host only; the 14.0 floor comes from CMAKE_OSX_DEPLOYMENT_TARGET below
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ env.BUILD_REF }}   # released tag, or the dispatch ref (not target_commitish)
           submodules: true
@@ -83,9 +83,10 @@ jobs:
           apt-get install -y --no-install-recommends gcc-10 g++-10
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum   # cache modules + build (the rdk dep tree is heavy)
 
       - name: Configure, build, and install archives into go/artifacts
         run: |
@@ -130,20 +131,23 @@ jobs:
           # component and are excluded, so they don't bloat the shipped module.
           DESTDIR="$GITHUB_WORKSPACE/go/artifacts" cmake --install build-go --prefix / --component trajex
 
-      - name: Build the go test binary and smoke-test it
-        # Compile the totg tests into a standalone binary and run it here as the in-container
-        # sanity check. Link with the SYSTEM-DEFAULT compiler -- do NOT set CC/CXX to gcc-10.
-        # That IS the ABI-floor test: the archives are gcc-10-built and must link/run against
-        # whatever toolchain the environment provides. The same binary is uploaded and re-run
-        # on other distros by abi-check. It is self-contained (archives baked in, no runtime
-        # file deps -- confirmed), so CWD does not matter.
+      - name: Run the full go test suite, then build the abi-check binary
+        # Run EVERY go test under the tree (`./...` -- root, totg, streaming, rdk), so a cgo
+        # break or logic regression in ANY package is caught here, not just totg. Linked with
+        # the SYSTEM-DEFAULT compiler (do NOT set CC/CXX to gcc-10), so this also exercises
+        # the gcc-10 archives against the environment's default toolchain.
+        #
+        # Then compile the totg tests into a standalone binary for abi-check. That job tests
+        # SYSTEM-ABI transferability across distros (the libstdc++/glibc floor the archives
+        # demand), for which one representative binary is sufficient -- it need not exercise
+        # our own symbols (those are baked in), so totg alone covers it. Self-contained.
         run: |
           set -euxo pipefail
+          go -C go test ./...
           go -C go test -c -o "$GITHUB_WORKSPACE/totg.test" ./totg/
-          "$GITHUB_WORKSPACE/totg.test"
 
       - name: Upload the go test binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: totg-test-${{ matrix.plat }}
           path: totg.test
@@ -151,7 +155,7 @@ jobs:
           retention-days: 3
 
       - name: Upload platform artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: go-artifacts-${{ matrix.plat }}
           path: go/artifacts   # lib/<plat>/*.a plus the (shared) include/ tree
@@ -187,7 +191,7 @@ jobs:
             runner: ubuntu-24.04-arm
     steps:
       - name: Fetch the ${{ matrix.arch }} test binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: totg-test-linux_${{ matrix.arch }}
       - name: Run it in a clean ${{ matrix.image }} environment
@@ -215,13 +219,13 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ env.BUILD_REF }}
           fetch-depth: 0
 
       - name: Gather all platform artifacts into go/artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: go-artifacts-*
           path: go/artifacts
@@ -247,7 +251,7 @@ jobs:
         run: git format-patch -1 --binary -o patch HEAD
 
       - name: Upload commit patch
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: go-release-commit-patch
           path: patch/*.patch

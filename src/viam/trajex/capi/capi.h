@@ -317,7 +317,7 @@ extern const char viam_trajex_totg_key_waypoints_rads[];
 /// |-----|-------|-------|---------|---------|
 /// | `path_colinearization_ratio` | F64 | `[1]` | `0.0` (off) | Colinearization aggressiveness |
 /// | `waypoint_deduplication_tolerance_rads` | F64 | `[1]` | `1e-5` | Waypoints closer than this are merged |
-/// | `trajectory_sampling_freq_hz` | I64 | `[1]` | `100` | Output sample rate in Hz |
+/// | `trajectory_sampling_freq_hz` | F64 | `[1]` | `100.0` | Output sample rate in Hz |
 ///
 /// ## Outputs
 ///
@@ -351,6 +351,196 @@ extern const char viam_trajex_totg_key_waypoints_rads[];
 int viam_trajex_totg_generate(const viam_trajex_tensor_map_t* VIAM_TRAJEX_RESTRICT inputs,
                               viam_trajex_tensor_map_t* VIAM_TRAJEX_RESTRICT outputs,
                               const char** error_out);
+
+/// @}
+
+///
+/// @defgroup viam_trajex_totg_streaming TOTG: streaming session
+///
+/// Stateful, incremental trajectory generation. Waypoint batches arrive over time via
+/// `extend`; samples are pulled via `sample_next` / `sample_at_least`. The session
+/// internally manages pivots (smooth re-plan onto a new trajectory when admissible) and
+/// rebases (start a fresh chain when the prior active drains while batches are queued).
+///
+/// All entry points operate on an opaque session handle constructed by
+/// `viam_trajex_totg_streaming_session_create` and released by
+/// `viam_trajex_totg_streaming_session_destroy`. The library carries no global state;
+/// independent sessions on different threads need no synchronization, but concurrent
+/// operations on the same session are the caller's responsibility.
+///
+/// Streaming reuses the schema keys from `viam_trajex_totg_generate` for waypoint and
+/// sample-output tensors. The only streaming-specific addition is a tighter contract
+/// on the sample rate (required at session construction rather than optional).
+///
+/// @{
+///
+
+///
+/// Opaque streaming session handle. Construct via
+/// `viam_trajex_totg_streaming_session_create`; release via
+/// `viam_trajex_totg_streaming_session_destroy`.
+///
+typedef struct viam_trajex_totg_streaming_session viam_trajex_totg_streaming_session_t;
+
+///
+/// Construct a streaming session from a tensor map carrying the session's fixed
+/// configuration. Inputs map is consumed read-only and may be freed by the caller as
+/// soon as this entry point returns.
+///
+/// ## Required inputs
+///
+/// | Key | Dtype | Shape | Meaning |
+/// |-----|-------|-------|---------|
+/// | `velocity_limits_rads_per_sec` | F64 | `[n_dof]` | Per-joint maximum velocity; defines DOF |
+/// | `acceleration_limits_rads_per_sec2` | F64 | `[n_dof]` | Per-joint maximum acceleration |
+/// | `path_tolerance_delta_rads` | F64 | `[1]` | Path-blending tolerance |
+/// | `trajectory_sampling_freq_hz` | F64 | `[1]` | Sample rate in Hz (required for streaming) |
+///
+/// ## Optional inputs
+///
+/// | Key | Dtype | Shape | Default | Meaning |
+/// |-----|-------|-------|---------|---------|
+/// | `path_colinearization_ratio` | F64 | `[1]` | `0.0` (off) | Colinearization aggressiveness |
+///
+/// @param options Tensor map carrying the configuration keys above. Must not be NULL.
+///
+/// @param error_out On NULL return, receives a newly-allocated NUL-terminated diagnostic
+///                  string the caller releases via `viam_trajex_string_destroy`. May be
+///                  NULL if the caller does not need a diagnostic.
+///
+/// @return Newly-allocated session handle, or NULL on bad arguments, allocation failure,
+///         or a caught exception during construction.
+///
+viam_trajex_totg_streaming_session_t* viam_trajex_totg_streaming_session_create(const viam_trajex_tensor_map_t* options,
+                                                                                const char** error_out);
+
+///
+/// Destroy a streaming session and release all owned resources.
+///
+/// @param session Session to destroy. NULL is a no-op.
+///
+void viam_trajex_totg_streaming_session_destroy(viam_trajex_totg_streaming_session_t* session);
+
+///
+/// Add a waypoint batch to the session. The batch may either pivot the active trajectory
+/// (smooth re-plan onto a new chain) or stage for later absorption into the next rebase;
+/// the choice is made internally based on whether the candidate trajectory's branch point
+/// sits ahead of the consumer's watermark. The decision is invisible to the caller.
+///
+/// On the first call, the batch bootstraps the initial trajectory. On subsequent calls,
+/// `batch[0]` must compare bit-exactly equal to the session's most recently stored
+/// waypoint (the "seam" requirement); the seam is dropped before the remainder is
+/// absorbed. Callers are responsible for deduplicating adjacent waypoints in the batch.
+///
+/// ## Required inputs
+///
+/// | Key | Dtype | Shape | Meaning |
+/// |-----|-------|-------|---------|
+/// | `waypoints_rads` | F64 | `[n_waypoints, n_dof]` | Waypoint batch including seam |
+///
+/// @param session Session handle. Must not be NULL.
+///
+/// @param batch Tensor map carrying the waypoints batch. Must not be NULL and must not
+///              alias any tensor map the caller is using elsewhere on this thread.
+///
+/// @param error_out On `-1` return, receives a newly-allocated diagnostic string the
+///                  caller releases via `viam_trajex_string_destroy`. May be NULL.
+///
+/// @return 0 on success, -1 on bad arguments or any caught exception (seam mismatch,
+///         DOF mismatch, trajectory generation failure, etc.).
+///
+int viam_trajex_totg_streaming_session_extend(viam_trajex_totg_streaming_session_t* session,
+                                              const viam_trajex_tensor_map_t* batch,
+                                              const char** error_out);
+
+///
+/// Pull up to `n` samples from the session, writing them into `outputs`. Any prior
+/// contents of `outputs` are replaced. If the session is exhausted (no more samples
+/// available), `outputs` will carry zero-length sample tensors.
+///
+/// ## Outputs
+///
+/// | Key | Dtype | Shape | Meaning |
+/// |-----|-------|-------|---------|
+/// | `sample_times_sec` | F64 | `[k]` | Sample timestamps in global time (`k <= n`) |
+/// | `configurations_rads` | F64 | `[k, n_dof]` | Joint positions at each sample |
+/// | `velocities_rads_per_sec` | F64 | `[k, n_dof]` | Joint velocities at each sample |
+/// | `accelerations_rads_per_sec2` | F64 | `[k, n_dof]` | Joint accelerations at each sample |
+///
+/// @param session Session handle. Must not be NULL.
+///
+/// @param n Maximum number of samples to produce.
+///
+/// @param outputs Caller-allocated output tensor map. Contents replaced on success; left
+///                unchanged on failure. Must not be NULL and must be distinct from any
+///                input map.
+///
+/// @param error_out On `-1` return, receives a newly-allocated diagnostic string the
+///                  caller releases via `viam_trajex_string_destroy`. May be NULL.
+///
+/// @return 0 on success, -1 on bad arguments or caught exception.
+///
+int viam_trajex_totg_streaming_session_sample_next(viam_trajex_totg_streaming_session_t* session,
+                                                   size_t n,
+                                                   viam_trajex_tensor_map_t* outputs,
+                                                   const char** error_out);
+
+///
+/// Pull samples until the most recent sample's time is at least
+/// `current_time + horizon_sec`, writing them into `outputs`. Returns fewer samples if
+/// the session is exhausted. See `viam_trajex_totg_streaming_session_sample_next` for
+/// the output schema.
+///
+/// @param session Session handle. Must not be NULL.
+///
+/// @param horizon_sec Minimum amount of trajectory time to advance before stopping.
+///
+/// @param outputs Caller-allocated output tensor map. Contents replaced on success.
+///
+/// @param error_out See `sample_next`.
+///
+/// @return 0 on success, -1 on bad arguments or caught exception.
+///
+int viam_trajex_totg_streaming_session_sample_at_least(viam_trajex_totg_streaming_session_t* session,
+                                                       double horizon_sec,
+                                                       viam_trajex_tensor_map_t* outputs,
+                                                       const char** error_out);
+
+///
+/// @name Session status accessors
+///
+/// Scalar getters for session state. These cannot fail given a non-NULL handle; the
+/// session is either valid or its destruction has been called and using the handle
+/// is undefined behavior. Passing NULL for `session` or for an output pointer is
+/// undefined.
+///
+/// @{
+///
+
+///
+/// Global time of the most recently emitted sample, or zero if no samples have been
+/// emitted yet.
+///
+void viam_trajex_totg_streaming_session_current_time_sec(const viam_trajex_totg_streaming_session_t* session, double* out);
+
+///
+/// Cumulative count of trajectories the session has installed as active (first build +
+/// each pivot + each rebase). Zero for a fresh session before the first `extend`.
+///
+void viam_trajex_totg_streaming_session_generation_count(const viam_trajex_totg_streaming_session_t* session, int64_t* out);
+
+///
+/// Nonzero iff the session has an active trajectory (any successful `extend` has
+/// occurred). Zero iff fresh.
+///
+void viam_trajex_totg_streaming_session_has_active_trajectory(const viam_trajex_totg_streaming_session_t* session, int* out);
+
+///
+/// Duration of the active trajectory in seconds. Returns zero if no active trajectory.
+///
+void viam_trajex_totg_streaming_session_active_duration_sec(const viam_trajex_totg_streaming_session_t* session, double* out);
+
+/// @}
 
 /// @}
 

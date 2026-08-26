@@ -10,17 +10,20 @@ namespace viam::trajex::totg {
 ///
 /// Uniform time-step sampler.
 ///
-/// Samples trajectory at regular time intervals.
-/// Returns samples at t=0, dt, 2*dt, ... until trajectory duration is exceeded.
+/// Samples a trajectory at regular time intervals over the closed range `[start, duration]`,
+/// where `start` defaults to zero and `duration` is the trajectory's duration. Non-zero
+/// `start` values support chaining samplers across trajectory boundaries without
+/// duplicating the seam sample.
 ///
 class uniform_sampler {
    public:
     ///
-    /// Constructs uniform sampler with sample count.
+    /// Constructs uniform sampler with sample count and a starting time.
     ///
     /// @param num_samples Total number of samples to generate
+    /// @param start Time at which the first sample lands. Defaults to zero.
     ///
-    explicit uniform_sampler(std::size_t num_samples);
+    explicit uniform_sampler(std::size_t num_samples, trajectory::seconds start = trajectory::seconds{0.0});
 
     ///
     /// Creates uniform sampler with adjusted timestep to hit duration endpoint exactly.
@@ -36,15 +39,27 @@ class uniform_sampler {
     static uniform_sampler quantized_for_duration(trajectory::seconds duration, types::hertz frequency);
 
     ///
-    /// Creates uniform sampler with adjusted timestep to hit trajectory endpoint exactly.
+    /// Creates uniform sampler whose first sample lands at `start` and whose last sample
+    /// lands exactly at the trajectory's duration.
     ///
-    /// Convenience wrapper that extracts duration from trajectory.
+    /// Quantization adjusts the internal sample spacing so an integer number of samples
+    /// covers `[start, traj.duration()]` with both endpoints hit. The effective dt is
+    /// approximately `1 / frequency` but is adjusted per-call to fit the requested span.
     ///
-    /// @param traj Trajectory to sample (used for duration)
-    /// @param frequency Desired sampling frequency
-    /// @return uniform_sampler with dt adjusted to align with trajectory duration
+    /// With the default `start = 0`, this is the standard "sample the whole trajectory"
+    /// behavior. Non-zero `start` lets a caller chain samplers across trajectory
+    /// transitions by skipping past the seam (which the previous sampler already emitted
+    /// as its terminal sample).
     ///
-    static uniform_sampler quantized_for_trajectory(const trajectory& traj, types::hertz frequency);
+    /// @param traj Trajectory to sample
+    /// @param frequency Target sample rate, subject to per-trajectory quantization
+    /// @param start Time at which the first sample lands. Defaults to zero.
+    /// @return uniform_sampler covering [start, traj.duration()]
+    /// @throws std::invalid_argument if `start` is negative or is not strictly less than the trajectory's duration
+    ///
+    static uniform_sampler quantized_for_trajectory(const trajectory& traj,
+                                                    types::hertz frequency,
+                                                    trajectory::seconds start = trajectory::seconds{0.0});
 
     ///
     /// Calculates adjusted timestep for quantized sampling.
@@ -81,6 +96,7 @@ class uniform_sampler {
    private:
     std::size_t num_samples_;
     std::size_t next_sample_ = 0;
+    trajectory::seconds start_;
 };
 
 // Verify that uniform_sampler satisfies the sampler concept

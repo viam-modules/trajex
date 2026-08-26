@@ -161,4 +161,84 @@ BOOST_AUTO_TEST_CASE(no_duplicate_timestamps_at_end) {
     }
 }
 
+namespace {
+
+viam::trajex::totg::trajectory build_unit_duration_trajectory() {
+    using namespace viam::trajex::totg;
+    using viam::trajex::arc_acceleration;
+    using viam::trajex::arc_length;
+    using viam::trajex::arc_velocity;
+
+    const xt::xarray<double> waypoints = {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}};
+    path p = path::create(waypoints);
+
+    std::vector<trajectory::integration_point> points = {
+        {.time = trajectory::seconds{0.0}, .s = arc_length{0.0}, .s_dot = arc_velocity{0.0}, .s_ddot = arc_acceleration{0.5}},
+        {.time = trajectory::seconds{1.0}, .s = p.length(), .s_dot = arc_velocity{0.0}, .s_ddot = arc_acceleration{0.0}}};
+
+    const trajectory::options opts{.max_velocity = xt::ones<double>({3}), .max_acceleration = xt::ones<double>({3})};
+
+    return trajectory::create(std::move(p), opts, std::move(points));
+}
+
+}  // namespace
+
+BOOST_AUTO_TEST_CASE(quantized_for_trajectory_with_start_emits_first_sample_at_start) {
+    using namespace viam::trajex::totg;
+    using namespace viam::trajex::types;
+
+    const trajectory traj = build_unit_duration_trajectory();
+    const auto start = trajectory::seconds{0.1};
+
+    auto sampler = uniform_sampler::quantized_for_trajectory(traj, hertz{10.0}, start);
+    auto cursor = traj.create_cursor();
+
+    const auto first = sampler.next(cursor);
+    BOOST_REQUIRE(first.has_value());
+    BOOST_CHECK_EQUAL(first->time.count(), start.count());
+}
+
+BOOST_AUTO_TEST_CASE(quantized_for_trajectory_with_start_emits_last_sample_at_duration) {
+    using namespace viam::trajex::totg;
+    using namespace viam::trajex::types;
+
+    const trajectory traj = build_unit_duration_trajectory();
+    const auto start = trajectory::seconds{0.1};
+
+    auto sampler = uniform_sampler::quantized_for_trajectory(traj, hertz{10.0}, start);
+    auto cursor = traj.create_cursor();
+
+    std::optional<struct trajectory::sample> last;
+    while (auto s = sampler.next(cursor)) {
+        last = s;
+    }
+    BOOST_REQUIRE(last.has_value());
+    BOOST_CHECK_EQUAL(last->time.count(), traj.duration().count());
+}
+
+BOOST_AUTO_TEST_CASE(quantized_for_trajectory_throws_on_negative_start) {
+    using namespace viam::trajex::totg;
+    using namespace viam::trajex::types;
+
+    const trajectory traj = build_unit_duration_trajectory();
+    BOOST_CHECK_THROW(uniform_sampler::quantized_for_trajectory(traj, hertz{10.0}, trajectory::seconds{-0.1}), std::invalid_argument);
+}
+
+BOOST_AUTO_TEST_CASE(quantized_for_trajectory_throws_on_start_at_duration) {
+    using namespace viam::trajex::totg;
+    using namespace viam::trajex::types;
+
+    const trajectory traj = build_unit_duration_trajectory();
+    BOOST_CHECK_THROW(uniform_sampler::quantized_for_trajectory(traj, hertz{10.0}, traj.duration()), std::invalid_argument);
+}
+
+BOOST_AUTO_TEST_CASE(quantized_for_trajectory_throws_on_start_beyond_duration) {
+    using namespace viam::trajex::totg;
+    using namespace viam::trajex::types;
+
+    const trajectory traj = build_unit_duration_trajectory();
+    const auto past = traj.duration() + trajectory::seconds{0.5};
+    BOOST_CHECK_THROW(uniform_sampler::quantized_for_trajectory(traj, hertz{10.0}, past), std::invalid_argument);
+}
+
 BOOST_AUTO_TEST_SUITE_END()

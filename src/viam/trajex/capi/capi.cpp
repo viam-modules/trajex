@@ -26,6 +26,7 @@
 #endif
 
 #include <viam/trajex/totg/path.hpp>
+#include <viam/trajex/totg/streaming/session.hpp>
 #include <viam/trajex/totg/trajectory.hpp>
 #include <viam/trajex/totg/uniform_sampler.hpp>
 #include <viam/trajex/totg/waypoint_accumulator.hpp>
@@ -62,13 +63,28 @@ struct viam_trajex_tensor_map {
     std::unordered_map<std::string, tensor_value, transparent_hash, std::equal_to<>> tensors;
 };
 
+// The opaque streaming session type. Wraps an in-place
+// `viam::trajex::totg::streaming::session` plus a captured DOF count so empty-sample
+// outputs (shape-zero tensors) still carry the correct second-dimension extent for
+// the configuration / velocity / acceleration arrays.
+struct viam_trajex_totg_streaming_session {
+    viam::trajex::totg::streaming::session sess;
+    std::size_t n_dof;
+
+    viam_trajex_totg_streaming_session(viam::trajex::totg::path::options popts,
+                                       viam::trajex::totg::trajectory::options topts,
+                                       viam::trajex::types::hertz sample_rate,
+                                       std::size_t dof)
+        : sess(std::move(popts), std::move(topts), sample_rate), n_dof(dof) {}
+};
+
 namespace {
 
 // Default values for optional inputs to viam_trajex_totg_generate, per the
 // schema documented in capi.h.
 constexpr double k_default_colinearization_ratio = 0.0;
 constexpr double k_default_dedup_tolerance = 1e-5;
-constexpr std::int64_t k_default_sampling_freq_hz = 100;
+constexpr double k_default_sampling_freq_hz = 100.0;
 
 bool dtype_is_valid(viam_trajex_dtype_t dtype) noexcept {
     switch (dtype) {
@@ -214,12 +230,11 @@ viam_trajex_tensor_map totg_generate_impl(const viam_trajex_tensor_map& inputs) 
         dedup_tolerance = (*xa)(0);
     }
 
-    auto sampling_freq_hz = k_default_sampling_freq_hz;
-    if (const auto* xa = find_xarray<std::int64_t>(inputs, viam_trajex_totg_key_trajectory_sampling_freq_hz)) {
+    auto sampling_freq = k_default_sampling_freq_hz;
+    if (const auto* xa = find_xarray<double>(inputs, viam_trajex_totg_key_trajectory_sampling_freq_hz)) {
         require_scalar(*xa, viam_trajex_totg_key_trajectory_sampling_freq_hz);
-        sampling_freq_hz = (*xa)(0);
+        sampling_freq = (*xa)(0);
     }
-    const auto sampling_freq = static_cast<double>(sampling_freq_hz);
 
     // Hand the waypoints xarray directly to the accumulator: it borrows
     // (the input map owns and outlives this function), no copy.
@@ -276,6 +291,75 @@ viam_trajex_tensor_map totg_generate_impl(const viam_trajex_tensor_map& inputs) 
     out.tensors.emplace(viam_trajex_totg_key_velocities_rads_per_sec, std::move(velocities));
     out.tensors.emplace(viam_trajex_totg_key_accelerations_rads_per_sec2, std::move(accelerations));
 
+    return out;
+}
+
+// Build a streaming session from a config tensor map. Throws on missing required keys,
+// dtype mismatches, or shape mismatches; the extern "C" wrapper converts exceptions to
+// NULL with diagnostic.
+std::unique_ptr<viam_trajex_totg_streaming_session> build_streaming_session(const viam_trajex_tensor_map& options) {
+    namespace totg = viam::trajex::totg;
+
+    const auto& velocity_limits = require_xarray<double>(options, viam_trajex_totg_key_velocity_limits_rads_per_sec);
+    if (velocity_limits.dimension() != 1) {
+        throw std::invalid_argument("velocity_limits_rads_per_sec must be 1D [n_dof]");
+    }
+    const auto n_dof = velocity_limits.shape(0);
+
+    const auto& acceleration_limits = require_xarray<double>(options, viam_trajex_totg_key_acceleration_limits_rads_per_sec2);
+    require_shape_1d(acceleration_limits, viam_trajex_totg_key_acceleration_limits_rads_per_sec2, n_dof);
+
+    const auto& path_tolerance_xa = require_xarray<double>(options, viam_trajex_totg_key_path_tolerance_delta_rads);
+    require_scalar(path_tolerance_xa, viam_trajex_totg_key_path_tolerance_delta_rads);
+    const auto path_tolerance = path_tolerance_xa(0);
+
+    const auto& sample_rate_xa = require_xarray<double>(options, viam_trajex_totg_key_trajectory_sampling_freq_hz);
+    require_scalar(sample_rate_xa, viam_trajex_totg_key_trajectory_sampling_freq_hz);
+    const auto sample_rate_hz = sample_rate_xa(0);
+
+    auto colinearization_ratio = k_default_colinearization_ratio;
+    if (const auto* xa = find_xarray<double>(options, viam_trajex_totg_key_path_colinearization_ratio)) {
+        require_scalar(*xa, viam_trajex_totg_key_path_colinearization_ratio);
+        colinearization_ratio = (*xa)(0);
+    }
+
+    auto path_opts = totg::path::options{}.set_max_blend_deviation(path_tolerance);
+    if (colinearization_ratio > 0.0) {
+        path_opts.set_max_linear_deviation(path_tolerance * colinearization_ratio);
+    }
+
+    totg::trajectory::options trajectory_opts;
+    trajectory_opts.max_velocity = velocity_limits;
+    trajectory_opts.max_acceleration = acceleration_limits;
+
+    return std::make_unique<viam_trajex_totg_streaming_session>(
+        std::move(path_opts), std::move(trajectory_opts), viam::trajex::types::hertz{sample_rate_hz}, n_dof);
+}
+
+// Materialize a vector of trajectory samples into the four output tensors of the
+// streaming sample schema. The shape-zero case (no samples) still emits all four keys
+// with the right DOF-dimension extent, so the caller can read the shape uniformly.
+viam_trajex_tensor_map materialize_samples(const std::vector<struct viam::trajex::totg::trajectory::sample>& samples, std::size_t n_dof) {
+    const std::size_t n = samples.size();
+
+    using shape_t = typename xt::xarray<double>::shape_type;
+    xt::xarray<double> times = xt::zeros<double>(shape_t{n});
+    xt::xarray<double> configurations = xt::zeros<double>(shape_t{n, n_dof});
+    xt::xarray<double> velocities = xt::zeros<double>(shape_t{n, n_dof});
+    xt::xarray<double> accelerations = xt::zeros<double>(shape_t{n, n_dof});
+
+    for (std::size_t i = 0; i < n; ++i) {
+        times(i) = samples[i].time.count();
+        xt::view(configurations, i, xt::all()) = samples[i].configuration;
+        xt::view(velocities, i, xt::all()) = samples[i].velocity;
+        xt::view(accelerations, i, xt::all()) = samples[i].acceleration;
+    }
+
+    viam_trajex_tensor_map out;
+    out.tensors.emplace(viam_trajex_totg_key_sample_times_sec, std::move(times));
+    out.tensors.emplace(viam_trajex_totg_key_configurations_rads, std::move(configurations));
+    out.tensors.emplace(viam_trajex_totg_key_velocities_rads_per_sec, std::move(velocities));
+    out.tensors.emplace(viam_trajex_totg_key_accelerations_rads_per_sec2, std::move(accelerations));
     return out;
 }
 
@@ -469,6 +553,154 @@ int viam_trajex_totg_generate(const viam_trajex_tensor_map_t* inputs, viam_traje
         }
         return -1;
     }
+}
+
+viam_trajex_totg_streaming_session_t* viam_trajex_totg_streaming_session_create(const viam_trajex_tensor_map_t* options,
+                                                                                const char** error_out) {
+    if (error_out) {
+        *error_out = nullptr;
+    }
+    try {
+        if (!options) {
+            throw std::invalid_argument("options is null");
+        }
+        return build_streaming_session(*options).release();
+    } catch (const std::exception& e) {
+        if (error_out) {
+            *error_out = duplicate_error_string(e.what());
+        }
+        return nullptr;
+    } catch (...) {
+        if (error_out) {
+            *error_out = duplicate_error_string("unknown exception");
+        }
+        return nullptr;
+    }
+}
+
+void viam_trajex_totg_streaming_session_destroy(viam_trajex_totg_streaming_session_t* session) {
+    try {
+        delete session;
+    } catch (...) {  // NOLINT(bugprone-empty-catch)
+        // Defensive boundary; session destructor should be noexcept.
+    }
+}
+
+int viam_trajex_totg_streaming_session_extend(viam_trajex_totg_streaming_session_t* session,
+                                              const viam_trajex_tensor_map_t* batch,
+                                              const char** error_out) {
+    if (error_out) {
+        *error_out = nullptr;
+    }
+    try {
+        if (!session) {
+            throw std::invalid_argument("session is null");
+        }
+        if (!batch) {
+            throw std::invalid_argument("batch is null");
+        }
+        const auto& waypoints = require_xarray<double>(*batch, viam_trajex_totg_key_waypoints_rads);
+        if (waypoints.dimension() != 2) {
+            throw std::invalid_argument("waypoints_rads must be 2D [n_waypoints, n_dof]");
+        }
+        if (waypoints.shape(1) != session->n_dof) {
+            throw std::invalid_argument("waypoints_rads DOF does not match session DOF");
+        }
+        // Accumulator borrows from `waypoints` (owned by the input map, which the caller
+        // guarantees outlives this call). The session's extend internally copies any
+        // waypoints it retains, so the accumulator's lifetime ending at function exit is
+        // fine.
+        const viam::trajex::totg::waypoint_accumulator acc(waypoints);
+        session->sess.extend(acc);
+        return 0;
+    } catch (const std::exception& e) {
+        if (error_out) {
+            *error_out = duplicate_error_string(e.what());
+        }
+        return -1;
+    } catch (...) {
+        if (error_out) {
+            *error_out = duplicate_error_string("unknown exception");
+        }
+        return -1;
+    }
+}
+
+int viam_trajex_totg_streaming_session_sample_next(viam_trajex_totg_streaming_session_t* session,
+                                                   std::size_t n,
+                                                   viam_trajex_tensor_map_t* outputs,
+                                                   const char** error_out) {
+    if (error_out) {
+        *error_out = nullptr;
+    }
+    try {
+        if (!session) {
+            throw std::invalid_argument("session is null");
+        }
+        if (!outputs) {
+            throw std::invalid_argument("outputs is null");
+        }
+        auto samples = session->sess.sample_next(n);
+        *outputs = materialize_samples(samples, session->n_dof);
+        return 0;
+    } catch (const std::exception& e) {
+        if (error_out) {
+            *error_out = duplicate_error_string(e.what());
+        }
+        return -1;
+    } catch (...) {
+        if (error_out) {
+            *error_out = duplicate_error_string("unknown exception");
+        }
+        return -1;
+    }
+}
+
+int viam_trajex_totg_streaming_session_sample_at_least(viam_trajex_totg_streaming_session_t* session,
+                                                       double horizon_sec,
+                                                       viam_trajex_tensor_map_t* outputs,
+                                                       const char** error_out) {
+    if (error_out) {
+        *error_out = nullptr;
+    }
+    try {
+        if (!session) {
+            throw std::invalid_argument("session is null");
+        }
+        if (!outputs) {
+            throw std::invalid_argument("outputs is null");
+        }
+        auto samples = session->sess.sample_at_least(viam::trajex::totg::trajectory::seconds{horizon_sec});
+        *outputs = materialize_samples(samples, session->n_dof);
+        return 0;
+    } catch (const std::exception& e) {
+        if (error_out) {
+            *error_out = duplicate_error_string(e.what());
+        }
+        return -1;
+    } catch (...) {
+        if (error_out) {
+            *error_out = duplicate_error_string("unknown exception");
+        }
+        return -1;
+    }
+}
+
+void viam_trajex_totg_streaming_session_current_time_sec(const viam_trajex_totg_streaming_session_t* session, double* out) {
+    *out = session->sess.current_time().count();
+}
+
+void viam_trajex_totg_streaming_session_generation_count(const viam_trajex_totg_streaming_session_t* session, std::int64_t* out) {
+    *out = static_cast<std::int64_t>(session->sess.trajectory_generation_count());
+}
+
+void viam_trajex_totg_streaming_session_has_active_trajectory(const viam_trajex_totg_streaming_session_t* session, int* out) {
+    *out = session->sess.active_trajectory() != nullptr ? 1 : 0;
+}
+
+void viam_trajex_totg_streaming_session_active_duration_sec(const viam_trajex_totg_streaming_session_t* session, double* out) {
+    const auto* active = session->sess.active_trajectory();
+    *out = active ? active->duration().count() : 0.0;
 }
 
 }  // extern "C"

@@ -1,4 +1,4 @@
-//go:build !windows && !no_cgo
+//go:build !windows && cgo
 
 package rdk_test
 
@@ -46,7 +46,7 @@ func buildInputs() ml.Tensors {
 		),
 		totg.KeyTrajectorySamplingFreqHz: tensor.New(
 			tensor.WithShape(1),
-			tensor.WithBacking([]int64{100}),
+			tensor.WithBacking([]float64{100.0}),
 		),
 	}
 }
@@ -170,7 +170,7 @@ func TestMinimalTrajectoryLatency(t *testing.T) {
 		),
 		totg.KeyTrajectorySamplingFreqHz: tensor.New(
 			tensor.WithShape(1),
-			tensor.WithBacking([]int64{100}),
+			tensor.WithBacking([]float64{100.0}),
 		),
 	}
 
@@ -283,7 +283,7 @@ func TestHypercubeTortureLatency(t *testing.T) {
 		),
 		totg.KeyTrajectorySamplingFreqHz: tensor.New(
 			tensor.WithShape(1),
-			tensor.WithBacking([]int64{10}),
+			tensor.WithBacking([]float64{10.0}),
 		),
 	}
 
@@ -346,7 +346,7 @@ func TestPhase4Gate(t *testing.T) {
 		totg.KeyVelocityLimitsRadsPerSec:      tensor.New(tensor.WithShape(nDOF), tensor.WithBacking(velLimits)),
 		totg.KeyAccelerationLimitsRadsPerSec2: tensor.New(tensor.WithShape(nDOF), tensor.WithBacking(accLimits)),
 		totg.KeyPathToleranceDeltaRads:        tensor.New(tensor.WithShape(1), tensor.WithBacking([]float64{0.05})),
-		totg.KeyTrajectorySamplingFreqHz:      tensor.New(tensor.WithShape(1), tensor.WithBacking([]int64{200})),
+		totg.KeyTrajectorySamplingFreqHz:      tensor.New(tensor.WithShape(1), tensor.WithBacking([]float64{200.0})),
 	}
 
 	s := newTestService(t)

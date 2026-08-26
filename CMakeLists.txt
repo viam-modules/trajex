@@ -263,6 +263,7 @@ target_sources(viam-trajex-totg
     src/viam/trajex/jacobian/jacobian.cpp
     src/viam/trajex/totg/observers.cpp
     src/viam/trajex/totg/path.cpp
+    src/viam/trajex/totg/streaming/session.cpp
     src/viam/trajex/totg/tcp_jacobian.cpp
     src/viam/trajex/totg/trajectory.cpp
     src/viam/trajex/totg/uniform_sampler.cpp
@@ -521,6 +522,55 @@ if (VIAM_TRAJEX_BUILD_TESTS)
       NAME viam-trajex-totg-test
       COMMAND viam-trajex-totg-test
     )
+
+
+    # Separate binary for streaming session tests so they can be looped fast
+    # without paying the integration suite's runtime.
+    add_executable(viam-trajex-totg-streaming-test)
+
+    target_sources(viam-trajex-totg-streaming-test
+      PRIVATE
+      src/viam/trajex/totg/streaming/test/main.cpp
+      src/viam/trajex/totg/streaming/test/session.cpp
+    )
+
+    target_link_libraries(viam-trajex-totg-streaming-test
+      PRIVATE
+      viam::trajex::totg
+      Boost::boost
+    )
+
+    target_compile_definitions(viam-trajex-totg-streaming-test PRIVATE
+      VIAM_TRAJEX_STREAMING_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/viam/trajex/totg/streaming/test/data"
+    )
+
+    apply_wall_werror(viam-trajex-totg-streaming-test)
+
+    add_test(
+      NAME viam-trajex-totg-streaming-test
+      COMMAND viam-trajex-totg-streaming-test
+    )
+
+
+    # Streaming-session simulator. Standalone binary, not wired into ctest --
+    # see orbsanding-streaming-session-simulation-plan.md.
+    add_executable(viam-trajex-totg-streaming-sim-exe)
+
+    target_sources(viam-trajex-totg-streaming-sim-exe
+      PRIVATE
+      src/viam/trajex/totg/streaming/test/sim/streaming_sim_main.cpp
+    )
+
+    set_target_properties(viam-trajex-totg-streaming-sim-exe PROPERTIES
+      OUTPUT_NAME viam-trajex-totg-streaming-sim
+    )
+
+    target_link_libraries(viam-trajex-totg-streaming-sim-exe
+      PRIVATE
+      viam::trajex::totg::tools
+    )
+
+    apply_wall_werror(viam-trajex-totg-streaming-sim-exe)
 
 
     add_executable(viam-trajex-totg-tools-test)

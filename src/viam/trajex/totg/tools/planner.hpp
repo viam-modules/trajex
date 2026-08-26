@@ -41,6 +41,10 @@ class planner_base {
         xt::xarray<double> acceleration_limits;
         double path_blend_tolerance = 0.0;
         std::optional<double> colinearization_ratio;
+        // Curvature bounds for blend construction. nullopt leaves path::options at its
+        // built-in defaults (k_default_min_blend_curvature / k_default_max_blend_curvature).
+        std::optional<double> min_blend_curvature;
+        std::optional<double> max_blend_curvature;
         bool segment_totg = true;
         trajectory::integration_observer* observer = nullptr;  // totg only; ignored by legacy
         std::optional<trajectory::tcp_limit> tcp{};            // optional TCP Cartesian speed limit; totg only
@@ -356,6 +360,12 @@ class planner : public planner_base {
                 auto path_opts = path::options{}.set_max_blend_deviation(get_config().path_blend_tolerance);
                 if (get_config().colinearization_ratio) {
                     path_opts.set_max_linear_deviation(get_config().path_blend_tolerance * *get_config().colinearization_ratio);
+                }
+                if (get_config().min_blend_curvature) {
+                    path_opts.set_min_blend_curvature(*get_config().min_blend_curvature);
+                }
+                if (get_config().max_blend_curvature) {
+                    path_opts.set_max_blend_curvature(*get_config().max_blend_curvature);
                 }
 
                 auto p = path::create(segment, path_opts);

@@ -1,4 +1,4 @@
-//go:build darwin && arm64 && !no_cgo
+//go:build darwin && arm64
 
 package capi
 

@@ -1,4 +1,4 @@
-//go:build linux && arm64 && !no_cgo
+//go:build linux && arm64
 
 package capi
 

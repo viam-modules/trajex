@@ -261,6 +261,8 @@ std::shared_ptr<mlmodel::named_tensor_views> mlmodel::infer(const named_tensor_v
         .acceleration_limits = std::move(acceleration_limits),
         .path_blend_tolerance = path_tolerance,
         .colinearization_ratio = colinearization_ratio,
+        .min_blend_curvature = std::nullopt,
+        .max_blend_curvature = std::nullopt,
         .segment_totg = config_.segment_for_trajex,
         .tcp = std::move(tcp_limit),
         .model_table = std::move(model_table),

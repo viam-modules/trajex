@@ -57,11 +57,18 @@ std::string planner_base::serialize_for_replay(const waypoint_accumulator& waypo
     std::ostringstream ts;
     ts << std::put_time(&buf, "%FT%T") << "." << std::setw(6) << std::setfill('0') << delta_us.count() << "Z";
 
-    // Reconstruct path::options the same way run_totg_ does, so we can read off the
-    // min/max blend curvature defaults that are currently not configurable via get_config().
+    // Reconstruct path::options the same way run_totg_ does so the curvature bounds
+    // recorded into the replay match what the totg run actually used: configured values
+    // when get_config() carries them, defaults otherwise.
     auto path_opts = path::options{}.set_max_blend_deviation(get_config().path_blend_tolerance);
     if (get_config().colinearization_ratio) {
         path_opts.set_max_linear_deviation(get_config().path_blend_tolerance * *get_config().colinearization_ratio);
+    }
+    if (get_config().min_blend_curvature) {
+        path_opts.set_min_blend_curvature(*get_config().min_blend_curvature);
+    }
+    if (get_config().max_blend_curvature) {
+        path_opts.set_max_blend_curvature(*get_config().max_blend_curvature);
     }
 
     Json::Value root;

@@ -1,4 +1,4 @@
-//go:build !windows && !no_cgo
+//go:build !windows && cgo
 
 // Package rdk adapts trajex's TOTG surface to RDK's MLModel service
 // interface, so RDK consumers can use trajex as a drop-in MLModel resource
@@ -114,7 +114,7 @@ func (s *Service) Metadata(_ context.Context) (mlmodel.MLMetadata, error) {
 			{
 				Name:        totg.KeyTrajectorySamplingFreqHz,
 				Description: "Output sample rate, in Hz [scalar]",
-				DataType:    "int64",
+				DataType:    "float64",
 				Shape:       []int{1},
 			},
 		},

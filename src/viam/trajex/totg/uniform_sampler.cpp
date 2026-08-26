@@ -7,7 +7,7 @@
 
 namespace viam::trajex::totg {
 
-uniform_sampler::uniform_sampler(std::size_t num_samples) : num_samples_{num_samples} {}
+uniform_sampler::uniform_sampler(std::size_t num_samples, trajectory::seconds start) : num_samples_{num_samples}, start_{start} {}
 
 std::size_t uniform_sampler::calculate_quantized_samples(double duration_sec, double frequency_hz) {
     if (duration_sec <= 0.0 || frequency_hz <= 0.0) {
@@ -36,8 +36,16 @@ uniform_sampler uniform_sampler::quantized_for_duration(trajectory::seconds dura
     return uniform_sampler{calculate_quantized_samples(duration.count(), frequency.value)};
 }
 
-uniform_sampler uniform_sampler::quantized_for_trajectory(const trajectory& traj, types::hertz frequency) {
-    return quantized_for_duration(traj.duration(), frequency);
+uniform_sampler uniform_sampler::quantized_for_trajectory(const trajectory& traj, types::hertz frequency, trajectory::seconds start) {
+    const auto duration = traj.duration();
+    if (start < trajectory::seconds{0.0}) {
+        throw std::invalid_argument{"start must be non-negative"};
+    }
+    if (start >= duration) {
+        throw std::invalid_argument{"start must be strictly less than the trajectory's duration"};
+    }
+    const auto span = duration - start;
+    return uniform_sampler{calculate_quantized_samples(span.count(), frequency.value), start};
 }
 
 std::optional<struct trajectory::sample> uniform_sampler::next(trajectory::cursor& cursor) {
@@ -45,11 +53,12 @@ std::optional<struct trajectory::sample> uniform_sampler::next(trajectory::curso
         return std::nullopt;
     }
 
-    // Compute target time via `linspace` with a special case for the exact endpoint.
+    // Compute target time via `linspace` over [start_, duration] with a special case for
+    // the exact endpoint.
     const auto when = (next_sample_ == num_samples_ - 1) ? 1.0 : static_cast<double>(next_sample_) / static_cast<double>(num_samples_ - 1);
 
     // Seek cursor to computed time and sample
-    cursor.seek(trajectory::seconds{std::lerp(0.0, cursor.trajectory().duration().count(), when)});
+    cursor.seek(trajectory::seconds{std::lerp(start_.count(), cursor.trajectory().duration().count(), when)});
     auto sample = cursor.sample();
 
     ++next_sample_;

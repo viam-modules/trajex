@@ -1,4 +1,4 @@
-//go:build !windows && !no_cgo
+//go:build !windows
 
 // Package totg exposes the trajex TOTG (time-optimal trajectory generation)
 // algorithm as a Go API, layered on top of github.com/viam-modules/trajex's
