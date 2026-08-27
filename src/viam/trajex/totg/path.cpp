@@ -327,6 +327,13 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         // can produce values slightly outside that range.
         const auto dot_clamped = std::clamp(dot, -1.0, 1.0);
 
+        // Exact collinear (angle=0): the bisector and radius formula both have singularities here.
+        // No blend is needed since the tangent is unchanged, and TOTG won't mandate s_dot=0.
+        // All near-collinear cases are handled by the min_blend_curvature cap below.
+        if (dot_clamped == 1.0) {
+            return std::nullopt;
+        }
+
         // Exact reversal (angle=pi): the blend formula is algebraically undefined here.
         //
         // Near-reversal is handled by the max_blend_curvature check below. We guard this case
@@ -337,20 +344,6 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
 
         const auto angle = std::acos(dot_clamped);
         const auto half_angle = angle / 2.0;
-
-        // Near-collinear corners get no blend.
-        // Blending anyway is unstable, because the min_blend_curvature radius cap multiplies that
-        // degenerate bisector by a large center offset and the resulting arc basis vectors x and
-        // y come out non-perpendicular, tripping the circular-segment validity check.
-        // Below k_min_blend_angle the junction stays linear instead; the tangent is continuous to
-        // within the velocity-limit epsilon, so TOTG does not mandate s_dot = 0 there. That holds
-        // because 1 - cos(k_min_blend_angle) approx 5e-13 sits well below the default trajectory
-        // epsilon (1e-6); a trajectory configured with an epsilon under ~5e-13 instead classifies
-        // these junctions as tangent discontinuities requiring a full stop (safe, but slower).
-        constexpr double k_min_blend_angle = 1e-6;
-        if (angle < k_min_blend_angle) {
-            return std::nullopt;
-        }
 
         // At this point angle is strictly in (0, pi). trajectory.cpp relies on this guarantee
         // when searching for Case 2 switching points within circular segments.

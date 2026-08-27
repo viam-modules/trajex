@@ -2,7 +2,6 @@
 // Extracted from test.cpp lines 1563-1753
 
 #include <cmath>
-#include <limits>
 
 #include <viam/trajex/totg/path.hpp>
 #include <viam/trajex/totg/trajectory.hpp>
@@ -274,29 +273,6 @@ BOOST_AUTO_TEST_CASE(sample_at_end) {
     BOOST_CHECK_CLOSE(sample.configuration(0), 1.0, 0.001);  // At end of path
     BOOST_CHECK_CLOSE(sample.configuration(1), 0.0, 0.001);
     BOOST_CHECK_CLOSE(sample.velocity(0), 1.0, 0.001);  // Still moving at end
-}
-
-// Sampling exactly at an integration point whose stored acceleration is non-finite (e.g. the
-// NaN stamped at limit-curve hits on an invalid trajectory handed to on_failed) must not poison
-// the velocity: at dt == 0 the velocity is exactly the stored s_dot, with no extrapolation. The
-// arc-length seek already guards this case; the velocity computation must match.
-BOOST_AUTO_TEST_CASE(sample_at_point_with_non_finite_acceleration_keeps_velocity_finite) {
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
-    path p = path::create(waypoints);
-
-    std::vector<trajectory::integration_point> points = {
-        {.time = trajectory::seconds{0.0}, .s = arc_length{0.0}, .s_dot = arc_velocity{1.0}, .s_ddot = arc_acceleration{0.0}},
-        {.time = trajectory::seconds{0.5},
-         .s = arc_length{0.5},
-         .s_dot = arc_velocity{1.0},
-         .s_ddot = arc_acceleration{std::numeric_limits<double>::quiet_NaN()}},
-        {.time = trajectory::seconds{1.0}, .s = arc_length{1.0}, .s_dot = arc_velocity{1.0}, .s_ddot = arc_acceleration{0.0}}};
-
-    const trajectory traj = create_trajectory_with_integration_points(std::move(p), std::move(points));
-
-    const auto sample = traj.sample(trajectory::seconds{0.5});
-    BOOST_CHECK_CLOSE(sample.velocity(0), 1.0, 0.001);
-    BOOST_CHECK_CLOSE(sample.velocity(1), 0.0, 0.001);
 }
 
 BOOST_AUTO_TEST_CASE(sample_before_start_throws) {

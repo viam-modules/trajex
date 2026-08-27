@@ -1587,16 +1587,12 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
                         // The trajectory naturally escapes back to the feasible region. This was
                         // numerical overshoot from a source point. Commit the breach as our next
-                        // position and clamp s_dot to the tighter of the two limits at the breach,
-                        // mirroring the velocity-case escape patterns below. The acceleration
-                        // curve can sit above the velocity curve here (a tight TCP cap dipping
-                        // below it, or the curves crossing), and clamping to the acceleration
-                        // limit alone would commit a point that violates the velocity limit.
-                        // Without committing here the outer integrator's delta_s would be zero
-                        // (since the bisection collapsed next_point onto current_point) and the
-                        // loop would spin indefinitely.
+                        // position and clamp s_dot to the acceleration limit, mirroring the
+                        // velocity-case escape patterns below. Without committing here the outer
+                        // integrator's delta_s would be zero (since the bisection collapsed
+                        // next_point onto current_point) and the loop would spin indefinitely.
                         next_point = breach_point;
-                        next_point.s_dot = std::min(breach_s_dot_max_acc, breach_s_dot_max_vel);
+                        next_point.s_dot = breach_s_dot_max_acc;
                         return std::nullopt;
                     }
 
@@ -1674,16 +1670,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
                 const auto s_dot_average = midpoint(current_point.s_dot, next_point.s_dot);
                 const auto dt = delta_s / s_dot_average;
-
-                // When bisection toward a breach collapses next_point onto current_point, delta_s falls
-                // to the floating-point noise floor while remaining nonzero.
-                // The finite difference delta_s_dot / dt then divides one noise-floor
-                // quantity by another and yields a spurious s_ddot of arbitrary magnitude. The motion is
-                // still feasible (s and s_dot stay continuous, and the next step restamps this same point
-                // with a valid acceleration), so stamp the feasible acceleration already selected for this
-                // point rather than the noise ratio. dt itself stays tiny and correct for the timestamp.
-                constexpr trajectory::seconds k_degenerate_dt{1e-12};
-                const auto s_ddot = (dt <= k_degenerate_dt) ? s_ddot_desired : (delta_s_dot / dt);
+                const auto s_ddot = delta_s_dot / dt;
                 const auto next_time = current_time + dt;
 
                 traj.integration_points_.push_back(
@@ -2306,12 +2293,8 @@ struct trajectory::sample trajectory::cursor::sample() const {
     // Interpolate path space (s, s_dot, s_ddot) using piecewise constant acceleration between
     // integration points. This is the standard kinematic model: constant acceleration
     // produces linear velocity and quadratic position.
-    //
-    // At dt == 0 the velocity is exactly the stored s_dot: mirror the short-circuit in
-    // update_path_cursor_position_, since multiplying a non-finite stored acceleration by a
-    // zero dt would otherwise turn an exactly-known velocity into NaN.
     const auto dt = time_ - p0.time;
-    const auto s_dot = (dt == seconds{0.0}) ? p0.s_dot : p0.s_dot + (p0.s_ddot * dt);
+    const auto s_dot = p0.s_dot + (p0.s_ddot * dt);
     const auto s_ddot = p0.s_ddot;
 
     // Query the path geometry at the current arc length position. The path_cursor_ has
@@ -2351,14 +2334,7 @@ void trajectory::cursor::update_path_cursor_position_(seconds t) {
 
     const auto& p0 = *time_hint_;
     const auto dt = (t - p0.time);
-
-    // At dt == 0 the sample sits exactly on p0, so the arc length is p0.s with no extrapolation.
-    // Short-circuit rather than evaluate the quadratic term, which multiplies the stored s_ddot by
-    // zero: if that acceleration is ever non-finite (e.g. an indeterminate terminal value), NaN * 0
-    // is NaN and would propagate into the arc length, seek the path cursor to its sentinel, and make
-    // the subsequent query throw. Guarding here keeps sampling robust to a non-finite stored
-    // acceleration regardless of its source.
-    const auto s_interp = (dt == seconds{0.0}) ? p0.s : p0.s + (p0.s_dot * dt) + (0.5 * p0.s_ddot * dt * dt);
+    const auto s_interp = p0.s + (p0.s_dot * dt) + (0.5 * p0.s_ddot * dt * dt);
 
     // Clamp interpolated arc length to path bounds to handle floating point accumulation.
     // Even when t <= duration, s_interp can slightly exceed path.length() due to numerical
