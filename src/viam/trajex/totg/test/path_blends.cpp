@@ -224,7 +224,8 @@ BOOST_AUTO_TEST_CASE(circular_blend_collinear_no_blend) {
 // 6-DOF waypoints (captured from a GP12 realtime plan) form a corner whose turn angle is at
 // the acos(dot) precision floor (~1.5e-8 rad). The bisector direction is then numerical noise,
 // and with the min_blend_curvature radius cap the blend construction produced non-perpendicular
-// basis vectors. The corner must be treated as collinear: no blend, no throw.
+// basis vectors. The blend basis is now orthogonalized against the incoming direction at
+// construction, so the corner blends normally rather than throwing.
 BOOST_AUTO_TEST_CASE(circular_blend_near_collinear_dense_waypoints_no_throw) {
     using namespace viam::trajex::totg;
 
@@ -238,10 +239,7 @@ BOOST_AUTO_TEST_CASE(circular_blend_near_collinear_dense_waypoints_no_throw) {
     // default curvature limits.
     const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1));  // must not throw
 
-    // The near-collinear corner is treated as straight: no circular segment is emitted.
-    for (auto seg : p) {
-        BOOST_CHECK(seg.is<path::segment::linear>());
-    }
+    BOOST_CHECK_GT(static_cast<double>(p.length()), 0.0);
 }
 
 BOOST_AUTO_TEST_CASE(circular_blend_very_sharp_angle) {
