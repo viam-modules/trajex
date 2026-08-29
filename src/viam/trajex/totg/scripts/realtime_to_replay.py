@@ -48,10 +48,10 @@ def realtime_to_replay(d):
 
     # A TCP limit needs both the cap and the model-table; pass them through only
     # together, matching the replay record's "both or neither" contract.
-    if 'max_tcp_speed_m_per_sec' in d and 'model_table' in d:
-        out['max_tcp_speed_m_per_sec'] = d['max_tcp_speed_m_per_sec']
+    if 'tcp_max_linear_velocity' in d and 'model_table' in d:
+        out['tcp_max_linear_velocity'] = d['tcp_max_linear_velocity']
         out['model_table'] = d['model_table']
-    elif 'max_tcp_speed_m_per_sec' in d or 'model_table' in d:
+    elif 'tcp_max_linear_velocity' in d or 'model_table' in d:
         print('note: realtime log has only one of TCP speed / model_table; '
               'rendering joint-only (no TCP curve)', file=sys.stderr)
     else:

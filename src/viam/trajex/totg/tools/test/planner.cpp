@@ -11,7 +11,6 @@
 #include <xtensor/xarray.hpp>
 #endif
 
-#include <viam/trajex/totg/tcp_jacobian.hpp>
 #include <viam/trajex/totg/tools/replay.hpp>
 
 #include "../../test/test_utils.hpp"
@@ -297,9 +296,7 @@ BOOST_AUTO_TEST_CASE(decider_return_type_is_flexible) {
 // for one: a planner whose config carries a TCP limit refuses to register legacy at all.
 BOOST_AUTO_TEST_CASE(legacy_registration_with_tcp_limit_throws) {
     auto cfg = simple_config();
-    auto cb = make_tcp_jacobian(gp12_model_table());
-    cfg.tcp = trajectory::tcp_limit{
-        .max_velocity = 0.5, .jacobian = std::move(cb.jacobian), .velocity_derivative = std::move(cb.velocity_derivative)};
+    cfg.tcp = trajectory::tcp_limits::from(gp12_model_table(), 0.5);
 
     planner<test_receiver> p(std::move(cfg));
     BOOST_CHECK_THROW(p.with_legacy([](const auto&, test_receiver&, const waypoint_accumulator&, Path&&, Trajectory&&, auto) {}),
@@ -318,9 +315,7 @@ BOOST_AUTO_TEST_CASE(legacy_replay_of_tcp_record_drops_tcp_limit) {
         .path_blend_tolerance = 0.01,
         .colinearization_ratio = std::nullopt,
     };
-    auto cb = make_tcp_jacobian(table);
-    cfg.tcp = trajectory::tcp_limit{
-        .max_velocity = 0.5, .jacobian = std::move(cb.jacobian), .velocity_derivative = std::move(cb.velocity_derivative)};
+    cfg.tcp = trajectory::tcp_limits::from(table, 0.5);
     cfg.model_table = table;
 
     planner<test_receiver> p(std::move(cfg));
@@ -365,9 +360,7 @@ BOOST_AUTO_TEST_CASE(replay_record_round_trips_tcp_limit) {
         .path_blend_tolerance = 0.01,
         .colinearization_ratio = std::nullopt,
     };
-    auto cb_table = make_tcp_jacobian(table);
-    cfg.tcp = trajectory::tcp_limit{
-        .max_velocity = 0.5, .jacobian = std::move(cb_table.jacobian), .velocity_derivative = std::move(cb_table.velocity_derivative)};
+    cfg.tcp = trajectory::tcp_limits::from(table, 0.5);
     cfg.model_table = table;
 
     planner<test_receiver> p(std::move(cfg));
@@ -379,7 +372,7 @@ BOOST_AUTO_TEST_CASE(replay_record_round_trips_tcp_limit) {
     const auto& rc = replayed.get_config();
 
     BOOST_REQUIRE(rc.tcp.has_value());
-    BOOST_CHECK_CLOSE(rc.tcp->max_velocity, 0.5, 1e-9);
+    BOOST_CHECK_CLOSE(rc.tcp->max_linear_velocity, 0.5, 1e-9);
     BOOST_REQUIRE(rc.model_table.has_value());
     BOOST_REQUIRE_EQUAL(rc.model_table->dimension(), 2U);
     BOOST_CHECK_EQUAL(rc.model_table->shape(0), 7U);
@@ -387,8 +380,8 @@ BOOST_AUTO_TEST_CASE(replay_record_round_trips_tcp_limit) {
 
     // The rebuilt jacobian is callable and returns the 3xN linear-velocity block for the six
     // actuated joints, confirming the callback was reconstructed (not merely the scalar copied).
-    BOOST_REQUIRE(static_cast<bool>(rc.tcp->jacobian));
-    const auto J = rc.tcp->jacobian(xt::xarray<double>{0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
+    BOOST_REQUIRE(static_cast<bool>(rc.tcp->linear_jacobian));
+    const auto J = rc.tcp->linear_jacobian(xt::xarray<double>{0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
     BOOST_REQUIRE_EQUAL(J.dimension(), 2U);
     BOOST_CHECK_EQUAL(J.shape(0), 3U);
     BOOST_CHECK_EQUAL(J.shape(1), 6U);
@@ -408,9 +401,7 @@ BOOST_AUTO_TEST_CASE(replay_record_omits_tcp_without_model_table) {
         .path_blend_tolerance = 0.01,
         .colinearization_ratio = std::nullopt,
     };
-    auto cb_gp12 = make_tcp_jacobian(gp12_model_table());
-    cfg.tcp = trajectory::tcp_limit{
-        .max_velocity = 0.5, .jacobian = std::move(cb_gp12.jacobian), .velocity_derivative = std::move(cb_gp12.velocity_derivative)};
+    cfg.tcp = trajectory::tcp_limits::from(gp12_model_table(), 0.5);
     // cfg.model_table intentionally left unset.
 
     planner<test_receiver> p(std::move(cfg));
@@ -431,7 +422,7 @@ BOOST_AUTO_TEST_CASE(replay_tcp_speed_without_model_table_throws) {
         "max_velocity_vec_rads_per_sec": [1, 1, 1, 1, 1, 1],
         "max_acceleration_vec_rads_per_sec2": [1, 1, 1, 1, 1, 1],
         "path_tolerance_delta_rads": 0.01,
-        "max_tcp_speed_m_per_sec": 0.5,
+        "tcp_max_linear_velocity": 0.5,
         "waypoints_rads": [[0, 0, 0, 0, 0, 0], [0.3, 0.1, 0, 0, 0, 0]]
     })";
     std::istringstream in(record);

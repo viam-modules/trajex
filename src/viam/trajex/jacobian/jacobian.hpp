@@ -59,27 +59,28 @@ class kinematic_chain {
     ///
     [[nodiscard]] xt::xarray<double> linear_jacobian(const xt::xarray<double>& q) const;
 
-    /// Kinematic gain ||J*f'|| and its path derivative d/ds||J*f'||.
-    struct velocity_gain {
-        double gain;
-        double dgain_ds;
+    /// Linear velocity gain ||J_v*f'||: task-space length per unit of path arc length, in
+    /// whatever length unit the model table uses, with its rate of change along the path.
+    struct linear_velocity_gain {
+        double gain_per_arc_unit;
+        double d_gain_ds;
     };
 
     ///
-    /// Kinematic gain ||J*f'|| and its path derivative d/ds||J*f'||, where J is the (3,
-    /// N_actuated) linear-velocity Jacobian, f' = q_prime is the path tangent in joint space,
-    /// and f'' = q_double_prime is the path curvature. Used to evaluate the TCP velocity limit
-    /// curve and its slope (see src/viam/trajex/totg/doc/totg_three_limit_curves.pdf, Eq. 26-27).
+    /// Linear velocity gain ||J_v*f'|| and its path derivative d/ds||J_v*f'||, where J_v is the
+    /// (3, N_actuated) linear-velocity Jacobian, f' = q_prime is the path tangent in joint
+    /// space, and f'' = q_double_prime is the path curvature. Used to evaluate the TCP velocity
+    /// limit curve and its slope.
     ///
     /// @param q (N_actuated,) joint positions, in chain order
     /// @param q_prime (N_actuated,) path tangent dq/ds
     /// @param q_double_prime (N_actuated,) path curvature d^2q/ds^2
-    /// @return gain ||J*f'|| and its s-derivative
+    /// @return the gain and its s-derivative
     /// @throws std::invalid_argument on a q, q_prime, or q_double_prime size mismatch
     ///
-    [[nodiscard]] velocity_gain velocity_gain_and_derivative(const xt::xarray<double>& q,
-                                                             const xt::xarray<double>& q_prime,
-                                                             const xt::xarray<double>& q_double_prime) const;
+    [[nodiscard]] linear_velocity_gain linear_velocity_gain_at(const xt::xarray<double>& q,
+                                                               const xt::xarray<double>& q_prime,
+                                                               const xt::xarray<double>& q_double_prime) const;
 
    private:
     // URDF joint type, restricted to arm-relevant joints. Underlying values

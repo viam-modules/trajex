@@ -100,7 +100,7 @@ mlmodel::named_tensor_views make_2dof_tcp_inputs(bool with_tcp) {
     inputs.emplace("waypoint_deduplication_tolerance_rads", mlmodel::make_tensor_view(dedup_tolerance.data(), 1, {1}));
     inputs.emplace("trajectory_sampling_freq_hz", mlmodel::make_tensor_view(sampling_freq.data(), 1, {1}));
     if (with_tcp) {
-        inputs.emplace("tcp_max_velocity_m_per_sec", mlmodel::make_tensor_view(tcp_max.data(), 1, {1}));
+        inputs.emplace("tcp_max_linear_velocity", mlmodel::make_tensor_view(tcp_max.data(), 1, {1}));
         inputs.emplace("kinematics_model_table", mlmodel::make_tensor_view(model_table.data(), 30, {3, 10}));
     }
     return inputs;
@@ -318,7 +318,7 @@ BOOST_AUTO_TEST_CASE(tcp_velocity_without_model_table_throws) {
     auto service = std::make_shared<mlmodel>(vsdk::Dependencies{}, make_config());
     auto inputs = make_2dof_tcp_inputs(false);
     static const std::vector<double> tcp_max = {0.3};
-    inputs.emplace("tcp_max_velocity_m_per_sec", mlmodel::make_tensor_view(tcp_max.data(), 1, {1}));
+    inputs.emplace("tcp_max_linear_velocity", mlmodel::make_tensor_view(tcp_max.data(), 1, {1}));
     BOOST_CHECK_THROW(service->infer(inputs, {}), std::invalid_argument);
 }
 
@@ -352,7 +352,7 @@ BOOST_AUTO_TEST_CASE(tcp_with_totg_failure_does_not_fall_back_to_legacy) {
         1, 0, 0, 0, 0, 0, 0, 0, 1, 0,  // joint1 +1x,      axis z, revolute
         1, 0, 0, 0, 0, 0, 0, 0, 1, 0,  // joint2 +1x,      axis z, revolute
     };
-    inputs.emplace("tcp_max_velocity_m_per_sec", mlmodel::make_tensor_view(tcp_max.data(), 1, {1}));
+    inputs.emplace("tcp_max_linear_velocity", mlmodel::make_tensor_view(tcp_max.data(), 1, {1}));
     inputs.emplace("kinematics_model_table", mlmodel::make_tensor_view(model_table.data(), 30, {3, 10}));
     BOOST_CHECK_THROW(service->infer(inputs, {}), std::invalid_argument);
 }
@@ -372,8 +372,8 @@ BOOST_AUTO_TEST_CASE(tcp_non_positive_velocity_throws) {
     auto service = std::make_shared<mlmodel>(vsdk::Dependencies{}, make_config());
     auto inputs = make_2dof_tcp_inputs(true);
     static const std::vector<double> bad = {0.0};
-    inputs.erase("tcp_max_velocity_m_per_sec");
-    inputs.emplace("tcp_max_velocity_m_per_sec", mlmodel::make_tensor_view(bad.data(), 1, {1}));
+    inputs.erase("tcp_max_linear_velocity");
+    inputs.emplace("tcp_max_linear_velocity", mlmodel::make_tensor_view(bad.data(), 1, {1}));
     BOOST_CHECK_THROW(service->infer(inputs, {}), std::invalid_argument);
 }
 
@@ -385,7 +385,7 @@ BOOST_AUTO_TEST_CASE(metadata_lists_tcp_inputs) {
     const auto has_input = [&](std::string_view name) {
         return std::any_of(md.inputs.begin(), md.inputs.end(), [&](const auto& info) { return info.name == name; });
     };
-    BOOST_CHECK(has_input("tcp_max_velocity_m_per_sec"));
+    BOOST_CHECK(has_input("tcp_max_linear_velocity"));
     BOOST_CHECK(has_input("kinematics_model_table"));
 }
 

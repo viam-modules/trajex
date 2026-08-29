@@ -26,7 +26,6 @@
 
 #include <viam/trajex/totg/observers.hpp>
 #include <viam/trajex/totg/path.hpp>
-#include <viam/trajex/totg/tcp_jacobian.hpp>
 #include <viam/trajex/totg/test/test_utils.hpp>
 #include <viam/trajex/totg/tools/json_serialization.hpp>
 #include <viam/trajex/totg/trajectory.hpp>
@@ -2683,9 +2682,7 @@ BOOST_AUTO_TEST_CASE(gp12_tcp_terminal_acceleration_sentinel_sample) {
 
     auto p = path::create(waypoints, path::options{}.set_max_blend_deviation(root["path_tolerance_delta_rads"].asDouble()));
     trajectory::options opt{.max_velocity = max_velocity, .max_acceleration = max_acceleration};
-    auto cb = make_tcp_jacobian(test::gp12_model_table());
-    opt.tcp = trajectory::tcp_limit{
-        .max_velocity = 0.5, .jacobian = std::move(cb.jacobian), .velocity_derivative = std::move(cb.velocity_derivative)};
+    opt.tcp = trajectory::tcp_limits::from(test::gp12_model_table(), 0.5);
 
     const auto traj = trajectory::create(std::move(p), std::move(opt));
     BOOST_CHECK(std::isfinite(static_cast<double>(traj.get_integration_points().back().s_ddot)));

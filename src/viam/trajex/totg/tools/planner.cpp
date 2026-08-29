@@ -99,13 +99,13 @@ std::string planner_base::serialize_for_replay(const waypoint_accumulator& waypo
 
     // TCP Cartesian speed limit. The jacobian callback in get_config().tcp cannot be serialized, so
     // record the scalar cap plus the (n, 10) model-table tensor it was built from; replay rebuilds the
-    // callback via make_tcp_jacobian. Both fields are written together and only when the model-table
+    // callbacks via tcp_limits::from. Both fields are written together and only when the model-table
     // provenance is available, since neither alone reproduces the limit.
     if (get_config().tcp && get_config().model_table) {
         // The (n, 10) shape was validated at planner construction, so writing the table here
         // cannot fail on the failure paths that call this to record diagnostics.
         const auto& table = *get_config().model_table;
-        root["max_tcp_speed_m_per_sec"] = get_config().tcp->max_velocity;
+        root["tcp_max_linear_velocity"] = get_config().tcp->max_linear_velocity;
 
         Json::Value model_table_array(Json::arrayValue);
         for (std::size_t i = 0; i < table.shape(0); ++i) {

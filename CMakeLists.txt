@@ -264,7 +264,6 @@ target_sources(viam-trajex-totg
     src/viam/trajex/totg/observers.cpp
     src/viam/trajex/totg/path.cpp
     src/viam/trajex/totg/streaming/session.cpp
-    src/viam/trajex/totg/tcp_jacobian.cpp
     src/viam/trajex/totg/trajectory.cpp
     src/viam/trajex/totg/uniform_sampler.cpp
     src/viam/trajex/totg/waypoint_accumulator.cpp

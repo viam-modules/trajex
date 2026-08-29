@@ -19,7 +19,6 @@
 
 #include <viam/sdk/log/logging.hpp>
 
-#include <viam/trajex/totg/tcp_jacobian.hpp>
 #include <viam/trajex/totg/tools/planner.hpp>
 #include <viam/trajex/totg/uniform_sampler.hpp>
 #include <viam/trajex/totg/waypoint_utils.hpp>
@@ -88,22 +87,22 @@ double get_scalar_double(const mlmodel::named_tensor_views& inputs, std::string_
 
 // A parsed TCP limit carries the (n, 10) model-table tensor alongside the callbacks so the
 // planner config can record it as serializable provenance for replay.
-struct parsed_tcp_limit {
-    totg::trajectory::tcp_limit limit;
+struct parsed_tcp_limits {
+    totg::trajectory::tcp_limits limits;
     xt::xarray<double> model_table;
 };
 
-std::optional<parsed_tcp_limit> parse_tcp_limit(const mlmodel::named_tensor_views& inputs) {
-    const bool has_tcp = inputs.find(std::string("tcp_max_velocity_m_per_sec")) != inputs.end();
+std::optional<parsed_tcp_limits> parse_tcp_limits(const mlmodel::named_tensor_views& inputs) {
+    const bool has_tcp = inputs.find(std::string("tcp_max_linear_velocity")) != inputs.end();
     const bool has_table = inputs.find(std::string("kinematics_model_table")) != inputs.end();
 
     if (!has_tcp && !has_table) {
         return std::nullopt;
     }
 
-    const double tcp_max_velocity = get_scalar_double(inputs, "tcp_max_velocity_m_per_sec");
-    if (!(tcp_max_velocity > 0.0)) {
-        throw std::invalid_argument("tcp_max_velocity_m_per_sec must be a positive number");
+    const double tcp_max_linear_velocity = get_scalar_double(inputs, "tcp_max_linear_velocity");
+    if (!(tcp_max_linear_velocity > 0.0)) {
+        throw std::invalid_argument("tcp_max_linear_velocity must be a positive number");
     }
     const auto& table_view = get_double_tensor(inputs, "kinematics_model_table");
     if (table_view.dimension() != 2 || table_view.shape(1) != 10) {
@@ -111,14 +110,8 @@ std::optional<parsed_tcp_limit> parse_tcp_limit(const mlmodel::named_tensor_view
     }
 
     xt::xarray<double> table(table_view);
-    auto cb = totg::make_tcp_jacobian(table);
-    return parsed_tcp_limit{
-        .limit =
-            {
-                .max_velocity = tcp_max_velocity,
-                .jacobian = std::move(cb.jacobian),
-                .velocity_derivative = std::move(cb.velocity_derivative),
-            },
+    return parsed_tcp_limits{
+        .limits = totg::trajectory::tcp_limits::from(table, tcp_max_linear_velocity),
         .model_table = std::move(table),
     };
 }
@@ -235,7 +228,7 @@ std::shared_ptr<mlmodel::named_tensor_views> mlmodel::infer(const named_tensor_v
     xt::xarray<double> acceleration_limits(acceleration_limits_view);
 
     // Optional TCP Cartesian-speed limit
-    auto tcp_input = parse_tcp_limit(inputs);
+    auto tcp_input = parse_tcp_limits(inputs);
 
     // Only the totg generator can enforce a TCP speed limit. When a cap is requested,
     // reject a sequence with no totg outright, and skip legacy registration below:
@@ -243,15 +236,15 @@ std::shared_ptr<mlmodel::named_tensor_views> mlmodel::infer(const named_tensor_v
     // caller-requested safety limit.
     const bool tcp_limit_requested = tcp_input.has_value();
     if (tcp_limit_requested && std::ranges::find(config_.generator_sequence, "totg") == config_.generator_sequence.end()) {
-        throw std::invalid_argument("tcp_max_velocity_m_per_sec requires the totg generator, which is not in generator_sequence");
+        throw std::invalid_argument("tcp_max_linear_velocity requires the totg generator, which is not in generator_sequence");
     }
 
     // Split the parsed TCP input into the callback limit and its model-table provenance; the
     // planner records the table in replay records so the limit survives a replay round-trip.
-    std::optional<totg::trajectory::tcp_limit> tcp_limit;
+    std::optional<totg::trajectory::tcp_limits> tcp_limits;
     std::optional<xt::xarray<double>> model_table;
     if (tcp_input) {
-        tcp_limit = std::move(tcp_input->limit);
+        tcp_limits = std::move(tcp_input->limits);
         model_table = std::move(tcp_input->model_table);
     }
 
@@ -264,7 +257,7 @@ std::shared_ptr<mlmodel::named_tensor_views> mlmodel::infer(const named_tensor_v
         .min_blend_curvature = std::nullopt,
         .max_blend_curvature = std::nullopt,
         .segment_totg = config_.segment_for_trajex,
-        .tcp = std::move(tcp_limit),
+        .tcp = std::move(tcp_limits),
         .model_table = std::move(model_table),
     });
 
@@ -444,14 +437,14 @@ struct mlmodel::metadata mlmodel::metadata(const vsdk::ProtoStruct&) {
                  .shape = {1},
                  .associated_files = {},
                  .extra = {}},
-                {.name = "tcp_max_velocity_m_per_sec",
+                {.name = "tcp_max_linear_velocity",
                  .description = "Optional max Cartesian TCP speed (in metres per second) [scalar]; requires kinematics_model_table",
                  .data_type = tensor_info::data_types::k_float64,
                  .shape = {1},
                  .associated_files = {},
                  .extra = {}},
                 {.name = "kinematics_model_table",
-                 .description = "Optional kinematics model table for the TCP jacobian [n_rows, 10]; requires tcp_max_velocity_m_per_sec",
+                 .description = "Optional kinematics model table for the TCP jacobian [n_rows, 10]; requires tcp_max_linear_velocity",
                  .data_type = tensor_info::data_types::k_float64,
                  .shape = {-1, 10},
                  .associated_files = {},

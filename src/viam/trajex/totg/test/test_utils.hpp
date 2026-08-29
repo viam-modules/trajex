@@ -56,9 +56,9 @@ inline xt::xarray<double> planar_2link_jacobian(double l1, double l2, const xt::
     return J;
 }
 
-/// Numerical {gain, dgain_ds} for the planar 2-link, for tests that build a tcp_limit by hand.
+/// Numerical linear velocity gain for the planar 2-link, for tests that build tcp_limits by hand.
 /// Central-differences ||planar_2link_jacobian(q) * q_prime|| along the path.
-inline trajectory::tcp_limit::gain_derivative planar_2link_gain_derivative(
+inline jacobian::kinematic_chain::linear_velocity_gain planar_2link_linear_velocity_gain(
     double l1, double l2, const xt::xarray<double>& q, const xt::xarray<double>& q_prime, const xt::xarray<double>& q_double_prime) {
     const auto gain_at = [&](const xt::xarray<double>& qq, const xt::xarray<double>& qp) {
         const auto J = planar_2link_jacobian(l1, l2, qq);
@@ -76,17 +76,17 @@ inline trajectory::tcp_limit::gain_derivative planar_2link_gain_derivative(
     const double h = 1e-6;
     const double dg =
         (gain_at(q + h * q_prime, q_prime + h * q_double_prime) - gain_at(q - h * q_prime, q_prime - h * q_double_prime)) / (2.0 * h);
-    return {g, dg};
+    return {.gain_per_arc_unit = g, .d_gain_ds = dg};
 }
 
-/// Builds a tcp_limit for a planar 2-link (l1 = l2 = 1) with both callbacks set.
-inline trajectory::tcp_limit planar_2link_tcp_limit(double max_velocity) {
-    return trajectory::tcp_limit{
-        .max_velocity = max_velocity,
-        .jacobian = [](const xt::xarray<double>& q) { return planar_2link_jacobian(1.0, 1.0, q); },
-        .velocity_derivative =
+/// Builds tcp_limits for a planar 2-link (l1 = l2 = 1) with both callbacks set.
+inline trajectory::tcp_limits planar_2link_tcp_limits(double max_linear_velocity) {
+    return trajectory::tcp_limits{
+        .max_linear_velocity = max_linear_velocity,
+        .linear_jacobian = [](const xt::xarray<double>& q) { return planar_2link_jacobian(1.0, 1.0, q); },
+        .linear_velocity_gain =
             [](const xt::xarray<double>& q, const xt::xarray<double>& q_prime, const xt::xarray<double>& q_double_prime) {
-                return planar_2link_gain_derivative(1.0, 1.0, q, q_prime, q_double_prime);
+                return planar_2link_linear_velocity_gain(1.0, 1.0, q, q_prime, q_double_prime);
             },
     };
 }

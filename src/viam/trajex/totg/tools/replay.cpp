@@ -1,7 +1,5 @@
 #include <viam/trajex/totg/tools/replay.hpp>
 
-#include <viam/trajex/totg/tcp_jacobian.hpp>
-
 #include <fstream>
 #include <stdexcept>
 #include <string>
@@ -92,9 +90,9 @@ std::pair<planner_base::config, xt::xarray<double>> parse_replay_record(std::ist
         cfg.max_blend_curvature = root["max_blend_curvature"].asDouble();
     }
 
-    // Optional TCP Cartesian speed limit (replay schema v2+). model_table is the (n, 10) tensor the
-    // TCP jacobian was built from; max_tcp_speed_m_per_sec is the scalar cap. Rebuild the jacobian
-    // callback via make_tcp_jacobian so the replayed run reproduces the same TCP limit.
+    // Optional TCP speed limit (replay schema v2+). model_table is the (n, 10) tensor the TCP
+    // jacobian was built from; tcp_max_linear_velocity is the scalar cap. Rebuild the callbacks
+    // via tcp_limits::from so the replayed run reproduces the same TCP limit.
     if (root.isMember("model_table")) {
         const auto& mt_json = root["model_table"];
         if (!mt_json.isArray() || mt_json.empty()) {
@@ -114,14 +112,11 @@ std::pair<planner_base::config, xt::xarray<double>> parse_replay_record(std::ist
         cfg.model_table = std::move(model_table);
     }
 
-    if (root.isMember("max_tcp_speed_m_per_sec")) {
+    if (root.isMember("tcp_max_linear_velocity")) {
         if (!cfg.model_table) {
-            throw std::runtime_error("max_tcp_speed_m_per_sec given without a model_table to build the TCP jacobian");
+            throw std::runtime_error("tcp_max_linear_velocity given without a model_table to build the TCP jacobian");
         }
-        auto cb = make_tcp_jacobian(*cfg.model_table);
-        cfg.tcp = trajectory::tcp_limit{.max_velocity = root["max_tcp_speed_m_per_sec"].asDouble(),
-                                        .jacobian = std::move(cb.jacobian),
-                                        .velocity_derivative = std::move(cb.velocity_derivative)};
+        cfg.tcp = trajectory::tcp_limits::from(*cfg.model_table, root["tcp_max_linear_velocity"].asDouble());
     }
 
     return {std::move(cfg), std::move(waypoints)};

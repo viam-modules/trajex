@@ -116,11 +116,11 @@ Json::Value serialize_integration_points(const trajectory& traj) {
         // Get limit curves at this arc length using cursor. One evaluation yields the combined
         // curve and its joint/TCP components (the combined curve is their minimum). Infinite
         // (non-constraining) limits serialize as JSON null.
-        const auto limits = traj.get_velocity_limits_detail(cursor);
-        s_dot_max_acc_values[idx] = finite_or_null(limits.s_dot_max_acc);
-        s_dot_max_vel_values[idx] = finite_or_null(limits.s_dot_max_vel);
-        s_dot_max_vel_joint_values[idx] = finite_or_null(limits.components.joint);
-        s_dot_max_vel_tcp_values[idx] = finite_or_null(limits.components.tcp);
+        const auto detail = traj.get_velocity_limits_detail(cursor);
+        s_dot_max_acc_values[idx] = finite_or_null(detail.limits.s_dot_max_acc);
+        s_dot_max_vel_values[idx] = finite_or_null(detail.limits.s_dot_max_vel);
+        s_dot_max_vel_joint_values[idx] = finite_or_null(detail.components.joint);
+        s_dot_max_vel_tcp_values[idx] = finite_or_null(detail.components.tcp);
 
         // Acceleration bounds at this phase point
         const auto accel_bounds = traj.get_acceleration_bounds(cursor, pt.s_dot);
@@ -296,7 +296,7 @@ std::string serialize_trajectory_to_json(const trajectory_integration_event_coll
         auto add_sample = [&](arc_length s) {
             cursor.seek(s);
             const auto lim = effective->get_velocity_limits_detail(cursor);
-            samples.push_back({s, lim.s_dot_max_acc, lim.s_dot_max_vel, lim.components.joint, lim.components.tcp});
+            samples.push_back({s, lim.limits.s_dot_max_acc, lim.limits.s_dot_max_vel, lim.components.joint, lim.components.tcp});
         };
 
         for (const auto& ev : collector) {

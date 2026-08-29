@@ -266,9 +266,9 @@ xt::xarray<double> kinematic_chain::linear_jacobian(const xt::xarray<double>& q)
     return J;
 }
 
-kinematic_chain::velocity_gain kinematic_chain::velocity_gain_and_derivative(const xt::xarray<double>& q,
-                                                                             const xt::xarray<double>& q_prime,
-                                                                             const xt::xarray<double>& q_double_prime) const {
+kinematic_chain::linear_velocity_gain kinematic_chain::linear_velocity_gain_at(const xt::xarray<double>& q,
+                                                                               const xt::xarray<double>& q_prime,
+                                                                               const xt::xarray<double>& q_double_prime) const {
     if (q_prime.size() != actuated_count_ || q_double_prime.size() != actuated_count_) {
         throw std::invalid_argument("viam::trajex::jacobian: q_prime/q_double_prime size mismatch: expected " +
                                     std::to_string(actuated_count_) + " (actuated joints)");
@@ -315,11 +315,11 @@ kinematic_chain::velocity_gain kinematic_chain::velocity_gain_and_derivative(con
     // (finite-gain) constraint, so this is not reached in normal operation, but guard the division
     // at the API boundary so a singular gain yields a defined 0 slope rather than a NaN/inf that
     // would poison the phase-plane slope downstream.
-    double dgain_ds = dot(v, dv) / gain;
-    if (!std::isfinite(dgain_ds)) {
-        dgain_ds = 0.0;
+    double d_gain_ds = dot(v, dv) / gain;
+    if (!std::isfinite(d_gain_ds)) {
+        d_gain_ds = 0.0;
     }
-    return {gain, dgain_ds};
+    return {.gain_per_arc_unit = gain, .d_gain_ds = d_gain_ds};
 }
 
 }  // namespace viam::trajex::jacobian

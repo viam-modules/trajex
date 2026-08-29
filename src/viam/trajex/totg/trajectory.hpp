@@ -12,6 +12,7 @@
 #include <xtensor/xarray.hpp>
 #endif
 
+#include <viam/trajex/jacobian/jacobian.hpp>
 #include <viam/trajex/totg/path.hpp>
 #include <viam/trajex/types/arc_acceleration.hpp>
 #include <viam/trajex/types/arc_length.hpp>
@@ -69,26 +70,50 @@ class trajectory {
     // Forward declaration for event observer interface.
     class integration_event_observer;
 
-    /// TCP (tool center point) velocity limit. Constrains Cartesian linear TCP speed.
-    /// The jacobian callback maps joint config q -> the 3xN linear-velocity Jacobian;
-    /// the folded limit is max_velocity / ||J(q)*f'(s)||. The callback is invoked
-    /// sequentially during integration (forward, backward, bisection -> arbitrary non-monotonic q),
-    /// need not be thread-safe, may hold mutable workspace, and may return NaN at singularities
-    /// (treated as non-constraining).
-    struct tcp_limit {
-        /// The kinematic gain ||J*f'|| and its path derivative d/ds||J*f'|| at a configuration.
-        struct gain_derivative {
-            double gain = 0.0;
-            double dgain_ds = 0.0;
-        };
+    ///
+    /// TCP (tool center point) limits. Currently constrains linear TCP speed.
+    ///
+    /// The linear_jacobian callback maps joint config q -> the 3xN linear-velocity Jacobian; the
+    /// folded limit is max_linear_velocity / ||J_v(q)*f'(s)||. Both callbacks are invoked
+    /// sequentially during integration (forward, backward, bisection -> arbitrary non-monotonic
+    /// q), need not be thread-safe, and may hold mutable workspace.
+    ///
+    /// Both callbacks must describe the same kinematic chain. The value decides which curve is
+    /// active and the slope is then taken from the other callback, so a mismatched pair yields a
+    /// slope for one curve and a value for the other, with no diagnostic. from() builds both from
+    /// a single chain.
+    ///
+    /// Only linear_jacobian may return NaN, which signals a singularity and is treated as
+    /// non-constraining. A non-finite result from linear_velocity_gain where TCP is the binding
+    /// curve throws instead.
+    ///
+    /// Units are the caller's. max_linear_velocity must be expressed in the same length unit as
+    /// the Jacobian's task-space output, per second; nothing here checks that they agree.
+    ///
+    struct tcp_limits {
+        /// Maps joint config q -> the 3xN linear-velocity Jacobian. Used for the limit value.
+        using linear_jacobian_fn = std::function<xt::xarray<double>(const xt::xarray<double>&)>;
+
+        /// Maps (q, q_prime, q_double_prime) -> the linear velocity gain. Used for the limit slope.
+        using linear_velocity_gain_fn = std::function<jacobian::kinematic_chain::linear_velocity_gain(
+            const xt::xarray<double>&, const xt::xarray<double>&, const xt::xarray<double>&)>;
+
+        ///
+        /// Builds both callbacks from one kinematic chain parsed from a model table.
+        ///
+        /// @param model_table (n, 10) tensor in the viam::sdk::ModelTable format
+        /// @param max_linear_velocity Cap on TCP linear speed, in the model table's length unit
+        ///        per second
+        /// @return A limits object whose callbacks share a single chain
+        /// @throws std::invalid_argument on a malformed model table
+        ///
+        [[nodiscard]] static tcp_limits from(const xt::xarray<double>& model_table, double max_linear_velocity);
 
         /// Zero-initialized so a default-constructed limit fails validation deterministically
         /// instead of reading an indeterminate value.
-        double max_velocity = 0.0;
-        /// Maps joint config q -> the 3xN linear-velocity Jacobian. Used for the limit value.
-        std::function<xt::xarray<double>(const xt::xarray<double>&)> jacobian;
-        /// Maps (q, q_prime, q_double_prime) -> {gain, dgain_ds}. Used for the limit slope.
-        std::function<gain_derivative(const xt::xarray<double>&, const xt::xarray<double>&, const xt::xarray<double>&)> velocity_derivative;
+        double max_linear_velocity = 0.0;
+        linear_jacobian_fn linear_jacobian;
+        linear_velocity_gain_fn linear_velocity_gain;
     };
 
     ///
@@ -138,12 +163,12 @@ class trajectory {
         trajectory::integration_observer* observer = nullptr;
 
         ///
-        /// Optional TCP (tool center point) velocity limit.
+        /// Optional TCP (tool center point) limits.
         ///
-        /// When set, constrains the Cartesian linear TCP speed in addition to the
-        /// per-DOF joint velocity/acceleration limits.
+        /// When set, constrains the linear TCP speed in addition to the per-DOF
+        /// joint velocity/acceleration limits.
         ///
-        std::optional<struct tcp_limit> tcp = std::nullopt;
+        std::optional<tcp_limits> tcp = std::nullopt;
     };
 
     ///
@@ -239,9 +264,8 @@ class trajectory {
     /// and its components.
     ///
     struct velocity_limits_detail {
-        arc_velocity s_dot_max_acc;            ///< Maximum velocity from acceleration constraints
-        arc_velocity s_dot_max_vel;            ///< Combined velocity limit, min(joint, tcp)
-        velocity_limit_components components;  ///< The joint and TCP velocity limit components
+        velocity_limits limits;                ///< Acceleration limit and the combined velocity limit, min(joint, tcp)
+        velocity_limit_components components;  ///< The joint and TCP contributors to that combined limit
     };
 
     ///
