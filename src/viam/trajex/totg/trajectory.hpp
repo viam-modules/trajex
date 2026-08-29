@@ -74,9 +74,9 @@ class trajectory {
     /// TCP (tool center point) limits. Currently constrains linear TCP speed.
     ///
     /// The linear_jacobian callback maps joint config q -> the 3xN linear-velocity Jacobian; the
-    /// folded limit is max_linear_velocity / ||J_v(q)*f'(s)||. Both callbacks are invoked
-    /// sequentially during integration (forward, backward, bisection -> arbitrary non-monotonic
-    /// q), need not be thread-safe, and may hold mutable workspace.
+    /// folded limit is max_linear_velocity / ||J_v(q)*f'(s)||. Forward integration, backward
+    /// integration, and bisection each query at the arc position under examination, so successive
+    /// calls do not advance monotonically along the path.
     ///
     /// Both callbacks must describe the same kinematic chain. The value decides which curve is
     /// active and the slope is then taken from the other callback, so a mismatched pair yields a
