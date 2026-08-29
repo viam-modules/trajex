@@ -166,7 +166,8 @@ class trajectory {
         /// Optional TCP (tool center point) limits.
         ///
         /// When set, constrains the linear TCP speed in addition to the per-DOF
-        /// joint velocity/acceleration limits.
+        /// joint velocity/acceleration limits. This is `Extension 1`: the Kunz &
+        /// Stilman paper does not treat Cartesian constraints. See README.md.
         ///
         std::optional<tcp_limits> tcp = std::nullopt;
     };

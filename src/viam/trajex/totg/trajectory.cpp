@@ -342,7 +342,7 @@ struct velocity_limits_with_components {
 }
 
 // Combined-curve derivative: analytic joint where joint is strictly active; analytic TCP
-// (totg_three_limit_curves.pdf Eq. 25) where TCP is the binding constraint. joint and tcp are the
+// (`Extension 1`, see README.md) where TCP is the binding constraint. joint and tcp are the
 // component velocity limits already computed at this cursor by compute_velocity_limits_and_components;
 // passing them in lets this pick the active curve without re-evaluating the Jacobian.
 phase_plane_slope compute_velocity_limit_derivative_with_tcp(const xt::xarray<double>& q_prime,
@@ -366,7 +366,7 @@ phase_plane_slope compute_velocity_limit_derivative_with_tcp(const xt::xarray<do
         return compute_velocity_limit_derivative(q_prime, q_double_prime, opt.max_velocity, opt.epsilon);
     }
 
-    // TCP binding (gain finite). Eq. 25: d/ds s_dot_max_TCP = -v_TCP * (dg/ds) / g^2.
+    // TCP binding (gain finite): d/ds s_dot_max_TCP = -v_TCP * (dg/ds) / g^2.
     const auto gd = opt.tcp->linear_velocity_gain(cursor.configuration(), q_prime, q_double_prime);
     const double slope = -opt.tcp->max_linear_velocity * gd.d_gain_ds / (gd.gain_per_arc_unit * gd.gain_per_arc_unit);
 
