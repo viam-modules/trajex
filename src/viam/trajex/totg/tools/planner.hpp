@@ -40,14 +40,14 @@ class planner_base {
         xt::xarray<double> velocity_limits;
         xt::xarray<double> acceleration_limits;
         double path_blend_tolerance = 0.0;
-        std::optional<double> colinearization_ratio;
+        std::optional<double> colinearization_ratio{};
         // Curvature bounds for blend construction. nullopt leaves path::options at its
         // built-in defaults (k_default_min_blend_curvature / k_default_max_blend_curvature).
-        std::optional<double> min_blend_curvature;
-        std::optional<double> max_blend_curvature;
+        std::optional<double> min_blend_curvature{};
+        std::optional<double> max_blend_curvature{};
         bool segment_totg = true;
         trajectory::integration_observer* observer = nullptr;  // totg only; ignored by legacy
-        std::optional<trajectory::tcp_limits> tcp{};            // optional TCP Cartesian speed limit; totg only
+        std::optional<trajectory::tcp_limits> tcp{};           // optional TCP Cartesian speed limit; totg only
         // Serializable provenance of tcp.linear_jacobian: the (n, 10) model-table tensor (viam::sdk::ModelTable
         // format) the jacobian was built from. tcp.linear_jacobian is an opaque callback and cannot be
         // serialized, so serialize_for_replay records this instead and replay rebuilds the callback via
