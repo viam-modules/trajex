@@ -387,12 +387,13 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
 
         // x_hat runs from the center to the blend start; y_hat is the incoming direction. Kunz &
         // Stilman equations 7-9 need these orthonormal for the arc to be parameterized by arc
-        // length. They are perpendicular in exact arithmetic, but the bisector above is the
-        // difference of two nearly-equal unit vectors, so at shallow corners cancellation leaves
-        // its direction with few significant digits, and the center offset multiplies that error
-        // by the blend radius. One Gram-Schmidt step restores the invariant: project y_hat out of
-        // x_vec before normalizing. y_hat is a normalized segment direction, so the projection is
-        // well-conditioned, and perpendicularity stops depending on the bisector's accuracy.
+        // length. They are perpendicular in exact arithmetic, but the bisector above is a
+        // difference of two unit vectors, and at shallow corners those two are nearly equal, so
+        // cancellation leaves its direction with few significant digits and the center offset
+        // multiplies that error by the blend radius. One Gram-Schmidt step restores the invariant:
+        // project y_hat out of x_vec before normalizing. y_hat is a normalized segment direction,
+        // so the projection is well-conditioned, and perpendicularity stops depending on the
+        // bisector's accuracy.
         const auto& y_unit = incoming_unit;
         const auto blend_start = corner - (trim_distance * incoming_unit);
         const auto x_vec_raw = blend_start - center;

@@ -124,7 +124,7 @@ vec3 translation(const mat4& transform) {
 // are filled one joint at a time during the walk and read back one row at a
 // time by the per-joint cross product, so a row vector is the natural unit. A
 // vectorized xtensor assembly is deferred to the linear-algebra cleanup.
-struct kinematic_chain::chain_state {
+struct kinematic_chain::chain_state_ {
     std::vector<vec3> axes;
     std::vector<vec3> positions;
     vec3 p_e;
@@ -135,41 +135,43 @@ struct kinematic_chain::chain_state {
 // its world-frame axis and origin before applying joint motion. The
 // q-independent per-row terms (link transform, unit axis) come precomputed
 // from construction.
-kinematic_chain::chain_state kinematic_chain::compute_chain_state_(const xt::xarray<double>& q) const {
+kinematic_chain::chain_state_ kinematic_chain::compute_chain_state_(const xt::xarray<double>& q) const {
     if (q.size() != actuated_count_) {
         throw std::invalid_argument("viam::trajex::jacobian: q size mismatch: expected " + std::to_string(actuated_count_) +
                                     " (actuated joints), got " + std::to_string(q.size()));
     }
 
-    chain_state state;
+    chain_state_ state;
     state.axes.reserve(actuated_count_);
     state.positions.reserve(actuated_count_);
 
     mat4 running_transform = identity4();
     std::size_t qi = 0;
     for (std::size_t i = 0; i < rows_.size(); ++i) {
-        running_transform = matmul4(running_transform, row_constants_[i].link_tf);
+        running_transform = matmul4(running_transform, constants_[i].link_tf);
 
         if (rows_[i].type == joint_type_::k_revolute) {
-            const vec3& axis_local = row_constants_[i].unit_axis;
+            const vec3& axis_local = constants_[i].unit_axis;
             state.axes.push_back(rotate(running_transform, axis_local));
             state.positions.push_back(translation(running_transform));
 
             running_transform = matmul4(running_transform, axis_rotation4(axis_local, q(qi)));
             ++qi;
         }
-        // fixed: no motion to apply.
+        // Only revolute and fixed reach here: the constructor rejects every other joint type, so
+        // this walk needs no case for them. Fixed rows contribute their link transform above and
+        // no motion of their own.
     }
     state.p_e = translation(running_transform);
     return state;
 }
 
-kinematic_chain::kinematic_chain(std::vector<joint_row> rows) : rows_(std::move(rows)) {
+kinematic_chain::kinematic_chain(std::vector<joint_row_> rows) : rows_(std::move(rows)) {
     if (rows_.empty()) {
         throw std::invalid_argument("viam::trajex::jacobian: empty model table");
     }
     for (std::size_t i = 0; i < rows_.size(); ++i) {
-        const joint_row& row = rows_[i];
+        const joint_row_& row = rows_[i];
         switch (row.type) {
             case joint_type_::k_revolute:
                 if (dot(row.axis, row.axis) == 0.0) {
@@ -192,14 +194,14 @@ kinematic_chain::kinematic_chain(std::vector<joint_row> rows) : rows_(std::move(
 
     // Precompute the q-independent per-row kinematics. The FK walk runs once
     // or twice per integration step, and these terms depend only on the table.
-    row_constants_.reserve(rows_.size());
-    for (const joint_row& row : rows_) {
-        row_constants r;
+    constants_.reserve(rows_.size());
+    for (const joint_row_& row : rows_) {
+        row_constants_ r;
         r.link_tf = link_transform(row.xyz, row.rpy);
         if (row.type == joint_type_::k_revolute) {
             r.unit_axis = normalized(row.axis);
         }
-        row_constants_.push_back(r);
+        constants_.push_back(r);
     }
 }
 
@@ -213,7 +215,7 @@ kinematic_chain kinematic_chain::from(const xt::xarray<double>& tensor) {
                                     std::to_string(tensor.shape()[1]) + ")");
     }
 
-    std::vector<joint_row> rows;
+    std::vector<joint_row_> rows;
     rows.reserve(tensor.shape()[0]);
     for (std::size_t i = 0; i < tensor.shape()[0]; ++i) {
         const double type_value = tensor(i, 9);
@@ -223,7 +225,7 @@ kinematic_chain kinematic_chain::from(const xt::xarray<double>& tensor) {
                                         std::to_string(type_value) + " is not an integer");
         }
 
-        joint_row row;
+        joint_row_ row;
         row.xyz = {tensor(i, 0), tensor(i, 1), tensor(i, 2)};
         row.rpy = {tensor(i, 3), tensor(i, 4), tensor(i, 5)};
         row.axis = {tensor(i, 6), tensor(i, 7), tensor(i, 8)};
@@ -234,7 +236,7 @@ kinematic_chain kinematic_chain::from(const xt::xarray<double>& tensor) {
 }
 
 xt::xarray<double> kinematic_chain::jacobian(const xt::xarray<double>& q) const {
-    const chain_state state = compute_chain_state_(q);
+    const chain_state_ state = compute_chain_state_(q);
 
     xt::xarray<double> J = xt::zeros<double>({std::size_t{6}, actuated_count_});
     for (std::size_t i = 0; i < actuated_count_; ++i) {
@@ -252,7 +254,7 @@ xt::xarray<double> kinematic_chain::jacobian(const xt::xarray<double>& q) const 
 }
 
 xt::xarray<double> kinematic_chain::linear_jacobian(const xt::xarray<double>& q) const {
-    const chain_state state = compute_chain_state_(q);
+    const chain_state_ state = compute_chain_state_(q);
 
     xt::xarray<double> J = xt::zeros<double>({std::size_t{3}, actuated_count_});
     for (std::size_t i = 0; i < actuated_count_; ++i) {
@@ -274,7 +276,7 @@ kinematic_chain::linear_velocity_gain kinematic_chain::linear_velocity_gain_at(c
                                     std::to_string(actuated_count_) + " (actuated joints)");
     }
 
-    const chain_state state = compute_chain_state_(q);
+    const chain_state_ state = compute_chain_state_(q);
 
     vec3 v{0.0, 0.0, 0.0};
     for (std::size_t i = 0; i < actuated_count_; ++i) {

@@ -73,7 +73,7 @@ class trajectory {
     ///
     /// TCP (tool center point) limits. Currently constrains linear TCP speed.
     ///
-    /// The linear_jacobian callback maps joint config q -> the 3xN linear-velocity Jacobian; the
+    /// The linear_jacobian callback maps joint config q to the 3xN linear-velocity Jacobian; the
     /// folded limit is max_linear_velocity / ||J_v(q)*f'(s)||. Forward integration, backward
     /// integration, and bisection each query at the arc position under examination, so successive
     /// calls do not advance monotonically along the path.
@@ -91,10 +91,10 @@ class trajectory {
     /// the Jacobian's task-space output, per second; nothing here checks that they agree.
     ///
     struct tcp_limits {
-        /// Maps joint config q -> the 3xN linear-velocity Jacobian. Used for the limit value.
+        /// Maps joint config q to the 3xN linear-velocity Jacobian. Used for the limit value.
         using linear_jacobian_fn = std::function<xt::xarray<double>(const xt::xarray<double>&)>;
 
-        /// Maps (q, q_prime, q_double_prime) -> the linear velocity gain. Used for the limit slope.
+        /// Maps (q, q_prime, q_double_prime) to the linear velocity gain. Used for the limit slope.
         using linear_velocity_gain_fn = std::function<jacobian::kinematic_chain::linear_velocity_gain(
             const xt::xarray<double>&, const xt::xarray<double>&, const xt::xarray<double>&)>;
 

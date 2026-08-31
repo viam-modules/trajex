@@ -96,7 +96,7 @@ class kinematic_chain {
     // One row of the model table: the per-joint URDF fields. xyz/rpy are the
     // joint origin relative to the parent link (rpy is fixed-axis XYZ); axis
     // is the joint axis in the local frame.
-    struct joint_row {
+    struct joint_row_ {
         std::array<double, 3> xyz{};
         std::array<double, 3> rpy{};
         std::array<double, 3> axis{};
@@ -105,13 +105,13 @@ class kinematic_chain {
 
     // Per-revolute-joint world-frame axes and origins plus the end-effector
     // position.
-    struct chain_state;
+    struct chain_state_;
 
     // Constant per-row kinematics derived once at construction: the
     // parent-to-joint link transform (row-major 4x4) and, for revolute rows,
     // the normalized local joint axis. The forward-kinematics walk runs per
     // integration step, so its q-independent terms are not recomputed there.
-    struct row_constants {
+    struct row_constants_ {
         std::array<double, 16> link_tf{};
         std::array<double, 3> unit_axis{};
     };
@@ -119,15 +119,15 @@ class kinematic_chain {
     // Validates the rows (joint types, axes) and counts actuated joints, then
     // precomputes the per-row constants; all public construction funnels
     // through here via `from`.
-    explicit kinematic_chain(std::vector<joint_row> rows);
+    explicit kinematic_chain(std::vector<joint_row_> rows);
 
     // Evaluates the forward kinematics at joint positions q, capturing the
     // per-joint quantities the Jacobian assemblies need. Throws
     // std::invalid_argument on q-size mismatch.
-    chain_state compute_chain_state_(const xt::xarray<double>& q) const;
+    chain_state_ compute_chain_state_(const xt::xarray<double>& q) const;
 
-    std::vector<joint_row> rows_;
-    std::vector<row_constants> row_constants_;
+    std::vector<joint_row_> rows_;
+    std::vector<row_constants_> constants_;
     std::size_t actuated_count_ = 0;
 };
 

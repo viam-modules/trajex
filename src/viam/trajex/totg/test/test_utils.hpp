@@ -95,15 +95,15 @@ inline trajectory::tcp_limits planar_2link_tcp_limits(double max_linear_velocity
 /// At each sampled instant the realized TCP velocity is J(q)*q_dot; this returns the peak of
 /// its Euclidean norm. Used to verify a TCP-limited trajectory respects its v_TCP cap.
 inline double max_realized_tcp_speed(const trajectory& traj, double l1, double l2, int samples = 1000) {
-    const double T = traj.duration().count();
+    const double duration = traj.duration().count();
     double peak = 0.0;
-    // Sample over [0, T] inclusive: end-of-path stamping artifacts surface at the terminal
+    // Sample over [0, duration] inclusive: end-of-path stamping artifacts surface at the terminal
     // instant, so the exact end of the trajectory must be checked against the cap too. The
-    // clamp matters: the T * i / samples round trip can land one ulp above T on the last
-    // iteration (duration-value dependent, observed on arm64), and sampling past the
+    // clamp matters: the duration * i / samples round trip can land one ulp above the duration on
+    // the last iteration (duration-value dependent, observed on arm64), and sampling past the
     // duration throws.
     for (int i = 0; i <= samples; ++i) {
-        const double t = std::min(T, T * static_cast<double>(i) / static_cast<double>(samples));
+        const double t = std::min(duration, duration * static_cast<double>(i) / static_cast<double>(samples));
         const auto smp = traj.sample(trajectory::seconds{t});
         const auto J = planar_2link_jacobian(l1, l2, smp.configuration);
         double v[3] = {0.0, 0.0, 0.0};

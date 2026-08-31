@@ -11,9 +11,8 @@
 #include <xtensor/xarray.hpp>
 #endif
 
+#include <viam/trajex/totg/test/test_utils.hpp>
 #include <viam/trajex/totg/tools/replay.hpp>
-
-#include "../../test/test_utils.hpp"
 
 namespace {
 
