@@ -17,6 +17,49 @@ def _f(v):
     return float('nan') if v is None else float(v)
 
 
+def _plot_segmented(ax, s_list, v_list, *, label=None, **plot_kwargs):
+    """Plot a limit curve that may contain None (infinite) entries as separate finite
+    segments. The label is applied only to the first segment so the legend gets one entry."""
+    seg_s, seg_v = [], []
+    first = True
+    for s_val, v in zip(s_list, v_list):
+        if v is not None:
+            seg_s.append(float(s_val))
+            seg_v.append(float(v))
+        elif seg_s:
+            ax.plot(seg_s, seg_v, label=(label if first else None), **plot_kwargs)
+            first = False
+            seg_s, seg_v = [], []
+    if seg_s:
+        ax.plot(seg_s, seg_v, label=(label if first else None), **plot_kwargs)
+
+
+def _plot_inf_transitions(ax, s_list, v_list, y_max, **plot_kwargs):
+    """Draw vertical indicator lines where a limit curve transitions between finite and
+    infinite (None) entries, so a curve leaving the top of the plot reads differently
+    from a gap in the data."""
+    prev_was_inf = True
+    first_entry = True
+    prev_s = None
+    prev_val = None
+    for s_val, v in zip(s_list, v_list):
+        curr_s = float(s_val)
+        if v is not None:
+            curr_val = float(v)
+            # Vertical drop when transitioning from infinite to finite
+            if prev_was_inf and not first_entry:
+                ax.plot([curr_s, curr_s], [y_max, curr_val], **plot_kwargs)
+            prev_was_inf = False
+            prev_s = curr_s
+            prev_val = curr_val
+        else:
+            # Vertical rise when transitioning from finite to infinite
+            if not prev_was_inf:
+                ax.plot([prev_s, prev_s], [prev_val, y_max], **plot_kwargs)
+            prev_was_inf = True
+        first_entry = False
+
+
 # Visualization parameters
 LIMIT_CURVE_MARGIN = 1.15
 MAX_Y_SCALE_FACTOR = 2.5
@@ -57,28 +100,48 @@ def plot_phase_plane(data, ax):
     # integration point s form the gap overlay, rendered dashed.
     last_s = float(s[-1]) if len(s) > 0 else float('inf')
 
+    # Component velocity limits (joint-only and TCP-only), when the serializer provides them.
+    # These let us draw the joint and TCP curves separately so their crossing is visible.
+    ip = data['integration_points']
+    s_ip = [float(x) for x in ip['s']]
+    joint_vel = ip.get('s_dot_max_vel_joint')
+    tcp_vel = ip.get('s_dot_max_vel_tcp')
+    has_tcp_components = joint_vel is not None
+
     lcs = data.get('limit_curve_samples')
     lcs_gap_s, lcs_gap_acc, lcs_gap_vel = [], [], []
+    lcs_gap_joint, lcs_gap_tcp = [], []
 
     merged = list(zip(
-        [float(x) for x in data['integration_points']['s']],
-        data['integration_points']['s_dot_max_acc'],
-        data['integration_points']['s_dot_max_vel'],
+        s_ip,
+        ip['s_dot_max_acc'],
+        ip['s_dot_max_vel'],
+        joint_vel if joint_vel is not None else [None] * len(s_ip),
+        tcp_vel if tcp_vel is not None else [None] * len(s_ip),
     ))
     if lcs:
-        for s_val, acc_val, vel_val in zip(lcs['s'], lcs['s_dot_max_acc'], lcs['s_dot_max_vel']):
+        # Joint/TCP component samples are present only on dumps that recorded them; older dumps
+        # carry just the combined curve. Fall back to all-None so the gap overlay degrades cleanly.
+        lcs_joint = lcs.get('s_dot_max_vel_joint', [None] * len(lcs['s']))
+        lcs_tcp = lcs.get('s_dot_max_vel_tcp', [None] * len(lcs['s']))
+        for s_val, acc_val, vel_val, joint_val, tcp_val in zip(
+                lcs['s'], lcs['s_dot_max_acc'], lcs['s_dot_max_vel'], lcs_joint, lcs_tcp):
             s_f = float(s_val)
             if s_f <= last_s:
-                merged.append((s_f, acc_val, vel_val))
+                merged.append((s_f, acc_val, vel_val, joint_val, tcp_val))
             else:
                 lcs_gap_s.append(s_f)
                 lcs_gap_acc.append(acc_val)
                 lcs_gap_vel.append(vel_val)
+                lcs_gap_joint.append(joint_val)
+                lcs_gap_tcp.append(tcp_val)
 
     merged.sort(key=lambda x: x[0])
     s_for_limits = [x[0] for x in merged]
     s_dot_max_acc = [x[1] for x in merged]
     s_dot_max_vel = [x[2] for x in merged]
+    joint_for_limits = [x[3] for x in merged]
+    tcp_for_limits = [x[4] for x in merged]
 
     # Calculate y-axis limits ensuring trajectory visibility:
     # - Trajectory should occupy at least 60% of vertical space
@@ -103,6 +166,11 @@ def plot_phase_plane(data, ax):
     for val in lcs_gap_vel:
         if val is not None:
             limit_values.append(float(val))
+    if has_tcp_components:
+        for series in (joint_vel, tcp_vel):
+            for val in (series or []):
+                if val is not None:
+                    limit_values.append(float(val))
 
     if limit_values:
         max_limit = max(limit_values)
@@ -118,109 +186,51 @@ def plot_phase_plane(data, ax):
     y_min = -0.05 * max_traj_velocity
 
     # Acceleration limit curve (red - primary boundary)
-    # Track transitions to show vertical bars
-    prev_was_inf = True
-    prev_s = None
-    prev_val = None
-    for i, val in enumerate(s_dot_max_acc):
-        curr_s = float(s_for_limits[i])
-        if val is not None:
-            curr_val = float(val)
-            # Show vertical drop when transitioning from infinite to finite
-            if prev_was_inf and i > 0:
-                ax.plot([curr_s, curr_s], [y_max, curr_val], 'r-',
-                       linewidth=1, alpha=0.5, zorder=1)
-            prev_was_inf = False
-            prev_s = curr_s
-            prev_val = curr_val
-        else:
-            # Show vertical rise when transitioning from finite to infinite
-            if not prev_was_inf and prev_s is not None and prev_val is not None:
-                ax.plot([prev_s, prev_s], [prev_val, y_max], 'r-',
-                       linewidth=1, alpha=0.5, zorder=1)
-            prev_was_inf = True
+    _plot_inf_transitions(ax, s_for_limits, s_dot_max_acc, y_max,
+                          color='red', linewidth=1, alpha=0.5, zorder=1)
+    _plot_segmented(ax, s_for_limits, s_dot_max_acc, color='red', linewidth=1.5,
+                    label='Acceleration Limit', zorder=2)
 
-    # Plot the actual limit curve segments
-    segments_acc = []
-    current_segment_s = []
-    current_segment_v = []
-    for i, val in enumerate(s_dot_max_acc):
-        if val is not None:
-            current_segment_s.append(float(s_for_limits[i]))
-            current_segment_v.append(float(val))
-        else:
-            if current_segment_s:
-                segments_acc.append((current_segment_s, current_segment_v))
-                current_segment_s = []
-                current_segment_v = []
-    if current_segment_s:
-        segments_acc.append((current_segment_s, current_segment_v))
-
-    for i, (seg_s, seg_v) in enumerate(segments_acc):
-        label = 'Acceleration Limit' if i == 0 else None
-        ax.plot(seg_s, seg_v, 'r-', linewidth=1.5, label=label, zorder=2)
-
-    # Velocity limit curve (orange - secondary boundary)
-    prev_was_inf = True
-    prev_s = None
-    prev_val = None
-    for i, val in enumerate(s_dot_max_vel):
-        curr_s = float(s_for_limits[i])
-        if val is not None:
-            curr_val = float(val)
-            # Show vertical drop when transitioning from infinite to finite
-            if prev_was_inf and i > 0:
-                ax.plot([curr_s, curr_s], [y_max, curr_val], 'orange',
-                       linewidth=1, alpha=0.5, zorder=1)
-            prev_was_inf = False
-            prev_s = curr_s
-            prev_val = curr_val
-        else:
-            # Show vertical rise when transitioning from finite to infinite
-            if not prev_was_inf and prev_s is not None and prev_val is not None:
-                ax.plot([prev_s, prev_s], [prev_val, y_max], 'orange',
-                       linewidth=1, alpha=0.5, zorder=1)
-            prev_was_inf = True
-
-    segments_vel = []
-    current_segment_s = []
-    current_segment_v = []
-    for i, val in enumerate(s_dot_max_vel):
-        if val is not None:
-            current_segment_s.append(float(s_for_limits[i]))
-            current_segment_v.append(float(val))
-        else:
-            if current_segment_s:
-                segments_vel.append((current_segment_s, current_segment_v))
-                current_segment_s = []
-                current_segment_v = []
-    if current_segment_s:
-        segments_vel.append((current_segment_s, current_segment_v))
-
-    for i, (seg_s, seg_v) in enumerate(segments_vel):
-        label = 'Velocity Limit' if i == 0 else None
-        ax.plot(seg_s, seg_v, 'orange', linewidth=1.5, label=label, zorder=2)
+    # Velocity limit curve(s). When the serializer provides the joint and TCP components
+    # separately (TCP-limited runs), plot them as distinct curves so their crossing is visible,
+    # plus a thin overlay of the combined min(joint, TCP) curve the integrator actually rides.
+    # Otherwise plot the single combined curve. All curves use the merged sample set so any
+    # denser limit_curve_samples in range (e.g. around pruned points) are included.
+    if has_tcp_components:
+        _plot_inf_transitions(ax, s_for_limits, joint_for_limits, y_max,
+                              color='orange', linewidth=1, alpha=0.5, zorder=1)
+        _plot_segmented(ax, s_for_limits, joint_for_limits, color='orange', linewidth=1.5,
+                        label='Joint Velocity Limit', zorder=2)
+        if any(v is not None for v in tcp_for_limits):
+            _plot_inf_transitions(ax, s_for_limits, tcp_for_limits, y_max,
+                                  color='purple', linewidth=1, alpha=0.5, zorder=1)
+            _plot_segmented(ax, s_for_limits, tcp_for_limits, color='purple', linewidth=1.5,
+                            label='TCP Velocity Limit', zorder=2)
+        _plot_segmented(ax, s_for_limits, s_dot_max_vel, color='dimgray', linewidth=1.0,
+                        linestyle=':', label='Velocity Limit (min)', zorder=2.5)
+    else:
+        _plot_inf_transitions(ax, s_for_limits, s_dot_max_vel, y_max,
+                              color='orange', linewidth=1, alpha=0.5, zorder=1)
+        _plot_segmented(ax, s_for_limits, s_dot_max_vel, color='orange', linewidth=1.5,
+                        label='Velocity Limit', zorder=2)
 
     # For failed trajectories: extend limit curve lines through the gap beyond the last
     # integration point. Dashed to distinguish from the confirmed region.
     if lcs_gap_s:
-        def build_gap_segments(v_vals):
-            segs, curr_s, curr_v = [], [], []
-            for s_val, v in zip(lcs_gap_s, v_vals):
-                if v is not None:
-                    curr_s.append(s_val)
-                    curr_v.append(float(v))
-                elif curr_s:
-                    segs.append((curr_s, curr_v))
-                    curr_s, curr_v = [], []
-            if curr_s:
-                segs.append((curr_s, curr_v))
-            return segs
+        _plot_segmented(ax, lcs_gap_s, lcs_gap_acc, color='red', linestyle='--',
+                        linewidth=1.5, alpha=0.6, zorder=2)
 
-        for seg_s, seg_v in build_gap_segments(lcs_gap_acc):
-            ax.plot(seg_s, seg_v, 'r--', linewidth=1.5, alpha=0.6, zorder=2)
-        for seg_s, seg_v in build_gap_segments(lcs_gap_vel):
-            ax.plot(seg_s, seg_v, color='orange', linestyle='--', linewidth=1.5, alpha=0.6, zorder=2)
+        # Mirror the integration-point region: when the joint/TCP split is available, extend both
+        # components through the gap (orange joint, purple TCP) instead of only the combined curve.
+        gap_has_components = has_tcp_components and any(v is not None for v in lcs_gap_joint)
+        if gap_has_components:
+            _plot_segmented(ax, lcs_gap_s, lcs_gap_joint, color='orange', linestyle='--',
+                            linewidth=1.5, alpha=0.6, zorder=2)
+            _plot_segmented(ax, lcs_gap_s, lcs_gap_tcp, color='purple', linestyle='--',
+                            linewidth=1.5, alpha=0.6, zorder=2)
+        else:
+            _plot_segmented(ax, lcs_gap_s, lcs_gap_vel, color='orange', linestyle='--',
+                            linewidth=1.5, alpha=0.6, zorder=2)
 
     # Interior switching points (not start/end)
     # Map kind to marker style
@@ -398,6 +408,9 @@ def main():
     else:
         title = "stdin"
         data = load_trajectory(sys.stdin)
+
+    # Allow the caller to label the window (e.g. when the JSON arrives on stdin).
+    title = os.environ.get("GRAPH_TITLE", title)
 
     # Create figure with 3-row layout (taller to give phase plane more vertical space)
     fig = plt.figure(figsize=(14, 22), num=title)

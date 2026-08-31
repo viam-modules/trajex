@@ -90,6 +90,35 @@ std::pair<planner_base::config, xt::xarray<double>> parse_replay_record(std::ist
         cfg.max_blend_curvature = root["max_blend_curvature"].asDouble();
     }
 
+    // Optional TCP speed limit (replay schema v2+). model_table is the (n, 10) tensor the TCP
+    // jacobian was built from; tcp_max_linear_velocity is the scalar cap. Rebuild the callbacks
+    // via tcp_limits::from so the replayed run reproduces the same TCP limit.
+    if (root.isMember("model_table")) {
+        const auto& mt_json = root["model_table"];
+        if (!mt_json.isArray() || mt_json.empty()) {
+            throw std::runtime_error("model_table must be a non-empty array of rows");
+        }
+        const auto rows = static_cast<std::size_t>(mt_json.size());
+        xt::xarray<double> model_table = xt::zeros<double>(std::vector<std::size_t>{rows, std::size_t{10}});
+        for (Json::ArrayIndex i = 0; i < mt_json.size(); ++i) {
+            const auto& row = mt_json[i];
+            if (!row.isArray() || row.size() != 10) {
+                throw std::runtime_error("model_table row must have 10 columns");
+            }
+            for (Json::ArrayIndex j = 0; j < 10; ++j) {
+                model_table(static_cast<std::size_t>(i), static_cast<std::size_t>(j)) = row[j].asDouble();
+            }
+        }
+        cfg.model_table = std::move(model_table);
+    }
+
+    if (root.isMember("tcp_max_linear_velocity")) {
+        if (!cfg.model_table) {
+            throw std::runtime_error("tcp_max_linear_velocity given without a model_table to build the TCP jacobian");
+        }
+        cfg.tcp = trajectory::tcp_limits::from(*cfg.model_table, root["tcp_max_linear_velocity"].asDouble());
+    }
+
     return {std::move(cfg), std::move(waypoints)};
 }
 
@@ -153,6 +182,11 @@ const trajectory_integration_event_collector& replay_planner::collector() const 
 
 legacy_replay_planner legacy_replay_planner::create(std::istream& in) {
     auto [cfg, waypoints] = parse_replay_record(in);
+
+    // The legacy generator cannot enforce a TCP limit, and the planner refuses to register it
+    // while one is set. A legacy replay of a TCP-carrying record is a deliberate uncapped
+    // comparison run, so drop the limit explicitly; the model-table provenance is kept.
+    cfg.tcp.reset();
 
     legacy_replay_planner p(std::move(cfg));
 

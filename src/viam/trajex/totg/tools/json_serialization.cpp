@@ -44,6 +44,11 @@ std::string switching_point_kind_to_string(trajectory::switching_point_kind kind
     throw std::invalid_argument("Unknown switching_point_kind");
 }
 
+// Serializes a limit-curve value, mapping an infinite (non-constraining) limit to JSON null.
+Json::Value finite_or_null(arc_velocity v) {
+    return std::isinf(static_cast<double>(v)) ? Json::Value::null : Json::Value{static_cast<double>(v)};
+}
+
 // Serialize integration points with joint-space data and limit curves (struct of arrays)
 Json::Value serialize_integration_points(const trajectory& traj) {
     const auto& points = traj.get_integration_points();
@@ -60,6 +65,10 @@ Json::Value serialize_integration_points(const trajectory& traj) {
     Json::Value s_dot_max_acc_values(Json::arrayValue);
     Json::Value s_dot_max_vel_values(Json::arrayValue);
 
+    // Component velocity limits (joint-only and TCP-only) for diagnostics
+    Json::Value s_dot_max_vel_joint_values(Json::arrayValue);
+    Json::Value s_dot_max_vel_tcp_values(Json::arrayValue);
+
     // Acceleration bounds at each point
     Json::Value s_ddot_min_values(Json::arrayValue);
     Json::Value s_ddot_max_values(Json::arrayValue);
@@ -75,6 +84,8 @@ Json::Value serialize_integration_points(const trajectory& traj) {
     s_ddot_values.resize(static_cast<Json::ArrayIndex>(points.size()));
     s_dot_max_acc_values.resize(static_cast<Json::ArrayIndex>(points.size()));
     s_dot_max_vel_values.resize(static_cast<Json::ArrayIndex>(points.size()));
+    s_dot_max_vel_joint_values.resize(static_cast<Json::ArrayIndex>(points.size()));
+    s_dot_max_vel_tcp_values.resize(static_cast<Json::ArrayIndex>(points.size()));
     s_ddot_min_values.resize(static_cast<Json::ArrayIndex>(points.size()));
     s_ddot_max_values.resize(static_cast<Json::ArrayIndex>(points.size()));
     configurations.resize(static_cast<Json::ArrayIndex>(points.size()));
@@ -102,23 +113,14 @@ Json::Value serialize_integration_points(const trajectory& traj) {
         const auto q_dot = cursor.tangent();
         const auto q_ddot = cursor.curvature();
 
-        // Get limit curves at this arc length using cursor
-        const auto limits = traj.get_velocity_limits(cursor);
-        const arc_velocity s_dot_max_acc = limits.s_dot_max_acc;
-        const arc_velocity s_dot_max_vel = limits.s_dot_max_vel;
-
-        // Handle infinite limits (serialize as null for JSON)
-        if (std::isinf(static_cast<double>(s_dot_max_acc))) {
-            s_dot_max_acc_values[idx] = Json::Value::null;
-        } else {
-            s_dot_max_acc_values[idx] = static_cast<double>(s_dot_max_acc);
-        }
-
-        if (std::isinf(static_cast<double>(s_dot_max_vel))) {
-            s_dot_max_vel_values[idx] = Json::Value::null;
-        } else {
-            s_dot_max_vel_values[idx] = static_cast<double>(s_dot_max_vel);
-        }
+        // Get limit curves at this arc length using cursor. One evaluation yields the combined
+        // curve and its joint/TCP components (the combined curve is their minimum). Infinite
+        // (non-constraining) limits serialize as JSON null.
+        const auto detail = traj.get_velocity_limits_detail(cursor);
+        s_dot_max_acc_values[idx] = finite_or_null(detail.limits.s_dot_max_acc);
+        s_dot_max_vel_values[idx] = finite_or_null(detail.limits.s_dot_max_vel);
+        s_dot_max_vel_joint_values[idx] = finite_or_null(detail.components.joint);
+        s_dot_max_vel_tcp_values[idx] = finite_or_null(detail.components.tcp);
 
         // Acceleration bounds at this phase point
         const auto accel_bounds = traj.get_acceleration_bounds(cursor, pt.s_dot);
@@ -127,11 +129,11 @@ Json::Value serialize_integration_points(const trajectory& traj) {
 
         configurations[idx] = xarray_to_json_array(q);
 
-        // Joint velocity: q̇ = (dq/ds) * (ds/dt) = tangent * s_dot
+        // Joint velocity: q_dot = (dq/ds) * (ds/dt) = tangent * s_dot
         velocities[idx] = xarray_to_json_array(q_dot * static_cast<double>(pt.s_dot));
 
-        // Joint acceleration: q̈ = (d²q/ds²) * (ds/dt)² + (dq/ds) * (d²s/dt²)
-        //                       = curvature * s_dot² + tangent * s_ddot
+        // Joint acceleration: q_ddot = (d^2 q/ds^2) * (ds/dt)^2 + (dq/ds) * (d^2 s/dt^2)
+        //                            = curvature * s_dot^2 + tangent * s_ddot
         const double s_dot_val = static_cast<double>(pt.s_dot);
         const double s_ddot_val = static_cast<double>(pt.s_ddot);
         accelerations[idx] = xarray_to_json_array(q_ddot * (s_dot_val * s_dot_val) + q_dot * s_ddot_val);
@@ -146,6 +148,8 @@ Json::Value serialize_integration_points(const trajectory& traj) {
     // Limit curves
     result["s_dot_max_acc"] = std::move(s_dot_max_acc_values);
     result["s_dot_max_vel"] = std::move(s_dot_max_vel_values);
+    result["s_dot_max_vel_joint"] = std::move(s_dot_max_vel_joint_values);
+    result["s_dot_max_vel_tcp"] = std::move(s_dot_max_vel_tcp_values);
 
     // Acceleration bounds
     result["s_ddot_min"] = std::move(s_ddot_min_values);
@@ -283,14 +287,16 @@ std::string serialize_trajectory_to_json(const trajectory_integration_event_coll
             arc_length s;
             arc_velocity acc;
             arc_velocity vel;
+            arc_velocity vel_joint;
+            arc_velocity vel_tcp;
         };
         std::vector<limit_sample> samples;
 
         auto cursor = effective->path().create_cursor();
         auto add_sample = [&](arc_length s) {
             cursor.seek(s);
-            const auto lim = effective->get_velocity_limits(cursor);
-            samples.push_back({s, lim.s_dot_max_acc, lim.s_dot_max_vel});
+            const auto lim = effective->get_velocity_limits_detail(cursor);
+            samples.push_back({s, lim.limits.s_dot_max_acc, lim.limits.s_dot_max_vel, lim.components.joint, lim.components.tcp});
         };
 
         for (const auto& ev : collector) {
@@ -353,18 +359,22 @@ std::string serialize_trajectory_to_json(const trajectory_integration_event_coll
             Json::Value lcs_s(Json::arrayValue);
             Json::Value lcs_s_dot_max_acc(Json::arrayValue);
             Json::Value lcs_s_dot_max_vel(Json::arrayValue);
+            Json::Value lcs_s_dot_max_vel_joint(Json::arrayValue);
+            Json::Value lcs_s_dot_max_vel_tcp(Json::arrayValue);
 
             for (const auto& sample : samples) {
                 lcs_s.append(static_cast<double>(sample.s));
-                lcs_s_dot_max_acc.append(std::isinf(static_cast<double>(sample.acc)) ? Json::Value::null
-                                                                                     : Json::Value{static_cast<double>(sample.acc)});
-                lcs_s_dot_max_vel.append(std::isinf(static_cast<double>(sample.vel)) ? Json::Value::null
-                                                                                     : Json::Value{static_cast<double>(sample.vel)});
+                lcs_s_dot_max_acc.append(finite_or_null(sample.acc));
+                lcs_s_dot_max_vel.append(finite_or_null(sample.vel));
+                lcs_s_dot_max_vel_joint.append(finite_or_null(sample.vel_joint));
+                lcs_s_dot_max_vel_tcp.append(finite_or_null(sample.vel_tcp));
             }
 
             limit_curve_samples["s"] = std::move(lcs_s);
             limit_curve_samples["s_dot_max_acc"] = std::move(lcs_s_dot_max_acc);
             limit_curve_samples["s_dot_max_vel"] = std::move(lcs_s_dot_max_vel);
+            limit_curve_samples["s_dot_max_vel_joint"] = std::move(lcs_s_dot_max_vel_joint);
+            limit_curve_samples["s_dot_max_vel_tcp"] = std::move(lcs_s_dot_max_vel_tcp);
             root["limit_curve_samples"] = std::move(limit_curve_samples);
         }
     }

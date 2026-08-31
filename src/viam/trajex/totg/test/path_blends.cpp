@@ -219,6 +219,29 @@ BOOST_AUTO_TEST_CASE(circular_blend_collinear_no_blend) {
     }
 }
 
+// Regression (RSDK-13338 field failure): a near-collinear corner among dense joint-space
+// waypoints used to throw "Circular segment: x and y must be perpendicular". These three
+// 6-DOF waypoints (captured from a GP12 realtime plan) form a corner whose turn angle is at
+// the acos(dot) precision floor (~1.5e-8 rad). The bisector direction is then numerical noise,
+// and with the min_blend_curvature radius cap the blend construction produced non-perpendicular
+// basis vectors. The blend basis is now orthogonalized against the incoming direction at
+// construction, so the corner blends normally rather than throwing.
+BOOST_AUTO_TEST_CASE(circular_blend_near_collinear_dense_waypoints_no_throw) {
+    using namespace viam::trajex::totg;
+
+    const xt::xarray<double> waypoints = {
+        {0.8133007953857693, 0.07784110371418973, 0.0616186421878857, -0.5531657430677487, 0.03481448567149956, 3.7011475425398173},
+        {0.8120016837615454, 0.0789811538169164, 0.06568920373661674, -0.5526286189764857, 0.03142004812961326, 3.7009971572529694},
+        {0.8107025721373212, 0.08012120391964306, 0.06975976528534782, -0.5520914948852225, 0.028025610587726943, 3.7008467719661216},
+    };
+
+    // Production config from the failed-plan replay: blend tolerance 0.1, no colinearization,
+    // default curvature limits.
+    const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1));  // must not throw
+
+    BOOST_CHECK_GT(static_cast<double>(p.length()), 0.0);
+}
+
 BOOST_AUTO_TEST_CASE(circular_blend_very_sharp_angle) {
     using namespace viam::trajex::totg;
     using viam::trajex::arc_length;

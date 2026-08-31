@@ -1,5 +1,8 @@
 #include <viam/trajex/totg/tools/planner.hpp>
 
+#include <sstream>
+#include <string>
+
 #include <boost/test/unit_test.hpp>
 
 #if __has_include(<xtensor/containers/xarray.hpp>)
@@ -8,9 +11,13 @@
 #include <xtensor/xarray.hpp>
 #endif
 
+#include <viam/trajex/totg/test/test_utils.hpp>
+#include <viam/trajex/totg/tools/replay.hpp>
+
 namespace {
 
 using namespace viam::trajex::totg;
+using viam::trajex::totg::test::gp12_model_table;
 
 struct test_receiver {
     int segment_count = 0;
@@ -281,6 +288,144 @@ BOOST_AUTO_TEST_CASE(decider_return_type_is_flexible) {
                            .execute([](const auto&, const auto& totg, const auto&) -> int { return totg.receiver ? 42 : -1; });
 
     BOOST_CHECK_EQUAL(result, 42);
+}
+
+#if defined(VIAM_TRAJEX_LEGACY_ENABLED)
+// The legacy generator cannot enforce a TCP speed limit, so it must never run as a fallback
+// for one: a planner whose config carries a TCP limit refuses to register legacy at all.
+BOOST_AUTO_TEST_CASE(legacy_registration_with_tcp_limit_throws) {
+    auto cfg = simple_config();
+    cfg.tcp = trajectory::tcp_limits::from(gp12_model_table(), 0.5);
+
+    planner<test_receiver> p(std::move(cfg));
+    BOOST_CHECK_THROW(p.with_legacy([](const auto&, test_receiver&, const waypoint_accumulator&, Path&&, Trajectory&&, auto) {}),
+                      std::logic_error);
+}
+
+// Legacy replay of a TCP-carrying record is a deliberate uncapped comparison run: the record's
+// TCP limit is dropped explicitly (visible as an empty config field) rather than carried into a
+// generator that would silently ignore it.
+BOOST_AUTO_TEST_CASE(legacy_replay_of_tcp_record_drops_tcp_limit) {
+    const auto table = gp12_model_table();
+
+    planner<test_receiver>::config cfg{
+        .velocity_limits = xt::xarray<double>{1.0, 1.0, 1.0, 1.0, 1.0, 1.0},
+        .acceleration_limits = xt::xarray<double>{1.0, 1.0, 1.0, 1.0, 1.0, 1.0},
+        .path_blend_tolerance = 0.01,
+        .colinearization_ratio = std::nullopt,
+    };
+    cfg.tcp = trajectory::tcp_limits::from(table, 0.5);
+    cfg.model_table = table;
+
+    planner<test_receiver> p(std::move(cfg));
+    auto data = p.stash(xt::xarray<double>{{0.0, 0.0, 0.0, 0.0, 0.0, 0.0}, {0.3, 0.1, 0.0, 0.0, 0.0, 0.0}});
+    const std::string record = p.serialize_for_replay(waypoint_accumulator{*data});
+
+    std::istringstream in(record);
+    auto replayed = legacy_replay_planner::create(in);
+    BOOST_CHECK(!replayed.get_config().tcp.has_value());
+
+    auto outcome = replayed.execute([](const auto&, const auto&, auto legacy) { return legacy; });
+    BOOST_REQUIRE(outcome.receiver.has_value());
+    BOOST_CHECK(outcome.receiver->result.has_value());
+}
+#endif
+
+// A malformed model_table must be rejected where the config is accepted. Deferring the check to
+// serialize_for_replay would throw on the failure paths that call it to record diagnostics,
+// destroying the replay record for the original error.
+BOOST_AUTO_TEST_CASE(malformed_model_table_rejected_at_construction) {
+    {
+        auto cfg = simple_config();
+        cfg.model_table = xt::xarray<double>{1.0, 2.0, 3.0};  // 1-D, not (n, 10)
+        BOOST_CHECK_THROW(static_cast<void>(planner<test_receiver>(cfg)), std::invalid_argument);
+    }
+    {
+        auto cfg = simple_config();
+        cfg.model_table = xt::xarray<double>{{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};  // (2, 3), not (n, 10)
+        BOOST_CHECK_THROW(static_cast<void>(planner<test_receiver>(cfg)), std::invalid_argument);
+    }
+}
+
+// A config carrying a TCP limit and its model-table provenance survives a
+// serialize_for_replay -> replay_planner round-trip: the scalar cap is preserved, the model-table is
+// recorded, and the opaque jacobian callback is rebuilt from it.
+BOOST_AUTO_TEST_CASE(replay_record_round_trips_tcp_limit) {
+    const auto table = gp12_model_table();
+
+    planner<test_receiver>::config cfg{
+        .velocity_limits = xt::xarray<double>{1.0, 1.0, 1.0, 1.0, 1.0, 1.0},
+        .acceleration_limits = xt::xarray<double>{1.0, 1.0, 1.0, 1.0, 1.0, 1.0},
+        .path_blend_tolerance = 0.01,
+        .colinearization_ratio = std::nullopt,
+    };
+    cfg.tcp = trajectory::tcp_limits::from(table, 0.5);
+    cfg.model_table = table;
+
+    planner<test_receiver> p(std::move(cfg));
+    auto data = p.stash(xt::xarray<double>{{0.0, 0.0, 0.0, 0.0, 0.0, 0.0}, {0.3, 0.1, 0.0, 0.0, 0.0, 0.0}});
+    const std::string record = p.serialize_for_replay(waypoint_accumulator{*data});
+
+    std::istringstream in(record);
+    auto replayed = replay_planner::create(in);
+    const auto& rc = replayed.get_config();
+
+    BOOST_REQUIRE(rc.tcp.has_value());
+    BOOST_CHECK_CLOSE(rc.tcp->max_linear_velocity, 0.5, 1e-9);
+    BOOST_REQUIRE(rc.model_table.has_value());
+    BOOST_REQUIRE_EQUAL(rc.model_table->dimension(), 2U);
+    BOOST_CHECK_EQUAL(rc.model_table->shape(0), 7U);
+    BOOST_CHECK_EQUAL(rc.model_table->shape(1), 10U);
+
+    // The rebuilt jacobian is callable and returns the 3xN linear-velocity block for the six
+    // actuated joints, confirming the callback was reconstructed (not merely the scalar copied).
+    BOOST_REQUIRE(static_cast<bool>(rc.tcp->linear_jacobian));
+    const auto J = rc.tcp->linear_jacobian(xt::xarray<double>{0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
+    BOOST_REQUIRE_EQUAL(J.dimension(), 2U);
+    BOOST_CHECK_EQUAL(J.shape(0), 3U);
+    BOOST_CHECK_EQUAL(J.shape(1), 6U);
+
+    // The reconstructed limit generates a trajectory end to end.
+    auto outcome = replayed.execute([](const auto&, auto tx, const auto&) { return tx; });
+    BOOST_REQUIRE(outcome.receiver.has_value());
+    BOOST_CHECK(outcome.receiver->traj.has_value());
+}
+
+// Without model-table provenance the TCP jacobian cannot be reconstructed, so serialize_for_replay
+// records neither the cap nor the table, and the round-tripped config carries no TCP limit.
+BOOST_AUTO_TEST_CASE(replay_record_omits_tcp_without_model_table) {
+    planner<test_receiver>::config cfg{
+        .velocity_limits = xt::xarray<double>{1.0, 1.0, 1.0, 1.0, 1.0, 1.0},
+        .acceleration_limits = xt::xarray<double>{1.0, 1.0, 1.0, 1.0, 1.0, 1.0},
+        .path_blend_tolerance = 0.01,
+        .colinearization_ratio = std::nullopt,
+    };
+    cfg.tcp = trajectory::tcp_limits::from(gp12_model_table(), 0.5);
+    // cfg.model_table intentionally left unset.
+
+    planner<test_receiver> p(std::move(cfg));
+    auto data = p.stash(xt::xarray<double>{{0.0, 0.0, 0.0, 0.0, 0.0, 0.0}, {0.3, 0.1, 0.0, 0.0, 0.0, 0.0}});
+    const std::string record = p.serialize_for_replay(waypoint_accumulator{*data});
+
+    std::istringstream in(record);
+    auto replayed = replay_planner::create(in);
+    BOOST_CHECK(!replayed.get_config().tcp.has_value());
+    BOOST_CHECK(!replayed.get_config().model_table.has_value());
+}
+
+// A record that names a TCP cap but carries no model-table cannot rebuild the jacobian and is
+// rejected rather than silently dropping the limit.
+BOOST_AUTO_TEST_CASE(replay_tcp_speed_without_model_table_throws) {
+    const std::string record = R"({
+        "schema_version": 2,
+        "max_velocity_vec_rads_per_sec": [1, 1, 1, 1, 1, 1],
+        "max_acceleration_vec_rads_per_sec2": [1, 1, 1, 1, 1, 1],
+        "path_tolerance_delta_rads": 0.01,
+        "tcp_max_linear_velocity": 0.5,
+        "waypoints_rads": [[0, 0, 0, 0, 0, 0], [0.3, 0.1, 0, 0, 0, 0]]
+    })";
+    std::istringstream in(record);
+    BOOST_CHECK_THROW(replay_planner::create(in), std::runtime_error);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

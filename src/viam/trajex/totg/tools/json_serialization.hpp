@@ -37,7 +37,9 @@ namespace viam::trajex::totg {
 ///   "limit_curve_samples": {
 ///     "s": [<number>, ...],
 ///     "s_dot_max_acc": [<number|null>, ...],
-///     "s_dot_max_vel": [<number|null>, ...]
+///     "s_dot_max_vel": [<number|null>, ...],
+///     "s_dot_max_vel_joint": [<number|null>, ...],
+///     "s_dot_max_vel_tcp": [<number|null>, ...]
 ///   }
 /// }
 /// @endcode

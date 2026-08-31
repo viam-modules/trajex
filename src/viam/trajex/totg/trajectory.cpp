@@ -1,14 +1,18 @@
 #include <viam/trajex/totg/trajectory.hpp>
 
+#include <algorithm>
 #include <cassert>
+#include <cmath>
 #include <cstddef>
 #include <exception>
 #include <functional>
 #include <iterator>
+#include <limits>
 #include <numbers>
 #include <optional>
 #include <ranges>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 #include <viam/trajex/totg/path.hpp>
@@ -44,6 +48,53 @@ struct switching_point_cache {
     std::optional<switching_point> next_accel;
     std::optional<switching_point> next_vel;
 };
+
+// Joint velocity limit curve (Kunz & Stilman Eq. 36): min_i q_dot_max(i) / |q'(i)|.
+[[gnu::pure]] arc_velocity compute_joint_velocity_limit(const xt::xarray<double>& q_prime,
+                                                        const xt::xarray<double>& q_dot_max,
+                                                        class epsilon epsilon) {
+    arc_velocity s_dot_max_vel{std::numeric_limits<double>::infinity()};
+    for (size_t i = 0; i < q_prime.size(); ++i) {
+        if (std::abs(q_prime(i)) < epsilon) {
+            continue;
+        }
+        s_dot_max_vel = std::min(s_dot_max_vel, arc_velocity{q_dot_max(i) / std::abs(q_prime(i))});
+    }
+    return s_dot_max_vel;
+}
+
+// TCP velocity limit: v_TCP / ||J_v(q)*f'(s)||.
+// Returns +inf at a singularity (||J*f'|| < eps) or NaN Jacobian (non-constraining).
+arc_velocity compute_tcp_velocity_limit(const xt::xarray<double>& q,
+                                        const xt::xarray<double>& q_prime,
+                                        const trajectory::tcp_limits& tcp,
+                                        class epsilon epsilon) {
+    const auto J = tcp.linear_jacobian(q);
+    if (J.dimension() != 2) {
+        throw std::invalid_argument{"tcp.linear_jacobian must return a 2-dimensional (3, N) matrix, got dimension " +
+                                    std::to_string(J.dimension())};
+    }
+    if (J.shape(0) != 3) {
+        throw std::invalid_argument{"tcp.linear_jacobian must return 3 rows, got " + std::to_string(J.shape(0))};
+    }
+    if (J.shape(1) != q_prime.size()) {
+        throw std::invalid_argument{"tcp.linear_jacobian column count " + std::to_string(J.shape(1)) + " does not match joint DOF " +
+                                    std::to_string(q_prime.size())};
+    }
+    double norm_sq = 0.0;
+    for (std::size_t i = 0; i < 3; ++i) {
+        double dot = 0.0;
+        for (std::size_t j = 0; j < q_prime.size(); ++j) {
+            dot += J(i, j) * q_prime(j);
+        }
+        norm_sq += dot * dot;
+    }
+    const double norm = std::sqrt(norm_sq);
+    if (std::isnan(norm) || norm < static_cast<double>(epsilon)) {
+        return arc_velocity{std::numeric_limits<double>::infinity()};
+    }
+    return arc_velocity{tcp.max_linear_velocity / norm};
+}
 
 // Computes maximum path velocity (s_dot) from joint velocity and acceleration limits.
 // Two constraints apply: centripetal acceleration from path curvature (eq 31) and
@@ -110,17 +161,69 @@ struct switching_point_cache {
     // This is the velocity limit curve in the phase plane. For each joint moving along
     // the path, the joint velocity q_dot = q'(s)*s_dot must respect the joint velocity
     // limit, giving us s_dot <= q_dot_max / |q'(s)|. We take the minimum across all joints.
-    arc_velocity s_dot_max_vel{std::numeric_limits<double>::infinity()};
-    for (size_t i = 0; i < q_prime.size(); ++i) {
-        if (std::abs(q_prime(i)) < epsilon) {
-            continue;
-        }
-
-        const auto limit = q_dot_max(i) / std::abs(q_prime(i));
-        s_dot_max_vel = std::min(s_dot_max_vel, arc_velocity{limit});
-    }
-
+    const arc_velocity s_dot_max_vel = compute_joint_velocity_limit(q_prime, q_dot_max, epsilon);
     return {s_dot_max_accel, s_dot_max_vel};
+}
+
+// Combined velocity limits together with the joint and TCP components they were built from, all
+// from a single Jacobian evaluation. joint is the Kunz & Stilman Eq. 36 per-DOF limit; tcp is the
+// folded TCP limit (or +inf when no TCP limit is set); s_dot_max_vel is their minimum. s_dot_max_acc
+// is the acceleration limit curve, which the TCP limit does not affect.
+struct velocity_limits_with_components {
+    arc_velocity s_dot_max_acc;
+    arc_velocity s_dot_max_vel;
+    arc_velocity joint;
+    arc_velocity tcp;
+};
+
+// Computes the velocity limits plus their joint and TCP components. A caller that also needs the
+// limit-curve slope hands the components to compute_velocity_limit_derivative_with_tcp instead of
+// re-evaluating the Jacobian there to re-decide which curve is active.
+[[nodiscard]] velocity_limits_with_components compute_velocity_limits_and_components(const xt::xarray<double>& q_prime,
+                                                                                     const xt::xarray<double>& q_double_prime,
+                                                                                     const xt::xarray<double>& q,
+                                                                                     const trajectory::options& opt) {
+    const auto base = compute_velocity_limits(q_prime, q_double_prime, opt.max_velocity, opt.max_acceleration, opt.epsilon);
+    const arc_velocity joint = base.s_dot_max_vel;
+    arc_velocity tcp{std::numeric_limits<double>::infinity()};
+    if (opt.tcp.has_value()) {
+        tcp = compute_tcp_velocity_limit(q, q_prime, *opt.tcp, opt.epsilon);
+    }
+    return {base.s_dot_max_acc, std::min(joint, tcp), joint, tcp};
+}
+
+// Drop-in for compute_velocity_limits at call sites that have q available. Folds TCP into
+// s_dot_max_vel only; s_dot_max_acc is untouched. The joint velocity/acceleration limits and
+// epsilon are read from opt.
+[[nodiscard]] trajectory::velocity_limits compute_velocity_limits_with_tcp(const xt::xarray<double>& q_prime,
+                                                                           const xt::xarray<double>& q_double_prime,
+                                                                           const xt::xarray<double>& q,
+                                                                           const trajectory::options& opt) {
+    const auto limits = compute_velocity_limits_and_components(q_prime, q_double_prime, q, opt);
+    return {limits.s_dot_max_acc, limits.s_dot_max_vel};
+}
+
+// Cursor-taking overloads for call sites whose configuration comes from a positioned cursor.
+// cursor.configuration() materializes a fresh array and the joint-only path never reads it, so
+// the configuration is evaluated only when a TCP limit is set. Call sites whose configuration
+// comes from a segment rather than a cursor use the q-taking overloads above.
+[[nodiscard]] velocity_limits_with_components compute_velocity_limits_and_components(const xt::xarray<double>& q_prime,
+                                                                                     const xt::xarray<double>& q_double_prime,
+                                                                                     const path::cursor& cursor,
+                                                                                     const trajectory::options& opt) {
+    if (!opt.tcp.has_value()) {
+        const auto base = compute_velocity_limits(q_prime, q_double_prime, opt.max_velocity, opt.max_acceleration, opt.epsilon);
+        return {base.s_dot_max_acc, base.s_dot_max_vel, base.s_dot_max_vel, arc_velocity{std::numeric_limits<double>::infinity()}};
+    }
+    return compute_velocity_limits_and_components(q_prime, q_double_prime, cursor.configuration(), opt);
+}
+
+[[nodiscard]] trajectory::velocity_limits compute_velocity_limits_with_tcp(const xt::xarray<double>& q_prime,
+                                                                           const xt::xarray<double>& q_double_prime,
+                                                                           const path::cursor& cursor,
+                                                                           const trajectory::options& opt) {
+    const auto limits = compute_velocity_limits_and_components(q_prime, q_double_prime, cursor, opt);
+    return {limits.s_dot_max_acc, limits.s_dot_max_vel};
 }
 
 // Computes the algebraic acceleration bounds without checking feasibility. The acceleration
@@ -238,6 +341,44 @@ struct switching_point_cache {
     return phase_plane_slope{numerator / denominator};
 }
 
+// Combined-curve derivative: analytic joint where joint is strictly active; analytic TCP
+// (`Extension 1`, see README.md) where TCP is the binding constraint. joint and tcp are the
+// component velocity limits already computed at this cursor by compute_velocity_limits_and_components;
+// passing them in lets this pick the active curve without re-evaluating the Jacobian.
+phase_plane_slope compute_velocity_limit_derivative_with_tcp(const xt::xarray<double>& q_prime,
+                                                             const xt::xarray<double>& q_double_prime,
+                                                             path::cursor cursor,
+                                                             const trajectory::options& opt,
+                                                             arc_velocity joint,
+                                                             arc_velocity tcp) {
+    if (!opt.tcp.has_value()) {
+        return compute_velocity_limit_derivative(q_prime, q_double_prime, opt.max_velocity, opt.epsilon);
+    }
+
+    // Joint active (TCP not binding, including the singular tcp = +inf case): the joint curve has
+    // a closed-form slope the code can evaluate; use it. The comparison is exact, not
+    // epsilon-wrapped: near a joint/TCP crossing the two curves sit within epsilon of each other
+    // while their slopes can differ arbitrarily, and following the non-active curve's slope there
+    // drives the integrator off the combined curve. Ties go to the joint curve, matching the
+    // std::min() that produced the combined value, so the value and the slope never come from
+    // different curves at exact equality.
+    if (joint <= tcp) {
+        return compute_velocity_limit_derivative(q_prime, q_double_prime, opt.max_velocity, opt.epsilon);
+    }
+
+    // TCP binding (gain finite): d/ds s_dot_max_TCP = -v_TCP * (dg/ds) / g^2.
+    const auto gd = opt.tcp->linear_velocity_gain(cursor.configuration(), q_prime, q_double_prime);
+    const double slope = -opt.tcp->max_linear_velocity * gd.d_gain_ds / (gd.gain_per_arc_unit * gd.gain_per_arc_unit);
+
+    if (!std::isfinite(slope)) {
+        throw std::runtime_error{
+            "compute_velocity_limit_derivative_with_tcp: non-finite TCP limit-curve slope (velocity_derivative "
+            "returned gain_per_arc_unit " +
+            std::to_string(gd.gain_per_arc_unit) + ", d_gain_ds " + std::to_string(gd.d_gain_ds) + " at a TCP-binding cursor)"};
+    }
+    return phase_plane_slope{slope};
+}
+
 struct eq40_result {
     phase_plane_slope delta;
     arc_velocity s_dot_max_vel;
@@ -252,8 +393,9 @@ struct eq40_result {
     const auto q_prime = cursor.tangent();
     const auto q_double_prime = cursor.curvature();
 
-    const auto [s_dot_max_acc, s_dot_max_vel] =
-        compute_velocity_limits(q_prime, q_double_prime, opt.max_velocity, opt.max_acceleration, opt.epsilon);
+    const auto vl = compute_velocity_limits_and_components(q_prime, q_double_prime, cursor, opt);
+    const auto s_dot_max_acc = vl.s_dot_max_acc;
+    const auto s_dot_max_vel = vl.s_dot_max_vel;
 
     if (s_dot_max_vel == arc_velocity{0.0}) {
         return std::nullopt;
@@ -263,7 +405,7 @@ struct eq40_result {
         return std::nullopt;
     }
 
-    const auto curve_slope = compute_velocity_limit_derivative(q_prime, q_double_prime, opt.max_velocity, opt.epsilon);
+    const auto curve_slope = compute_velocity_limit_derivative_with_tcp(q_prime, q_double_prime, cursor, opt, vl.joint, vl.tcp);
     const auto accel_bounds = compute_acceleration_bounds(q_prime, q_double_prime, s_dot_max_vel, opt.max_acceleration, opt.epsilon);
 
     const auto trajectory_slope = accel_bounds.s_ddot_min / s_dot_max_vel;
@@ -394,8 +536,8 @@ std::optional<switching_point> find_acceleration_switching_point(path::cursor cu
                         const auto q_double_prime = current_segment.curvature(candidate_extremum);
 
                         // Compute acceleration limit curve at extremum
-                        const auto [s_dot_max_acc, s_dot_max_vel] =
-                            compute_velocity_limits(q_prime, q_double_prime, opt.max_velocity, opt.max_acceleration, opt.epsilon);
+                        const auto [s_dot_max_acc, s_dot_max_vel] = compute_velocity_limits_with_tcp(
+                            q_prime, q_double_prime, current_segment.configuration(candidate_extremum), opt);
 
                         // If this switching point is infeasible with respect to the velocity limit curve,
                         // reject it.
@@ -561,7 +703,7 @@ std::optional<switching_point> find_acceleration_switching_point(path::cursor cu
 
         // Compute s_dot_max_acc on both sides
         const auto [s_dot_max_acc_before, s_dot_max_vel_before] =
-            compute_velocity_limits(q_prime_before, q_double_prime_before, opt.max_velocity, opt.max_acceleration, opt.epsilon);
+            compute_velocity_limits_with_tcp(q_prime_before, q_double_prime_before, current_segment.configuration(boundary), opt);
 
         // Move cursor to next segment
         cursor.seek(boundary);
@@ -572,7 +714,7 @@ std::optional<switching_point> find_acceleration_switching_point(path::cursor cu
         const auto q_double_prime_after = segment_after.curvature(boundary);
 
         const auto [s_dot_max_acc_after, s_dot_max_vel_after] =
-            compute_velocity_limits(q_prime_after, q_double_prime_after, opt.max_velocity, opt.max_acceleration, opt.epsilon);
+            compute_velocity_limits_with_tcp(q_prime_after, q_double_prime_after, segment_after.configuration(boundary), opt);
 
         // All computation happens at the smaller one
         const auto s_dot_max_acc_switching_min = std::min(s_dot_max_acc_before, s_dot_max_acc_after);
@@ -747,12 +889,17 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
         const auto q_double_prime_before = current_segment.curvature(boundary);
         const auto q_double_prime_after = segment_after.curvature(boundary);
 
-        // Compute velocity limits on both sides
-        const auto [s_dot_max_accel_before, s_dot_max_vel_before] =
-            compute_velocity_limits(q_prime_before, q_double_prime_before, opt.max_velocity, opt.max_acceleration, opt.epsilon);
+        // Compute velocity limits on both sides. The configuration is continuous across the
+        // boundary (same physical point); only the tangent/curvature differ side-to-side, so a
+        // single boundary configuration feeds the TCP term on both sides.
+        const auto boundary_q = cursor.path().configuration(boundary);
+        const auto before = compute_velocity_limits_and_components(q_prime_before, q_double_prime_before, boundary_q, opt);
+        const auto s_dot_max_accel_before = before.s_dot_max_acc;
+        const auto s_dot_max_vel_before = before.s_dot_max_vel;
 
-        const auto [s_dot_max_accel_after, s_dot_max_vel_after] =
-            compute_velocity_limits(q_prime_after, q_double_prime_after, opt.max_velocity, opt.max_acceleration, opt.epsilon);
+        const auto after = compute_velocity_limits_and_components(q_prime_after, q_double_prime_after, boundary_q, opt);
+        const auto s_dot_max_accel_after = after.s_dot_max_acc;
+        const auto s_dot_max_vel_after = after.s_dot_max_vel;
 
         // Conditions 41 and 42 are evaluated at s_dot_max_vel, but if s_dot_max_accel <= s_dot_max_vel
         // at this boundary, backward integration starting at s_dot_max_vel would immediately exceed
@@ -766,8 +913,8 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
 
         // Evaluate condition 41 (before-side only) first to avoid computing after-side
         // derivatives and acceleration bounds when the before-side already disqualifies.
-        const auto curve_slope_before =
-            compute_velocity_limit_derivative(q_prime_before, q_double_prime_before, opt.max_velocity, opt.epsilon);
+        const auto curve_slope_before = compute_velocity_limit_derivative_with_tcp(
+            q_prime_before, q_double_prime_before, boundary_cursor, opt, before.joint, before.tcp);
         const auto accel_before =
             compute_acceleration_bounds(q_prime_before, q_double_prime_before, s_dot_max_vel_before, opt.max_acceleration, opt.epsilon);
         const auto trajectory_slope_before = accel_before.s_ddot_min / s_dot_max_vel_before;
@@ -778,7 +925,7 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
 
         // Condition 41 passed -- now evaluate condition 42 (after-side).
         const auto curve_slope_after =
-            compute_velocity_limit_derivative(q_prime_after, q_double_prime_after, opt.max_velocity, opt.epsilon);
+            compute_velocity_limit_derivative_with_tcp(q_prime_after, q_double_prime_after, boundary_cursor, opt, after.joint, after.tcp);
         const auto accel_after =
             compute_acceleration_bounds(q_prime_after, q_double_prime_after, s_dot_max_vel_after, opt.max_acceleration, opt.epsilon);
         const auto trajectory_slope_after = accel_after.s_ddot_min / s_dot_max_vel_after;
@@ -1086,6 +1233,21 @@ void trajectory::integration_event_observer::on_trajectory_extended(const trajec
     on_event(traj, std::move(event));
 }
 
+trajectory::tcp_limits trajectory::tcp_limits::from(const xt::xarray<double>& model_table, double max_linear_velocity) {
+    // One chain, shared by both callbacks, so the limit value and its slope cannot describe
+    // different kinematics.
+    auto chain = std::make_shared<jacobian::kinematic_chain>(jacobian::kinematic_chain::from(model_table));
+
+    return tcp_limits{
+        .max_linear_velocity = max_linear_velocity,
+        .linear_jacobian = [chain](const xt::xarray<double>& q) -> xt::xarray<double> { return chain->linear_jacobian(q); },
+        .linear_velocity_gain =
+            [chain](const xt::xarray<double>& q, const xt::xarray<double>& q_prime, const xt::xarray<double>& q_double_prime) {
+                return chain->linear_velocity_gain_at(q, q_prime, q_double_prime);
+            },
+    };
+}
+
 trajectory::trajectory(class path p, options opt, integration_points points)
     : path_{std::move(p)}, options_{std::move(opt)}, integration_points_{std::move(points)} {
     if (path_.empty() || path_.length() <= arc_length{0.0}) {
@@ -1140,6 +1302,23 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
     if (opt.epsilon <= 0.0) {
         throw std::invalid_argument{"epsilon must be positive"};
+    }
+
+    if (opt.tcp.has_value()) {
+        if (!(opt.tcp->max_linear_velocity > 0.0) || !std::isfinite(opt.tcp->max_linear_velocity)) {
+            throw std::invalid_argument{"tcp.max_linear_velocity must be a finite positive number"};
+        }
+        if (!opt.tcp->linear_jacobian) {
+            throw std::invalid_argument{"tcp.linear_jacobian must be set"};
+        }
+        if (!opt.tcp->linear_velocity_gain) {
+            throw std::invalid_argument{"tcp.linear_velocity_gain must be set"};
+        }
+        // Probe the jacobian once at the path start so a malformed callback fails here with a
+        // clear message instead of mid-integration. compute_tcp_velocity_limit performs the
+        // full shape validation, keeping it in one place.
+        const auto probe_cursor = p.create_cursor();
+        static_cast<void>(compute_tcp_velocity_limit(probe_cursor.configuration(), probe_cursor.tangent(), *opt.tcp, opt.epsilon));
     }
 
     if (points.empty()) {
@@ -1221,8 +1400,8 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     //
                     // TODO: In some cases, we may already know these limits for `current` from work
                     // done below on `next`, so we could eliminate this call.
-                    const auto [_1, s_dot_max_vel] = compute_velocity_limits(
-                        q_prime, q_double_prime, traj.options_.max_velocity, traj.options_.max_acceleration, traj.options_.epsilon);
+                    const auto vl = compute_velocity_limits_and_components(q_prime, q_double_prime, cache.path_cursor, traj.options_);
+                    const auto s_dot_max_vel = vl.s_dot_max_vel;
 
                     // Find the upper limit for acceleration at this phase point.
                     const auto s_ddot_bounds = compute_acceleration_bounds(
@@ -1230,8 +1409,8 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
                     // If we are at the velocity limit, evaluate acceleration bounds to see if we can follow it.
                     if (traj.options_.epsilon.wrap(current_point.s_dot) == traj.options_.epsilon.wrap(s_dot_max_vel)) {
-                        const auto vel_curve_slope =
-                            compute_velocity_limit_derivative(q_prime, q_double_prime, traj.options_.max_velocity, traj.options_.epsilon);
+                        const auto vel_curve_slope = compute_velocity_limit_derivative_with_tcp(
+                            q_prime, q_double_prime, cache.path_cursor, traj.options_, vl.joint, vl.tcp);
 
                         const auto s_ddot_tangent = vel_curve_slope * current_point.s_dot;
 
@@ -1283,8 +1462,8 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                 auto next_q_double_prime = cache.path_cursor.curvature();
 
                 // Compute the velocity limits at the probe point.
-                auto [next_s_dot_max_acc, next_s_dot_max_vel] = compute_velocity_limits(
-                    next_q_prime, next_q_double_prime, traj.options_.max_velocity, traj.options_.max_acceleration, traj.options_.epsilon);
+                auto [next_s_dot_max_acc, next_s_dot_max_vel] =
+                    compute_velocity_limits_with_tcp(next_q_prime, next_q_double_prime, cache.path_cursor, traj.options_);
 
                 // If bounds were returned, we are following the limit curve. Try to get on the curve, if we can.
                 if (s_ddot_bounds) {
@@ -1341,11 +1520,8 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     cache.path_cursor.seek(next_point.s);
                     next_q_prime = cache.path_cursor.tangent();
                     next_q_double_prime = cache.path_cursor.curvature();
-                    auto [next_s_dot_max_acc_2, next_s_dot_max_vel_2] = compute_velocity_limits(next_q_prime,
-                                                                                                next_q_double_prime,
-                                                                                                traj.options_.max_velocity,
-                                                                                                traj.options_.max_acceleration,
-                                                                                                traj.options_.epsilon);
+                    auto [next_s_dot_max_acc_2, next_s_dot_max_vel_2] =
+                        compute_velocity_limits_with_tcp(next_q_prime, next_q_double_prime, cache.path_cursor, traj.options_);
                     next_s_dot_max_acc = next_s_dot_max_acc_2;
                     next_s_dot_max_vel = next_s_dot_max_vel_2;
 
@@ -1359,11 +1535,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
                         // Compute the velocity limits at the midpoint.
                         const auto [midpoint_s_dot_max_acc, midpoint_s_dot_max_vel] =
-                            compute_velocity_limits(mid_q_prime,
-                                                    mid_q_double_prime,
-                                                    traj.options_.max_velocity,
-                                                    traj.options_.max_acceleration,
-                                                    traj.options_.epsilon);
+                            compute_velocity_limits_with_tcp(mid_q_prime, mid_q_double_prime, cache.path_cursor, traj.options_);
 
                         // Use > here, because we really want the breach point to be on the violating side of the curve.
                         if (mid.s_dot > midpoint_s_dot_max_acc || mid.s_dot > midpoint_s_dot_max_vel) {
@@ -1453,8 +1625,10 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                         breach_q_prime, breach_q_double_prime, breach_point.s_dot, traj.options_.max_acceleration, traj.options_.epsilon);
                     const auto min_phase_slope = breach_s_ddot_min / breach_point.s_dot;
                     const auto max_phase_slope = breach_s_ddot_max / breach_point.s_dot;
-                    const auto vel_curve_slope = compute_velocity_limit_derivative(
-                        breach_q_prime, breach_q_double_prime, traj.options_.max_velocity, traj.options_.epsilon);
+                    const auto breach_limits =
+                        compute_velocity_limits_and_components(breach_q_prime, breach_q_double_prime, cache.path_cursor, traj.options_);
+                    const auto vel_curve_slope = compute_velocity_limit_derivative_with_tcp(
+                        breach_q_prime, breach_q_double_prime, cache.path_cursor, traj.options_, breach_limits.joint, breach_limits.tcp);
 
                     if (min_phase_slope > vel_curve_slope) {
                         // The velocity curve drops faster than we can follow while respecting the
@@ -1916,9 +2090,8 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     if (traj.options_.epsilon.wrap(computed_s_ddot) < traj.options_.epsilon.wrap(s_ddot_min) ||
                         traj.options_.epsilon.wrap(computed_s_ddot) > traj.options_.epsilon.wrap(s_ddot_max)) {
                         std::ostringstream oss;
-                        oss << "Splice point requires infeasible acceleration: "
-                            << "computed=" << static_cast<double>(computed_s_ddot) << ", bounds=[" << static_cast<double>(s_ddot_min)
-                            << ", " << static_cast<double>(s_ddot_max) << "]";
+                        oss << "Splice point requires infeasible acceleration: " << "computed=" << static_cast<double>(computed_s_ddot)
+                            << ", bounds=[" << static_cast<double>(s_ddot_min) << ", " << static_cast<double>(s_ddot_max) << "]";
                         throw std::runtime_error{oss.str()};
                     }
 #endif
@@ -1963,8 +2136,8 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                 const auto next_q_prime = backwards_cursor.tangent();
                 const auto next_q_double_prime = backwards_cursor.curvature();
 
-                const auto [s_dot_max_acc, s_dot_max_vel] = compute_velocity_limits(
-                    next_q_prime, next_q_double_prime, traj.options_.max_velocity, traj.options_.max_acceleration, traj.options_.epsilon);
+                const auto [s_dot_max_acc, s_dot_max_vel] =
+                    compute_velocity_limits_with_tcp(next_q_prime, next_q_double_prime, backwards_cursor, traj.options_);
                 const auto s_dot_limit = std::min(s_dot_max_acc, s_dot_max_vel);
 
                 if (s_dot_limit <= arc_velocity{0.0}) [[unlikely]] {
@@ -2083,7 +2256,18 @@ const trajectory::options& trajectory::get_options() const noexcept {
 trajectory::velocity_limits trajectory::get_velocity_limits(const path::cursor& cursor) const {
     const auto tangent = cursor.tangent();
     const auto curvature = cursor.curvature();
-    return compute_velocity_limits(tangent, curvature, options_.max_velocity, options_.max_acceleration, options_.epsilon);
+    return compute_velocity_limits_with_tcp(tangent, curvature, cursor, options_);
+}
+
+trajectory::velocity_limit_components trajectory::get_velocity_limit_components(const path::cursor& cursor) const {
+    return get_velocity_limits_detail(cursor).components;
+}
+
+trajectory::velocity_limits_detail trajectory::get_velocity_limits_detail(const path::cursor& cursor) const {
+    const auto q_prime = cursor.tangent();
+    const auto q_double_prime = cursor.curvature();
+    const auto vl = compute_velocity_limits_and_components(q_prime, q_double_prime, cursor, options_);
+    return {{vl.s_dot_max_acc, vl.s_dot_max_vel}, {vl.joint, vl.tcp}};
 }
 
 trajectory::acceleration_bounds trajectory::get_acceleration_bounds(const path::cursor& cursor, arc_velocity s_dot) const {

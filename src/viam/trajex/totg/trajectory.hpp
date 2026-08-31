@@ -2,7 +2,9 @@
 
 #include <chrono>
 #include <exception>
+#include <functional>
 #include <memory>
+#include <optional>
 
 #if __has_include(<xtensor/containers/xarray.hpp>)
 #include <xtensor/containers/xarray.hpp>
@@ -10,6 +12,7 @@
 #include <xtensor/xarray.hpp>
 #endif
 
+#include <viam/trajex/jacobian/jacobian.hpp>
 #include <viam/trajex/totg/path.hpp>
 #include <viam/trajex/types/arc_acceleration.hpp>
 #include <viam/trajex/types/arc_length.hpp>
@@ -68,6 +71,52 @@ class trajectory {
     class integration_event_observer;
 
     ///
+    /// TCP (tool center point) limits. Currently constrains linear TCP speed.
+    ///
+    /// The linear_jacobian callback maps joint config q to the 3xN linear-velocity Jacobian; the
+    /// folded limit is max_linear_velocity / ||J_v(q)*f'(s)||. Forward integration, backward
+    /// integration, and bisection each query at the arc position under examination, so successive
+    /// calls do not advance monotonically along the path.
+    ///
+    /// Both callbacks must describe the same kinematic chain. The value decides which curve is
+    /// active and the slope is then taken from the other callback, so a mismatched pair yields a
+    /// slope for one curve and a value for the other, with no diagnostic. from() builds both from
+    /// a single chain.
+    ///
+    /// Only linear_jacobian may return NaN, which signals a singularity and is treated as
+    /// non-constraining. A non-finite result from linear_velocity_gain where TCP is the binding
+    /// curve throws instead.
+    ///
+    /// Units are the caller's. max_linear_velocity must be expressed in the same length unit as
+    /// the Jacobian's task-space output, per second; nothing here checks that they agree.
+    ///
+    struct tcp_limits {
+        /// Maps joint config q to the 3xN linear-velocity Jacobian. Used for the limit value.
+        using linear_jacobian_fn = std::function<xt::xarray<double>(const xt::xarray<double>&)>;
+
+        /// Maps (q, q_prime, q_double_prime) to the linear velocity gain. Used for the limit slope.
+        using linear_velocity_gain_fn = std::function<jacobian::kinematic_chain::linear_velocity_gain(
+            const xt::xarray<double>&, const xt::xarray<double>&, const xt::xarray<double>&)>;
+
+        ///
+        /// Builds both callbacks from one kinematic chain parsed from a model table.
+        ///
+        /// @param model_table (n, 10) tensor in the viam::sdk::ModelTable format
+        /// @param max_linear_velocity Cap on TCP linear speed, in the model table's length unit
+        ///        per second
+        /// @return A limits object whose callbacks share a single chain
+        /// @throws std::invalid_argument on a malformed model table
+        ///
+        [[nodiscard]] static tcp_limits from(const xt::xarray<double>& model_table, double max_linear_velocity);
+
+        /// Zero-initialized so a default-constructed limit fails validation deterministically
+        /// instead of reading an indeterminate value.
+        double max_linear_velocity = 0.0;
+        linear_jacobian_fn linear_jacobian;
+        linear_velocity_gain_fn linear_velocity_gain;
+    };
+
+    ///
     /// Options for trajectory generation via TOTG algorithm.
     ///
     struct options {
@@ -112,6 +161,15 @@ class trajectory {
         /// limit curve hits, and trajectory extension. Enables testing and streaming.
         ///
         trajectory::integration_observer* observer = nullptr;
+
+        ///
+        /// Optional TCP (tool center point) limits.
+        ///
+        /// When set, constrains the linear TCP speed in addition to the per-DOF
+        /// joint velocity/acceleration limits. This is `Extension 1`: the Kunz &
+        /// Stilman paper does not treat Cartesian constraints. See README.md.
+        ///
+        std::optional<tcp_limits> tcp = std::nullopt;
     };
 
     ///
@@ -130,10 +188,10 @@ class trajectory {
     };
 
     ///
-    /// Position in phase plane (s, ṡ) space.
+    /// Position in phase plane (s, s_dot) space.
     ///
     /// Represents a point in the 2D phase plane used by TOTG algorithm.
-    /// Arc length s on the horizontal axis, path velocity ṡ on the vertical axis.
+    /// Arc length s on the horizontal axis, path velocity s_dot on the vertical axis.
     ///
     struct phase_point {
         arc_length s;        ///< Arc length position on path
@@ -162,7 +220,7 @@ class trajectory {
     ///
     /// Integration point from phase plane TOTG algorithm.
     ///
-    /// Stores time and kinematic state (s, ṡ, s̈) from integration.
+    /// Stores time and kinematic state (s, s_dot, s_ddot) from integration.
     /// Path geometry (q, q', q'') is queried on-demand during sampling for exact results.
     /// This is more accurate than storing and interpolating joint-space values, since
     /// the path knows exact circular blend geometry.
@@ -186,6 +244,29 @@ class trajectory {
     struct velocity_limits {
         arc_velocity s_dot_max_acc;  ///< Maximum velocity from acceleration constraints
         arc_velocity s_dot_max_vel;  ///< Maximum velocity from velocity constraints
+    };
+
+    ///
+    /// Component velocity limits at a path position, for diagnostics and visualization.
+    ///
+    /// Separates the combined velocity limit (see velocity_limits) into its two contributors so
+    /// each curve, and where they cross, can be inspected independently.
+    ///
+    struct velocity_limit_components {
+        arc_velocity joint;  ///< Per-DOF joint velocity limit (Kunz & Stilman Eq. 36)
+        arc_velocity tcp;    ///< TCP Cartesian speed limit folded to path velocity, or +inf when no TCP limit is set
+    };
+
+    ///
+    /// Combined velocity limits together with their joint and TCP components.
+    ///
+    /// Equivalent to get_velocity_limits() and get_velocity_limit_components() at the same cursor,
+    /// but evaluates the TCP Jacobian only once. For diagnostics that emit both the combined curve
+    /// and its components.
+    ///
+    struct velocity_limits_detail {
+        velocity_limits limits;                ///< Acceleration limit and the combined velocity limit, min(joint, tcp)
+        velocity_limit_components components;  ///< The joint and TCP contributors to that combined limit
     };
 
     ///
@@ -271,6 +352,29 @@ class trajectory {
     /// @return Velocity limits from acceleration and velocity constraints
     ///
     velocity_limits get_velocity_limits(const path::cursor& cursor) const;
+
+    ///
+    /// Computes the joint and TCP velocity limit curves separately at the cursor.
+    ///
+    /// The combined velocity limit returned by get_velocity_limits() is the minimum of the two.
+    /// Intended for diagnostics and visualization, where the individual curves and their
+    /// crossings are of interest.
+    ///
+    /// @param cursor Path cursor positioned at query location
+    /// @return Joint and TCP velocity limit components (tcp is +inf when no TCP limit is set)
+    ///
+    velocity_limit_components get_velocity_limit_components(const path::cursor& cursor) const;
+
+    ///
+    /// Computes the combined velocity limits and their joint and TCP components in one evaluation.
+    ///
+    /// Equivalent to calling get_velocity_limits() and get_velocity_limit_components() at the same
+    /// cursor, but evaluates the TCP Jacobian only once. Intended for diagnostics that need both.
+    ///
+    /// @param cursor Path cursor positioned at query location
+    /// @return Acceleration limit, combined velocity limit, and the joint and TCP components
+    ///
+    velocity_limits_detail get_velocity_limits_detail(const path::cursor& cursor) const;
 
     ///
     /// Computes phase plane acceleration bounds at cursor's current position and velocity.

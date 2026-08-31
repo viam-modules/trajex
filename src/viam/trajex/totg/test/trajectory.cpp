@@ -1,6 +1,8 @@
 // Trajectory tests: generation and queries
 // Extracted from test.cpp lines 1563-1753
 
+#include <cmath>
+
 #include <viam/trajex/totg/path.hpp>
 #include <viam/trajex/totg/trajectory.hpp>
 #include <viam/trajex/types/arc_length.hpp>

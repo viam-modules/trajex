@@ -59,6 +59,29 @@ class kinematic_chain {
     ///
     [[nodiscard]] xt::xarray<double> linear_jacobian(const xt::xarray<double>& q) const;
 
+    /// Linear velocity gain ||J_v*f'||: task-space length per unit of path arc length, in
+    /// whatever length unit the model table uses, with its rate of change along the path.
+    struct linear_velocity_gain {
+        double gain_per_arc_unit;
+        double d_gain_ds;
+    };
+
+    ///
+    /// Linear velocity gain ||J_v*f'|| and its path derivative d/ds||J_v*f'||, where J_v is the
+    /// (3, N_actuated) linear-velocity Jacobian, f' = q_prime is the path tangent in joint
+    /// space, and f'' = q_double_prime is the path curvature. Used to evaluate the TCP velocity
+    /// limit curve and its slope.
+    ///
+    /// @param q (N_actuated,) joint positions, in chain order
+    /// @param q_prime (N_actuated,) path tangent dq/ds
+    /// @param q_double_prime (N_actuated,) path curvature d^2q/ds^2
+    /// @return the gain and its s-derivative
+    /// @throws std::invalid_argument on a q, q_prime, or q_double_prime size mismatch
+    ///
+    [[nodiscard]] linear_velocity_gain linear_velocity_gain_at(const xt::xarray<double>& q,
+                                                               const xt::xarray<double>& q_prime,
+                                                               const xt::xarray<double>& q_double_prime) const;
+
    private:
     // URDF joint type, restricted to arm-relevant joints. Underlying values
     // are the column-9 wire encoding accepted by `from`, and match
@@ -73,7 +96,7 @@ class kinematic_chain {
     // One row of the model table: the per-joint URDF fields. xyz/rpy are the
     // joint origin relative to the parent link (rpy is fixed-axis XYZ); axis
     // is the joint axis in the local frame.
-    struct joint_row {
+    struct joint_row_ {
         std::array<double, 3> xyz{};
         std::array<double, 3> rpy{};
         std::array<double, 3> axis{};
@@ -82,18 +105,29 @@ class kinematic_chain {
 
     // Per-revolute-joint world-frame axes and origins plus the end-effector
     // position.
-    struct chain_state;
+    struct chain_state_;
 
-    // Validates the rows (joint types, axes) and counts actuated joints; all
-    // public construction funnels through here via `from`.
-    explicit kinematic_chain(std::vector<joint_row> rows);
+    // Constant per-row kinematics derived once at construction: the
+    // parent-to-joint link transform (row-major 4x4) and, for revolute rows,
+    // the normalized local joint axis. The forward-kinematics walk runs per
+    // integration step, so its q-independent terms are not recomputed there.
+    struct row_constants_ {
+        std::array<double, 16> link_tf{};
+        std::array<double, 3> unit_axis{};
+    };
+
+    // Validates the rows (joint types, axes) and counts actuated joints, then
+    // precomputes the per-row constants; all public construction funnels
+    // through here via `from`.
+    explicit kinematic_chain(std::vector<joint_row_> rows);
 
     // Evaluates the forward kinematics at joint positions q, capturing the
     // per-joint quantities the Jacobian assemblies need. Throws
     // std::invalid_argument on q-size mismatch.
-    chain_state compute_chain_state_(const xt::xarray<double>& q) const;
+    chain_state_ compute_chain_state_(const xt::xarray<double>& q) const;
 
-    std::vector<joint_row> rows_;
+    std::vector<joint_row_> rows_;
+    std::vector<row_constants_> constants_;
     std::size_t actuated_count_ = 0;
 };
 

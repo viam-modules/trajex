@@ -1,4 +1,5 @@
 #include <viam/trajex/jacobian/jacobian.hpp>
+#include <viam/trajex/totg/trajectory.hpp>
 
 #include <algorithm>
 #include <array>
@@ -429,6 +430,100 @@ BOOST_AUTO_TEST_CASE(linear_jacobian_matches_jacobian_linear_block) {
         }
     }
     BOOST_CHECK_SMALL(max_abs_diff, 1e-15);
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+// The tests in this suite validate linear_velocity_gain_at: the gain ||J*f'|| and its
+// path derivative d/ds||J*f'|| against a central finite difference of the gain along the path.
+BOOST_AUTO_TEST_SUITE(linear_velocity_gain_tests)
+
+namespace {
+
+// ||linear_jacobian(q) * q_prime|| computed independently of the method under test.
+double reference_gain(const xt::xarray<double>& table, const xt::xarray<double>& q, const xt::xarray<double>& q_prime) {
+    const auto J = kinematic_chain::from(table).linear_jacobian(q);
+    std::array<double, 3> v{0.0, 0.0, 0.0};
+    for (std::size_t r = 0; r < 3; ++r) {
+        for (std::size_t j = 0; j < q_prime.size(); ++j) {
+            v[r] += J(r, j) * q_prime(j);
+        }
+    }
+    return std::sqrt((v[0] * v[0]) + (v[1] * v[1]) + (v[2] * v[2]));
+}
+
+void check_linear_velocity_gain(const xt::xarray<double>& table,
+                                const xt::xarray<double>& q,
+                                const xt::xarray<double>& q_prime,
+                                const xt::xarray<double>& q_double_prime,
+                                double tol = 1e-6) {
+    const auto chain = kinematic_chain::from(table);
+    const auto analytic = chain.linear_velocity_gain_at(q, q_prime, q_double_prime);
+
+    BOOST_CHECK_CLOSE(analytic.gain_per_arc_unit, reference_gain(table, q, q_prime), 1e-7);
+
+    const double h = 1e-6;
+    const xt::xarray<double> q_plus = q + h * q_prime;
+    const xt::xarray<double> q_minus = q - h * q_prime;
+    const xt::xarray<double> qp_plus = q_prime + h * q_double_prime;
+    const xt::xarray<double> qp_minus = q_prime - h * q_double_prime;
+    const double numeric = (reference_gain(table, q_plus, qp_plus) - reference_gain(table, q_minus, qp_minus)) / (2.0 * h);
+
+    BOOST_CHECK_SMALL(analytic.d_gain_ds - numeric, tol);
+}
+
+}  // namespace
+
+BOOST_AUTO_TEST_CASE(twolink_typical) {
+    check_linear_velocity_gain(twolink_table(), {0.3, -0.7}, {1.0, 0.5}, {0.2, -0.4});
+}
+
+BOOST_AUTO_TEST_CASE(threelink_with_spacers_typical) {
+    check_linear_velocity_gain(threelink_with_spacers_table(), {0.3, -0.5, 0.8}, {0.6, 0.1, -0.7}, {-0.2, 0.4, 0.3});
+}
+
+BOOST_AUTO_TEST_CASE(sixdof_typical) {
+    check_linear_velocity_gain(
+        sixdof_arm_table(), {0.1, -0.5, 1.2, -0.3, 0.6, -0.1}, {0.2, 0.7, -0.4, 0.5, -0.6, 0.3}, {-0.1, 0.3, 0.2, -0.5, 0.4, -0.2});
+}
+
+// A singular gain (||J*f'|| -> 0, here from a zero path tangent) has an undefined slope, since
+// dot(v, dv) / gain is 0 / 0. The function must return a finite, non-poisoning value rather than a
+// NaN that would propagate into the phase-plane slope downstream.
+BOOST_AUTO_TEST_CASE(singular_gain_yields_finite_derivative) {
+    const auto chain = kinematic_chain::from(twolink_table());
+    const auto vg = chain.linear_velocity_gain_at({0.3, -0.7}, {0.0, 0.0}, {0.2, -0.4});
+    BOOST_CHECK_SMALL(vg.gain_per_arc_unit, 1e-15);
+    BOOST_CHECK(std::isfinite(vg.d_gain_ds));
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+// The tests in this suite validate trajectory::tcp_limits::from: the jacobian callback returns
+// the linear-velocity block of the geometric Jacobian and reuses the chain it parsed at
+// construction.
+BOOST_AUTO_TEST_SUITE(tcp_limits_from_tests)
+
+BOOST_AUTO_TEST_CASE(matches_linear_jacobian) {
+    const xt::xarray<double> table = twolink_table();
+    const xt::xarray<double> q = {0.3, -0.7};
+
+    const auto limits = viam::trajex::totg::trajectory::tcp_limits::from(table, 0.5);
+    const auto J3 = limits.linear_jacobian(q);
+    BOOST_REQUIRE_EQUAL(J3.shape()[0], 3U);
+    BOOST_REQUIRE_EQUAL(J3.shape()[1], 2U);
+
+    BOOST_CHECK_SMALL(matrix_diff_norm(J3, kinematic_chain::from(table).linear_jacobian(q)), 1e-15);
+
+    // The captured chain is reused: a second call returns identical values.
+    BOOST_CHECK_SMALL(matrix_diff_norm(J3, limits.linear_jacobian(q)), 1e-15);
+
+    BOOST_CHECK_EQUAL(limits.max_linear_velocity, 0.5);
+}
+
+BOOST_AUTO_TEST_CASE(rejects_malformed_tensor_at_construction) {
+    const xt::xarray<double> bad = xt::zeros<double>({std::size_t{1}, std::size_t{9}});
+    BOOST_CHECK_THROW(static_cast<void>(viam::trajex::totg::trajectory::tcp_limits::from(bad, 0.5)), std::invalid_argument);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

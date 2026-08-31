@@ -385,13 +385,20 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         const auto center_offset = radius / std::cos(half_angle);
         const auto center = corner + (center_offset * bisector_unit);
 
-        // x_hat points from center to blend start (where circle touches incoming segment)
-        const auto blend_start = corner - (trim_distance * incoming_unit);
-        const auto x_vec = blend_start - center;
-        const auto x_unit = x_vec / xt::norm_l2(x_vec)();
-
-        // y_hat is the incoming direction (perpendicular to x by construction)
+        // x_hat runs from the center to the blend start; y_hat is the incoming direction. Kunz &
+        // Stilman equations 7-9 need these orthonormal for the arc to be parameterized by arc
+        // length. They are perpendicular in exact arithmetic, but the bisector above is a
+        // difference of two unit vectors, and at shallow corners those two are nearly equal, so
+        // cancellation leaves its direction with few significant digits and the center offset
+        // multiplies that error by the blend radius. One Gram-Schmidt step restores the invariant:
+        // project y_hat out of x_vec before normalizing. y_hat is a normalized segment direction,
+        // so the projection is well-conditioned, and perpendicularity stops depending on the
+        // bisector's accuracy.
         const auto& y_unit = incoming_unit;
+        const auto blend_start = corner - (trim_distance * incoming_unit);
+        const auto x_vec_raw = blend_start - center;
+        const auto x_vec = x_vec_raw - (xt::sum(x_vec_raw * y_unit)() * y_unit);
+        const auto x_unit = x_vec / xt::norm_l2(x_vec)();
 
         return blend_geometry{.circular_seg = segment::circular{center, x_unit, y_unit, radius, angle}, .trim_distance = trim_distance};
     };
