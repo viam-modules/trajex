@@ -175,3 +175,59 @@ func (s *Session) ActiveDuration() time.Duration {
 	C.viam_trajex_totg_streaming_session_active_duration_sec(s.handle, &out)
 	return time.Duration(float64(out) * float64(time.Second))
 }
+
+// TotalRemainingDuration returns the total un-emitted trajectory time remaining
+// in the session: the exact remainder of the active trajectory plus a
+// velocity-limit estimate of the motion held in staged batches that no
+// trajectory has been built for yet. While batches are staged the value is
+// normally a slight underestimate (acceleration ramps and non-joint constraints
+// are ignored for the staged portion). Zero for a fresh or fully drained
+// session.
+//
+// Unlike ActiveDuration, this quantity is continuous across the session's
+// internal pivots, stages, and rebases; use it for flow control over how much
+// motion is queued ahead of the sampling cursor.
+func (s *Session) TotalRemainingDuration() time.Duration {
+	var out C.double
+	C.viam_trajex_totg_streaming_session_total_remaining_duration_sec(s.handle, &out)
+	return time.Duration(float64(out) * float64(time.Second))
+}
+
+// ExtendDisposition is what became of one Extend call. Values match the
+// VIAM_TRAJEX_TOTG_STREAMING_EXTEND_* constants in the C ABI.
+type ExtendDisposition int64
+
+const (
+	// ExtendNone means no successful Extend has occurred yet.
+	ExtendNone ExtendDisposition = 0
+	// ExtendFirstBuild means the batch built the session's first trajectory.
+	ExtendFirstBuild ExtendDisposition = 1
+	// ExtendPivot means a candidate incorporating the batch replaced the active trajectory.
+	ExtendPivot ExtendDisposition = 2
+	// ExtendStagedBranchBehind means the candidate's divergence fell at or behind the
+	// latest emitted sample, so the batch was staged for the next rebase.
+	ExtendStagedBranchBehind ExtendDisposition = 3
+	// ExtendStagedNoMaterial means the divergence lay ahead but under one sample period
+	// of the candidate remained to sample, so the batch was staged.
+	ExtendStagedNoMaterial ExtendDisposition = 4
+	// ExtendStagedLockedOut means staging was already non-empty, so the batch went
+	// straight into staging without a candidate build.
+	ExtendStagedLockedOut ExtendDisposition = 5
+	// ExtendNoop means the batch carried no waypoints beyond the seam.
+	ExtendNoop ExtendDisposition = 6
+)
+
+// LastExtend reports the outcome of the most recent successful Extend: its
+// disposition, and the signed gap between the candidate trajectory's divergence
+// point and the sampling watermark (positive: the divergence lay that far ahead,
+// a pivot was admissible; negative: the candidate's re-timing reached that far
+// behind it, forcing a stage). The margin's ok return is false when no candidate
+// was built and compared — a fresh session, a first build, a noop, or a
+// locked-out stage, which skips the candidate build entirely.
+func (s *Session) LastExtend() (ExtendDisposition, time.Duration, bool) {
+	var disposition C.int64_t
+	var marginSec C.double
+	var hasMargin C.int
+	C.viam_trajex_totg_streaming_session_last_extend(s.handle, &disposition, &marginSec, &hasMargin)
+	return ExtendDisposition(disposition), time.Duration(float64(marginSec) * float64(time.Second)), hasMargin != 0
+}

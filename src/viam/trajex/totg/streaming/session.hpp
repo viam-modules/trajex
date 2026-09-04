@@ -38,6 +38,43 @@ namespace viam::trajex::totg::streaming {
 class session {
    public:
     ///
+    /// What became of one `extend()` call. See `extend_result`.
+    ///
+    enum class extend_disposition {
+        /// The batch built the session's first trajectory.
+        first_build,
+        /// A candidate incorporating the batch replaced the active trajectory.
+        pivot,
+        /// A candidate was built, but its divergence from the active trajectory fell at or
+        /// behind the latest emitted sample; the batch was staged for the next rebase.
+        staged_branch_behind,
+        /// A candidate was built and its divergence lay ahead of the latest emitted sample,
+        /// but less than one sample period of it remained to sample; the batch was staged.
+        staged_no_material,
+        /// The session was already locked out (staging non-empty), so no candidate was
+        /// built and the batch went straight into staging.
+        staged_locked_out,
+        /// The batch carried no waypoints beyond the seam; nothing changed.
+        noop,
+    };
+
+    ///
+    /// The outcome of one `extend()` call.
+    ///
+    /// `branch_margin` is the signed gap between the candidate's divergence point and the
+    /// sampling watermark, in global time: `branch_global - current_time()`. Positive means
+    /// the divergence lay that far ahead of the watermark (a pivot was admissible); negative
+    /// means the candidate's re-timing reached that far behind it, forcing a stage. It is
+    /// only present when a candidate was actually built and compared -- `pivot`,
+    /// `staged_branch_behind`, and `staged_no_material`. A locked-out extend skips the
+    /// candidate build entirely, so no branch point exists for it.
+    ///
+    struct extend_result {
+        extend_disposition disposition;
+        std::optional<trajectory::seconds> branch_margin;
+    };
+
+    ///
     /// Constructs a session with the parameters used to build each trajectory and the
     /// sample rate at which samples will be emitted.
     ///
@@ -68,12 +105,24 @@ class session {
     /// after the seam point is dropped.
     ///
     /// @param batch Waypoints to append
+    /// @return The extend's disposition and branch margin (also retrievable afterward via
+    ///         `last_extend_result()` until the next extend)
     /// @throws std::invalid_argument if `batch`'s DOF disagrees with the session's existing
     ///         waypoint DOF, or if its first waypoint does not equal the session's last
     /// @throws Any exception raised by trajectory construction if computing the updated
     ///         trajectory fails. Session state is unchanged in that case.
     ///
-    void extend(const waypoint_accumulator& batch);
+    extend_result extend(const waypoint_accumulator& batch);
+
+    ///
+    /// Returns the result of the most recent successful `extend()` call, or nullopt for a
+    /// fresh session (or one whose only extends threw). Exists so bindings whose extend
+    /// signature cannot carry the result (the C ABI) can fetch it immediately afterward;
+    /// the session's single-threaded ownership makes that read race-free.
+    ///
+    /// @return Result of the most recent successful extend, or nullopt if none has occurred
+    ///
+    std::optional<extend_result> last_extend_result() const noexcept;
 
     ///
     /// Returns the global time of the most recently emitted sample, or zero if no samples
@@ -143,6 +192,29 @@ class session {
     trajectory::seconds active_epoch() const noexcept;
 
     ///
+    /// Returns the total un-emitted trajectory time remaining in the session.
+    ///
+    /// This is the exact remainder of the active trajectory — its global end time
+    /// (`active_epoch() + duration`) minus the global time of the most recently emitted
+    /// sample — plus an estimate of the motion held in staged batches. Staged waypoints
+    /// have no trajectory yet (their timing does not exist until a rebase builds one), so
+    /// their contribution is estimated as the per-segment time to traverse each joint-space
+    /// displacement at the per-DOF velocity limits. That estimate ignores acceleration
+    /// ramps and any non-joint constraints, so while batches are staged the returned value
+    /// is normally a slight underestimate of the time the rebased trajectory will take.
+    ///
+    /// Returns zero for a fresh session and zero once the session is fully drained.
+    ///
+    /// Unlike the active trajectory's own duration, this quantity is continuous across
+    /// pivots, stages, and rebases, which makes it suitable for flow control: a client
+    /// deciding whether to feed the session more waypoints can read it as "how much
+    /// trajectory time is already queued ahead of the sampling cursor".
+    ///
+    /// @return Estimated un-emitted trajectory time remaining in the session
+    ///
+    trajectory::seconds total_remaining_duration() const noexcept;
+
+    ///
     /// Returns the cumulative number of trajectories the session has produced.
     ///
     /// Increments by one each time a new trajectory becomes active: at the first
@@ -169,6 +241,12 @@ class session {
     // exhausted at the next-sample index and staging is non-empty. Returns nullopt when
     // the session is fully drained.
     std::optional<struct trajectory::sample> sample_one_();
+
+    // Velocity-limit lower bound on the time to traverse `batch`'s post-seam waypoints:
+    // each segment contributes its largest per-DOF displacement-over-velocity-limit
+    // ratio. Row 0 is the seam (already part of the chain), so segments run
+    // batch[0]->batch[1] onward; a seam-only batch contributes zero.
+    trajectory::seconds estimate_batch_traversal_time_(const waypoint_accumulator& batch) const;
 
     // Rebuilds the active trajectory from {terminal_pose, ...staged_batches}, advances
     // the epoch by the prior active's duration, clears staging, and increments the
@@ -221,6 +299,13 @@ class session {
     // into the new active during the next rebase.
     std::vector<xt::xarray<double>> staged_batches_;
 
+    // Velocity-limit lower bound on the trajectory time the staged batches will add once
+    // rebased: the sum over staged segments of the joint-space displacement divided by the
+    // per-DOF velocity limits. Accumulated as batches stage, zeroed when a rebase drains
+    // them into the new active (whose exact duration then takes over the accounting in
+    // total_remaining_duration()).
+    trajectory::seconds staged_duration_estimate_{0.0};
+
     // The most recently received waypoint, against which the next extend's seam is
     // bit-exactly validated. Empty (shape (0,)) before the first extend.
     xt::xarray<double> last_waypoint_;
@@ -228,6 +313,10 @@ class session {
     // Cumulative count of trajectories the session has installed as active. Increments
     // on first build, on each pivot, and on each rebase.
     std::size_t generation_count_{0};
+
+    // Result of the most recent successful extend, for last_extend_result(). Not updated
+    // by extends that throw (matching their state-unchanged contract).
+    std::optional<extend_result> last_extend_result_;
 };
 
 }  // namespace viam::trajex::totg::streaming

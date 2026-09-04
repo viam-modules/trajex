@@ -540,6 +540,47 @@ void viam_trajex_totg_streaming_session_has_active_trajectory(const viam_trajex_
 ///
 void viam_trajex_totg_streaming_session_active_duration_sec(const viam_trajex_totg_streaming_session_t* session, double* out);
 
+///
+/// Total un-emitted trajectory time remaining in the session, in seconds: the exact
+/// remainder of the active trajectory (its global end time minus the time of the most
+/// recently emitted sample) plus a velocity-limit estimate of the motion held in staged
+/// batches that no trajectory has been built for yet. While batches are staged the value
+/// is normally a slight underestimate (acceleration ramps and non-joint constraints are
+/// ignored for the staged portion). Zero for a fresh or fully drained session.
+///
+/// Continuous across pivots, stages, and rebases, unlike `active_duration_sec`; use it
+/// for flow control over how much motion is queued ahead of the sampling cursor.
+///
+void viam_trajex_totg_streaming_session_total_remaining_duration_sec(const viam_trajex_totg_streaming_session_t* session,
+                                                                     double* out);
+
+///
+/// Dispositions of one extend call, reported by
+/// `viam_trajex_totg_streaming_session_last_extend`. Values are stable across releases.
+///
+/// @{
+#define VIAM_TRAJEX_TOTG_STREAMING_EXTEND_NONE 0                 /**< No successful extend has occurred yet. */
+#define VIAM_TRAJEX_TOTG_STREAMING_EXTEND_FIRST_BUILD 1          /**< Built the session's first trajectory. */
+#define VIAM_TRAJEX_TOTG_STREAMING_EXTEND_PIVOT 2                /**< Candidate replaced the active trajectory. */
+#define VIAM_TRAJEX_TOTG_STREAMING_EXTEND_STAGED_BRANCH_BEHIND 3 /**< Divergence fell behind the watermark; staged. */
+#define VIAM_TRAJEX_TOTG_STREAMING_EXTEND_STAGED_NO_MATERIAL 4   /**< Under one sample period left to sample; staged. */
+#define VIAM_TRAJEX_TOTG_STREAMING_EXTEND_STAGED_LOCKED_OUT 5    /**< Already locked out; staged without a candidate build. */
+#define VIAM_TRAJEX_TOTG_STREAMING_EXTEND_NOOP 6                 /**< Seam-only batch; nothing changed. */
+/// @}
+
+///
+/// Outcome of the most recent successful extend: `disposition_out` receives one of the
+/// VIAM_TRAJEX_TOTG_STREAMING_EXTEND_* values, `branch_margin_sec_out` the signed gap in
+/// seconds between the candidate's divergence point and the sampling watermark (positive:
+/// divergence lay ahead; negative: the re-timing reached behind it, forcing a stage), and
+/// `has_branch_margin_out` is nonzero iff a candidate was built and compared (pivot,
+/// staged-branch-behind, staged-no-material). `branch_margin_sec_out` is zero when absent.
+///
+void viam_trajex_totg_streaming_session_last_extend(const viam_trajex_totg_streaming_session_t* session,
+                                                    int64_t* disposition_out,
+                                                    double* branch_margin_sec_out,
+                                                    int* has_branch_margin_out);
+
 /// @}
 
 /// @}

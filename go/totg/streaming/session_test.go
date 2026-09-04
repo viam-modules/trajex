@@ -140,6 +140,108 @@ func TestSessionSampleAtLeast(t *testing.T) {
 	test.That(t, sess.CurrentTime(), test.ShouldBeGreaterThanOrEqualTo, horizon)
 }
 
+func TestSessionTotalRemainingDuration(t *testing.T) {
+	opts := buildOptions(t)
+	defer opts.Close()
+	sess, err := streaming.New(opts)
+	test.That(t, err, test.ShouldBeNil)
+	defer sess.Close()
+
+	// Fresh session: nothing remains.
+	test.That(t, sess.TotalRemainingDuration(), test.ShouldEqual, time.Duration(0))
+
+	batch := buildBatch(t, []float64{
+		0.0, 0.0,
+		1.0, 0.0,
+		1.0, 1.0,
+	})
+	defer batch.Close()
+	test.That(t, sess.Extend(context.Background(), batch), test.ShouldBeNil)
+
+	// Nothing sampled yet: the whole active trajectory remains.
+	test.That(t, sess.TotalRemainingDuration(), test.ShouldEqual, sess.ActiveDuration())
+
+	// Drain the active trajectory completely.
+	out, err := trajex.NewTensorMap()
+	test.That(t, err, test.ShouldBeNil)
+	defer out.Close()
+	test.That(t, sess.SampleAtLeast(context.Background(), time.Hour, out), test.ShouldBeNil)
+	test.That(t, sess.TotalRemainingDuration(), test.ShouldBeLessThan, time.Millisecond)
+
+	// Extending an exhausted session stages the batch (no new trajectory yet), but the
+	// motion it holds must still be reported: two segments of 1.0 rad at the 1.0 rad/s
+	// velocity limit is a 2s estimate.
+	staged := buildBatch(t, []float64{
+		1.0, 1.0,
+		2.0, 1.0,
+		2.0, 2.0,
+	})
+	defer staged.Close()
+	gen := sess.GenerationCount()
+	test.That(t, sess.Extend(context.Background(), staged), test.ShouldBeNil)
+	test.That(t, sess.GenerationCount(), test.ShouldEqual, gen) // staged, not installed
+	remaining := sess.TotalRemainingDuration()
+	test.That(t, remaining, test.ShouldBeGreaterThan, 1900*time.Millisecond)
+	test.That(t, remaining, test.ShouldBeLessThan, 2100*time.Millisecond)
+
+	// Draining again absorbs the staged batch into a real trajectory and empties it.
+	test.That(t, sess.SampleAtLeast(context.Background(), time.Hour, out), test.ShouldBeNil)
+	test.That(t, sess.GenerationCount(), test.ShouldBeGreaterThan, gen)
+	test.That(t, sess.TotalRemainingDuration(), test.ShouldBeLessThan, time.Millisecond)
+}
+
+func TestSessionLastExtend(t *testing.T) {
+	opts := buildOptions(t)
+	defer opts.Close()
+	sess, err := streaming.New(opts)
+	test.That(t, err, test.ShouldBeNil)
+	defer sess.Close()
+
+	disposition, _, hasMargin := sess.LastExtend()
+	test.That(t, disposition, test.ShouldEqual, streaming.ExtendNone)
+	test.That(t, hasMargin, test.ShouldBeFalse)
+
+	batch := buildBatch(t, []float64{
+		0.0, 0.0,
+		1.0, 0.0,
+		1.0, 1.0,
+	})
+	defer batch.Close()
+	test.That(t, sess.Extend(context.Background(), batch), test.ShouldBeNil)
+	disposition, _, hasMargin = sess.LastExtend()
+	test.That(t, disposition, test.ShouldEqual, streaming.ExtendFirstBuild)
+	test.That(t, hasMargin, test.ShouldBeFalse)
+
+	// Exhaust the active trajectory, then extend: the divergence necessarily falls at or
+	// behind the watermark, so the batch stages and the margin is non-positive.
+	out, err := trajex.NewTensorMap()
+	test.That(t, err, test.ShouldBeNil)
+	defer out.Close()
+	test.That(t, sess.SampleAtLeast(context.Background(), time.Hour, out), test.ShouldBeNil)
+
+	staged := buildBatch(t, []float64{
+		1.0, 1.0,
+		2.0, 1.0,
+	})
+	defer staged.Close()
+	test.That(t, sess.Extend(context.Background(), staged), test.ShouldBeNil)
+	disposition, margin, hasMargin := sess.LastExtend()
+	test.That(t, disposition, test.ShouldEqual, streaming.ExtendStagedBranchBehind)
+	test.That(t, hasMargin, test.ShouldBeTrue)
+	test.That(t, margin, test.ShouldBeLessThanOrEqualTo, time.Duration(0))
+
+	// A further extend while locked out skips the candidate build: no margin exists.
+	locked := buildBatch(t, []float64{
+		2.0, 1.0,
+		2.0, 2.0,
+	})
+	defer locked.Close()
+	test.That(t, sess.Extend(context.Background(), locked), test.ShouldBeNil)
+	disposition, _, hasMargin = sess.LastExtend()
+	test.That(t, disposition, test.ShouldEqual, streaming.ExtendStagedLockedOut)
+	test.That(t, hasMargin, test.ShouldBeFalse)
+}
+
 func TestSessionExtendCtxCancel(t *testing.T) {
 	opts := buildOptions(t)
 	defer opts.Close()

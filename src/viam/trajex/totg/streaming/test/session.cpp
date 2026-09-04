@@ -864,4 +864,133 @@ BOOST_AUTO_TEST_CASE(final_emitted_sample_after_rebase_lies_at_rebased_terminal_
 
 BOOST_AUTO_TEST_SUITE_END()  // terminal_sampling
 
+BOOST_AUTO_TEST_SUITE(total_remaining)
+
+BOOST_AUTO_TEST_CASE(fresh_session_reports_zero) {
+    auto sess = fresh_session();
+    BOOST_CHECK_EQUAL(sess.total_remaining_duration().count(), 0.0);
+}
+
+BOOST_AUTO_TEST_CASE(tracks_active_trajectory_through_sampling) {
+    auto sess = fresh_session();
+    const pinned_waypoints initial(three_waypoints());
+    sess.extend(initial.accumulator());
+
+    // Nothing sampled yet: the whole active trajectory remains.
+    const auto duration = sess.active_trajectory()->duration();
+    BOOST_CHECK_CLOSE(sess.total_remaining_duration().count(), duration.count(), 1e-9);
+
+    // Sampling shrinks it to exactly (end - current_time).
+    sess.sample_at_least(trajectory::seconds{0.1});
+    BOOST_CHECK_CLOSE(sess.total_remaining_duration().count(), (duration - sess.current_time()).count(), 1e-9);
+
+    // Fully drained: nothing remains.
+    sess.sample_at_least(duration * 2.0);
+    BOOST_CHECK_SMALL(sess.total_remaining_duration().count(), 1e-9);
+}
+
+BOOST_AUTO_TEST_CASE(pivot_keeps_it_continuous) {
+    auto sess = fresh_session();
+    const pinned_waypoints initial(three_waypoints());
+    sess.extend(initial.accumulator());
+    sess.sample_next(1);
+    const auto before = sess.total_remaining_duration();
+
+    const pinned_waypoints extension(xt::xarray<double>{{1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}});
+    sess.extend(extension.accumulator());
+    BOOST_REQUIRE_EQUAL(sess.trajectory_generation_count(), 2U);  // pivot happened
+
+    // The pivot queued more motion, and the accounting stays anchored to the new active:
+    // exactly its global end minus the unchanged watermark.
+    const auto after = sess.total_remaining_duration();
+    BOOST_CHECK_GT(after.count(), before.count());
+    const auto expected = sess.active_epoch() + sess.active_trajectory()->duration() - sess.current_time();
+    BOOST_CHECK_CLOSE(after.count(), expected.count(), 1e-9);
+}
+
+BOOST_AUTO_TEST_CASE(staged_batches_are_counted_as_a_lower_bound) {
+    // This is the case the accessor exists for: motion held in staged batches is invisible
+    // to active_trajectory()/current_time() arithmetic but must appear in the remaining
+    // duration, or a flow-control client will keep feeding a session that is already deep
+    // in backlog.
+    auto sess = fresh_session();
+    const pinned_waypoints initial(three_waypoints());
+    sess.extend(initial.accumulator());
+    sess.sample_at_least(sess.active_trajectory()->duration());  // exhaust the active
+    BOOST_CHECK_SMALL(sess.total_remaining_duration().count(), 1e-9);
+
+    const pinned_waypoints extension(xt::xarray<double>{{1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}});
+    sess.extend(extension.accumulator());
+    BOOST_REQUIRE_EQUAL(sess.trajectory_generation_count(), 1U);  // staged, not pivoted
+
+    // Two staged segments, each 1.0 rad of displacement at a 2.0 rad/s limit: the
+    // velocity-limit estimate is exactly 1.0s.
+    const auto staged_estimate = sess.total_remaining_duration();
+    BOOST_CHECK_CLOSE(staged_estimate.count(), 1.0, 1e-6);
+
+    // The next sample triggers the rebase; the estimate must not have exceeded the
+    // duration TOTG actually assigns (acceleration ramps only add time).
+    sess.sample_next(1);
+    BOOST_REQUIRE_EQUAL(sess.trajectory_generation_count(), 2U);
+    BOOST_CHECK_LE(staged_estimate.count(), sess.active_trajectory()->duration().count());
+
+    // And once the rebase installed a real trajectory, the exact accounting takes over
+    // and drains to zero.
+    sess.sample_at_least(sess.active_trajectory()->duration() * 2.0);
+    BOOST_CHECK_SMALL(sess.total_remaining_duration().count(), 1e-9);
+}
+
+BOOST_AUTO_TEST_SUITE_END()  // total_remaining
+
+BOOST_AUTO_TEST_SUITE(extend_dispositions)
+
+BOOST_AUTO_TEST_CASE(fresh_session_has_no_last_extend) {
+    auto sess = fresh_session();
+    BOOST_CHECK(!sess.last_extend_result().has_value());
+}
+
+BOOST_AUTO_TEST_CASE(first_build_then_pivot_reports_positive_margin) {
+    auto sess = fresh_session();
+    const pinned_waypoints initial(three_waypoints());
+    const auto first = sess.extend(initial.accumulator());
+    BOOST_CHECK(first.disposition == streaming::session::extend_disposition::first_build);
+    BOOST_CHECK(!first.branch_margin.has_value());
+
+    // One sample of watermark, then an extend whose branch lies well ahead: a pivot,
+    // with the margin reporting how far ahead.
+    sess.sample_next(1);
+    const pinned_waypoints extension(xt::xarray<double>{{1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}});
+    const auto pivoted = sess.extend(extension.accumulator());
+    BOOST_CHECK(pivoted.disposition == streaming::session::extend_disposition::pivot);
+    BOOST_REQUIRE(pivoted.branch_margin.has_value());
+    BOOST_CHECK_GT(pivoted.branch_margin->count(), 0.0);
+    // The accessor agrees with the returned result.
+    const auto last = sess.last_extend_result();
+    BOOST_REQUIRE(last.has_value());
+    BOOST_CHECK(last->disposition == streaming::session::extend_disposition::pivot);
+    BOOST_CHECK_EQUAL(last->branch_margin->count(), pivoted.branch_margin->count());
+}
+
+BOOST_AUTO_TEST_CASE(stage_reports_non_positive_margin_and_lockout_reports_none) {
+    auto sess = fresh_session();
+    const pinned_waypoints initial(three_waypoints());
+    sess.extend(initial.accumulator());
+    sess.sample_at_least(sess.active_trajectory()->duration());  // watermark to the end
+
+    // Branch necessarily at or behind the watermark: staged, with the margin saying so.
+    const pinned_waypoints extension(xt::xarray<double>{{1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}});
+    const auto staged = sess.extend(extension.accumulator());
+    BOOST_CHECK(staged.disposition == streaming::session::extend_disposition::staged_branch_behind);
+    BOOST_REQUIRE(staged.branch_margin.has_value());
+    BOOST_CHECK_LE(staged.branch_margin->count(), 0.0);
+
+    // Locked out now: no candidate is built, so there is no branch and no margin.
+    const pinned_waypoints more(xt::xarray<double>{{2.0, 2.0}, {3.0, 2.0}});
+    const auto locked = sess.extend(more.accumulator());
+    BOOST_CHECK(locked.disposition == streaming::session::extend_disposition::staged_locked_out);
+    BOOST_CHECK(!locked.branch_margin.has_value());
+}
+
+BOOST_AUTO_TEST_SUITE_END()  // extend_dispositions
+
 BOOST_AUTO_TEST_SUITE_END()  // streaming_session_tests
