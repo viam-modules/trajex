@@ -703,4 +703,9 @@ void viam_trajex_totg_streaming_session_active_duration_sec(const viam_trajex_to
     *out = active ? active->duration().count() : 0.0;
 }
 
+void viam_trajex_totg_streaming_session_total_remaining_duration_sec(const viam_trajex_totg_streaming_session_t* session,
+                                                                     double* out) {
+    *out = session->sess.total_remaining_duration().count();
+}
+
 }  // extern "C"

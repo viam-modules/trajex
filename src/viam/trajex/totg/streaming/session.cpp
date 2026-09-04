@@ -187,6 +187,7 @@ void session::extend(const waypoint_accumulator& batch) {
     // Already locked-out: skip the candidate build, just record the new waypoints in staging.
     if (!staged_batches_.empty()) {
         if (post_seam_count > 0) {
+            staged_duration_estimate_ += estimate_batch_traversal_time_(batch);
             staged_batches_.push_back(accumulator_tail_to_xarray(batch, 1));
         }
         last_waypoint_ = view_to_xarray(batch.at(batch.size() - 1));
@@ -231,6 +232,7 @@ void session::extend(const waypoint_accumulator& batch) {
         sampler_.emplace(std::move(new_sampler));
         ++generation_count_;
     } else {
+        staged_duration_estimate_ += estimate_batch_traversal_time_(batch);
         staged_batches_.push_back(accumulator_tail_to_xarray(batch, 1));
         last_waypoint_ = view_to_xarray(batch.at(batch.size() - 1));
     }
@@ -275,6 +277,32 @@ const trajectory* session::active_trajectory() const noexcept {
 
 trajectory::seconds session::active_epoch() const noexcept {
     return epoch_;
+}
+
+trajectory::seconds session::total_remaining_duration() const noexcept {
+    auto remaining = staged_duration_estimate_;
+    if (active_) {
+        const auto active_end = epoch_ + active_->duration();
+        if (active_end > current_time_) {
+            remaining += active_end - current_time_;
+        }
+    }
+    return remaining;
+}
+
+trajectory::seconds session::estimate_batch_traversal_time_(const waypoint_accumulator& batch) const {
+    const auto& max_velocity = trajectory_options_.max_velocity;
+    double total_sec = 0.0;
+    for (std::size_t i = 1; i < batch.size(); ++i) {
+        const auto& prev = batch.at(i - 1);
+        const auto& next = batch.at(i);
+        double segment_sec = 0.0;
+        for (std::size_t j = 0; j < batch.dof(); ++j) {
+            segment_sec = std::max(segment_sec, std::abs(next(j) - prev(j)) / max_velocity(j));
+        }
+        total_sec += segment_sec;
+    }
+    return trajectory::seconds{total_sec};
 }
 
 std::size_t session::trajectory_generation_count() const noexcept {
@@ -352,6 +380,7 @@ void session::rebase_() {
     sampler_.emplace(std::move(new_sampler));
     epoch_ = epoch_ + old_duration;
     staged_batches_.clear();
+    staged_duration_estimate_ = trajectory::seconds{0.0};
     ++generation_count_;
 }
 

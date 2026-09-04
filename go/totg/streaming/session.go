@@ -175,3 +175,20 @@ func (s *Session) ActiveDuration() time.Duration {
 	C.viam_trajex_totg_streaming_session_active_duration_sec(s.handle, &out)
 	return time.Duration(float64(out) * float64(time.Second))
 }
+
+// TotalRemainingDuration returns the total un-emitted trajectory time remaining
+// in the session: the exact remainder of the active trajectory plus a
+// velocity-limit estimate of the motion held in staged batches that no
+// trajectory has been built for yet. While batches are staged the value is
+// normally a slight underestimate (acceleration ramps and non-joint constraints
+// are ignored for the staged portion). Zero for a fresh or fully drained
+// session.
+//
+// Unlike ActiveDuration, this quantity is continuous across the session's
+// internal pivots, stages, and rebases; use it for flow control over how much
+// motion is queued ahead of the sampling cursor.
+func (s *Session) TotalRemainingDuration() time.Duration {
+	var out C.double
+	C.viam_trajex_totg_streaming_session_total_remaining_duration_sec(s.handle, &out)
+	return time.Duration(float64(out) * float64(time.Second))
+}

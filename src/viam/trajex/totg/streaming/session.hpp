@@ -143,6 +143,29 @@ class session {
     trajectory::seconds active_epoch() const noexcept;
 
     ///
+    /// Returns the total un-emitted trajectory time remaining in the session.
+    ///
+    /// This is the exact remainder of the active trajectory — its global end time
+    /// (`active_epoch() + duration`) minus the global time of the most recently emitted
+    /// sample — plus an estimate of the motion held in staged batches. Staged waypoints
+    /// have no trajectory yet (their timing does not exist until a rebase builds one), so
+    /// their contribution is estimated as the per-segment time to traverse each joint-space
+    /// displacement at the per-DOF velocity limits. That estimate ignores acceleration
+    /// ramps and any non-joint constraints, so while batches are staged the returned value
+    /// is normally a slight underestimate of the time the rebased trajectory will take.
+    ///
+    /// Returns zero for a fresh session and zero once the session is fully drained.
+    ///
+    /// Unlike the active trajectory's own duration, this quantity is continuous across
+    /// pivots, stages, and rebases, which makes it suitable for flow control: a client
+    /// deciding whether to feed the session more waypoints can read it as "how much
+    /// trajectory time is already queued ahead of the sampling cursor".
+    ///
+    /// @return Estimated un-emitted trajectory time remaining in the session
+    ///
+    trajectory::seconds total_remaining_duration() const noexcept;
+
+    ///
     /// Returns the cumulative number of trajectories the session has produced.
     ///
     /// Increments by one each time a new trajectory becomes active: at the first
@@ -169,6 +192,12 @@ class session {
     // exhausted at the next-sample index and staging is non-empty. Returns nullopt when
     // the session is fully drained.
     std::optional<struct trajectory::sample> sample_one_();
+
+    // Velocity-limit lower bound on the time to traverse `batch`'s post-seam waypoints:
+    // each segment contributes its largest per-DOF displacement-over-velocity-limit
+    // ratio. Row 0 is the seam (already part of the chain), so segments run
+    // batch[0]->batch[1] onward; a seam-only batch contributes zero.
+    trajectory::seconds estimate_batch_traversal_time_(const waypoint_accumulator& batch) const;
 
     // Rebuilds the active trajectory from {terminal_pose, ...staged_batches}, advances
     // the epoch by the prior active's duration, clears staging, and increments the
@@ -220,6 +249,13 @@ class session {
     // Batches received while locked-out, each pre-stripped of its seam point. Drained
     // into the new active during the next rebase.
     std::vector<xt::xarray<double>> staged_batches_;
+
+    // Velocity-limit lower bound on the trajectory time the staged batches will add once
+    // rebased: the sum over staged segments of the joint-space displacement divided by the
+    // per-DOF velocity limits. Accumulated as batches stage, zeroed when a rebase drains
+    // them into the new active (whose exact duration then takes over the accounting in
+    // total_remaining_duration()).
+    trajectory::seconds staged_duration_estimate_{0.0};
 
     // The most recently received waypoint, against which the next extend's seam is
     // bit-exactly validated. Empty (shape (0,)) before the first extend.
