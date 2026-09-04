@@ -942,4 +942,55 @@ BOOST_AUTO_TEST_CASE(staged_batches_are_counted_as_a_lower_bound) {
 
 BOOST_AUTO_TEST_SUITE_END()  // total_remaining
 
+BOOST_AUTO_TEST_SUITE(extend_dispositions)
+
+BOOST_AUTO_TEST_CASE(fresh_session_has_no_last_extend) {
+    auto sess = fresh_session();
+    BOOST_CHECK(!sess.last_extend_result().has_value());
+}
+
+BOOST_AUTO_TEST_CASE(first_build_then_pivot_reports_positive_margin) {
+    auto sess = fresh_session();
+    const pinned_waypoints initial(three_waypoints());
+    const auto first = sess.extend(initial.accumulator());
+    BOOST_CHECK(first.disposition == streaming::session::extend_disposition::first_build);
+    BOOST_CHECK(!first.branch_margin.has_value());
+
+    // One sample of watermark, then an extend whose branch lies well ahead: a pivot,
+    // with the margin reporting how far ahead.
+    sess.sample_next(1);
+    const pinned_waypoints extension(xt::xarray<double>{{1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}});
+    const auto pivoted = sess.extend(extension.accumulator());
+    BOOST_CHECK(pivoted.disposition == streaming::session::extend_disposition::pivot);
+    BOOST_REQUIRE(pivoted.branch_margin.has_value());
+    BOOST_CHECK_GT(pivoted.branch_margin->count(), 0.0);
+    // The accessor agrees with the returned result.
+    const auto last = sess.last_extend_result();
+    BOOST_REQUIRE(last.has_value());
+    BOOST_CHECK(last->disposition == streaming::session::extend_disposition::pivot);
+    BOOST_CHECK_EQUAL(last->branch_margin->count(), pivoted.branch_margin->count());
+}
+
+BOOST_AUTO_TEST_CASE(stage_reports_non_positive_margin_and_lockout_reports_none) {
+    auto sess = fresh_session();
+    const pinned_waypoints initial(three_waypoints());
+    sess.extend(initial.accumulator());
+    sess.sample_at_least(sess.active_trajectory()->duration());  // watermark to the end
+
+    // Branch necessarily at or behind the watermark: staged, with the margin saying so.
+    const pinned_waypoints extension(xt::xarray<double>{{1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}});
+    const auto staged = sess.extend(extension.accumulator());
+    BOOST_CHECK(staged.disposition == streaming::session::extend_disposition::staged_branch_behind);
+    BOOST_REQUIRE(staged.branch_margin.has_value());
+    BOOST_CHECK_LE(staged.branch_margin->count(), 0.0);
+
+    // Locked out now: no candidate is built, so there is no branch and no margin.
+    const pinned_waypoints more(xt::xarray<double>{{2.0, 2.0}, {3.0, 2.0}});
+    const auto locked = sess.extend(more.accumulator());
+    BOOST_CHECK(locked.disposition == streaming::session::extend_disposition::staged_locked_out);
+    BOOST_CHECK(!locked.branch_margin.has_value());
+}
+
+BOOST_AUTO_TEST_SUITE_END()  // extend_dispositions
+
 BOOST_AUTO_TEST_SUITE_END()  // streaming_session_tests

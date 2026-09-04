@@ -708,4 +708,40 @@ void viam_trajex_totg_streaming_session_total_remaining_duration_sec(const viam_
     *out = session->sess.total_remaining_duration().count();
 }
 
+void viam_trajex_totg_streaming_session_last_extend(const viam_trajex_totg_streaming_session_t* session,
+                                                    std::int64_t* disposition_out,
+                                                    double* branch_margin_sec_out,
+                                                    int* has_branch_margin_out) {
+    namespace streaming = viam::trajex::totg::streaming;
+    const auto result = session->sess.last_extend_result();
+    if (!result) {
+        *disposition_out = VIAM_TRAJEX_TOTG_STREAMING_EXTEND_NONE;
+        *branch_margin_sec_out = 0.0;
+        *has_branch_margin_out = 0;
+        return;
+    }
+    switch (result->disposition) {
+        case streaming::session::extend_disposition::first_build:
+            *disposition_out = VIAM_TRAJEX_TOTG_STREAMING_EXTEND_FIRST_BUILD;
+            break;
+        case streaming::session::extend_disposition::pivot:
+            *disposition_out = VIAM_TRAJEX_TOTG_STREAMING_EXTEND_PIVOT;
+            break;
+        case streaming::session::extend_disposition::staged_branch_behind:
+            *disposition_out = VIAM_TRAJEX_TOTG_STREAMING_EXTEND_STAGED_BRANCH_BEHIND;
+            break;
+        case streaming::session::extend_disposition::staged_no_material:
+            *disposition_out = VIAM_TRAJEX_TOTG_STREAMING_EXTEND_STAGED_NO_MATERIAL;
+            break;
+        case streaming::session::extend_disposition::staged_locked_out:
+            *disposition_out = VIAM_TRAJEX_TOTG_STREAMING_EXTEND_STAGED_LOCKED_OUT;
+            break;
+        case streaming::session::extend_disposition::noop:
+            *disposition_out = VIAM_TRAJEX_TOTG_STREAMING_EXTEND_NOOP;
+            break;
+    }
+    *branch_margin_sec_out = result->branch_margin ? result->branch_margin->count() : 0.0;
+    *has_branch_margin_out = result->branch_margin ? 1 : 0;
+}
+
 }  // extern "C"

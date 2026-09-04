@@ -38,6 +38,43 @@ namespace viam::trajex::totg::streaming {
 class session {
    public:
     ///
+    /// What became of one `extend()` call. See `extend_result`.
+    ///
+    enum class extend_disposition {
+        /// The batch built the session's first trajectory.
+        first_build,
+        /// A candidate incorporating the batch replaced the active trajectory.
+        pivot,
+        /// A candidate was built, but its divergence from the active trajectory fell at or
+        /// behind the latest emitted sample; the batch was staged for the next rebase.
+        staged_branch_behind,
+        /// A candidate was built and its divergence lay ahead of the latest emitted sample,
+        /// but less than one sample period of it remained to sample; the batch was staged.
+        staged_no_material,
+        /// The session was already locked out (staging non-empty), so no candidate was
+        /// built and the batch went straight into staging.
+        staged_locked_out,
+        /// The batch carried no waypoints beyond the seam; nothing changed.
+        noop,
+    };
+
+    ///
+    /// The outcome of one `extend()` call.
+    ///
+    /// `branch_margin` is the signed gap between the candidate's divergence point and the
+    /// sampling watermark, in global time: `branch_global - current_time()`. Positive means
+    /// the divergence lay that far ahead of the watermark (a pivot was admissible); negative
+    /// means the candidate's re-timing reached that far behind it, forcing a stage. It is
+    /// only present when a candidate was actually built and compared -- `pivot`,
+    /// `staged_branch_behind`, and `staged_no_material`. A locked-out extend skips the
+    /// candidate build entirely, so no branch point exists for it.
+    ///
+    struct extend_result {
+        extend_disposition disposition;
+        std::optional<trajectory::seconds> branch_margin;
+    };
+
+    ///
     /// Constructs a session with the parameters used to build each trajectory and the
     /// sample rate at which samples will be emitted.
     ///
@@ -68,12 +105,24 @@ class session {
     /// after the seam point is dropped.
     ///
     /// @param batch Waypoints to append
+    /// @return The extend's disposition and branch margin (also retrievable afterward via
+    ///         `last_extend_result()` until the next extend)
     /// @throws std::invalid_argument if `batch`'s DOF disagrees with the session's existing
     ///         waypoint DOF, or if its first waypoint does not equal the session's last
     /// @throws Any exception raised by trajectory construction if computing the updated
     ///         trajectory fails. Session state is unchanged in that case.
     ///
-    void extend(const waypoint_accumulator& batch);
+    extend_result extend(const waypoint_accumulator& batch);
+
+    ///
+    /// Returns the result of the most recent successful `extend()` call, or nullopt for a
+    /// fresh session (or one whose only extends threw). Exists so bindings whose extend
+    /// signature cannot carry the result (the C ABI) can fetch it immediately afterward;
+    /// the session's single-threaded ownership makes that read race-free.
+    ///
+    /// @return Result of the most recent successful extend, or nullopt if none has occurred
+    ///
+    std::optional<extend_result> last_extend_result() const noexcept;
 
     ///
     /// Returns the global time of the most recently emitted sample, or zero if no samples
@@ -264,6 +313,10 @@ class session {
     // Cumulative count of trajectories the session has installed as active. Increments
     // on first build, on each pivot, and on each rebase.
     std::size_t generation_count_{0};
+
+    // Result of the most recent successful extend, for last_extend_result(). Not updated
+    // by extends that throw (matching their state-unchanged contract).
+    std::optional<extend_result> last_extend_result_;
 };
 
 }  // namespace viam::trajex::totg::streaming
