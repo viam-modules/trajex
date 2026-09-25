@@ -34,6 +34,7 @@
 #include <viam/trajex/types/arc_length.hpp>
 #include <viam/trajex/types/arc_operations.hpp>
 #include <viam/trajex/types/hertz.hpp>
+#include <viam/trajex/types/xt.hpp>
 
 #if defined(VIAM_TRAJEX_LEGACY_ENABLED)
 #include <Eigen/Core>
@@ -50,6 +51,8 @@ using namespace viam::trajex::totg;
 using viam::trajex::arc_length;
 using viam::trajex::arc_velocity;
 using viam::trajex::degrees_to_radians;
+using viam::trajex::xmatrix;
+using viam::trajex::xvector;
 
 constexpr bool k_log_met_expectations = false;
 
@@ -420,8 +423,8 @@ void validate_trajectory_invariants(const trajectory& traj, double tolerance_per
 //   - Position-velocity consistency: finite difference of position should match trapezoidal
 //     velocity estimate; large discrepancy indicates the two fields are mutually inconsistent
 void validate_joint_kinematics(const trajectory& traj,
-                               const xt::xarray<double>& max_velocity,
-                               const xt::xarray<double>& max_acceleration,
+                               const xvector<>& max_velocity,
+                               const xvector<>& max_acceleration,
                                double tolerance_percent = 0.1) {
     const size_t dof = max_velocity.size();
     const double tol_factor = 1.0 + (tolerance_percent / 100.0);
@@ -489,7 +492,7 @@ struct trajectory_test_fixture {
     composite_integration_observer composite_observer_;
     double validation_tolerance_percent = 0.1;
     size_t dof_;
-    xt::xarray<double> waypoints_;
+    xmatrix<> waypoints_;
 
     // Trajectory-wide expectations (optional)
     struct expected_duration {
@@ -528,22 +531,22 @@ struct trajectory_test_fixture {
     explicit trajectory_test_fixture(size_t dof = 6, double expectation_tolerance_percent = 0.1)
         : expectation_observer_(std::make_shared<expectation_observer>(expectation_tolerance_percent)), dof_(dof) {}
 
-    trajectory_test_fixture& set_waypoints_deg(const xt::xarray<double>& waypoints_deg) {
+    trajectory_test_fixture& set_waypoints_deg(const xmatrix<>& waypoints_deg) {
         waypoints_ = degrees_to_radians(waypoints_deg);
         return *this;
     }
 
-    trajectory_test_fixture& set_waypoints_rad(const xt::xarray<double>& waypoints_rad) {
+    trajectory_test_fixture& set_waypoints_rad(const xmatrix<>& waypoints_rad) {
         waypoints_ = waypoints_rad;
         return *this;
     }
 
-    trajectory_test_fixture& set_max_velocity(const xt::xarray<double>& max_vel) {
+    trajectory_test_fixture& set_max_velocity(const xvector<>& max_vel) {
         traj_opts.max_velocity = max_vel;
         return *this;
     }
 
-    trajectory_test_fixture& set_max_acceleration(const xt::xarray<double>& max_acc) {
+    trajectory_test_fixture& set_max_acceleration(const xvector<>& max_acc) {
         traj_opts.max_acceleration = max_acc;
         return *this;
     }
@@ -617,7 +620,7 @@ struct trajectory_test_fixture {
         return *this;
     }
 
-    void try_legacy_comparison(const xt::xarray<double>& waypoints [[maybe_unused]]) {
+    void try_legacy_comparison(const xmatrix<>& waypoints [[maybe_unused]]) {
 #if defined(VIAM_TRAJEX_LEGACY_ENABLED)
         try {
             // Convert waypoints to legacy format (std::list<Eigen::VectorXd>)
@@ -824,9 +827,9 @@ struct trajectory_test_fixture {
     }
 };
 
-trajectory create_velocity_switching_test_trajectory(const xt::xarray<double>& waypoints_rad,
-                                                     const xt::xarray<double>& max_velocity,
-                                                     const xt::xarray<double>& max_acceleration,
+trajectory create_velocity_switching_test_trajectory(const xmatrix<>& waypoints_rad,
+                                                     const xvector<>& max_velocity,
+                                                     const xvector<>& max_acceleration,
                                                      double max_deviation,
                                                      trajectory::seconds delta,
                                                      trajectory_integration_event_collector& collector) {
@@ -895,8 +898,8 @@ double estimate_eq40_delta(const trajectory& traj, arc_length s) {
 }
 
 // Helper to get UR arm waypoints with reversals for incremental testing
-xt::xarray<double> get_ur_arm_waypoints_with_reversals_deg() {
-    static const xt::xarray<double> waypoints_deg = {
+xmatrix<> get_ur_arm_waypoints_with_reversals_deg() {
+    static const xmatrix<> waypoints_deg = {
         {0.0, 0.0, 0.0, 0.0, 0.0, 0.0},      // 0: Start at zero
         {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 1
         {-45.0, -90.0, 0.0, 0.0, 0.0, 0.0},  // 2
@@ -921,8 +924,8 @@ xt::xarray<double> get_ur_arm_waypoints_with_reversals_deg() {
 // Spiral/rectangle waypoints for the 6-DOF integration regression test. Joints 1-2 trace
 // a series of expanding rectangles while joints 3-4 add 3D motion on the outer loops, then
 // the path collapses symmetrically back toward the origin.
-xt::xarray<double> get_spiral_rectangle_waypoints_deg() {
-    static const xt::xarray<double> waypoints_deg = {
+xmatrix<> get_spiral_rectangle_waypoints_deg() {
+    static const xmatrix<> waypoints_deg = {
         {1.0, 1.0, 1.0, 1.0, 1.0, 1.0},  // prior end position (matches end of path)
         {0.0, 0.0, 0.0, 0.0, 0.0, 0.0},  // origin
 
@@ -977,8 +980,8 @@ xt::xarray<double> get_spiral_rectangle_waypoints_deg() {
 // Constraint profile for parameterized trajectory testing
 struct constraint_profile {
     std::string name;
-    xt::xarray<double> max_velocity;
-    xt::xarray<double> max_acceleration;
+    xvector<> max_velocity;
+    xvector<> max_acceleration;
 };
 
 // Print operator for Boost.Test data framework
@@ -1055,9 +1058,9 @@ double log_uniform(std::mt19937_64& rng, double lo, double hi) {
 }
 
 // Returns xarray of shape {dof} with independent uniform draws from [lo, hi].
-xt::xarray<double> random_xtensor(std::mt19937_64& rng, size_t dof, double lo, double hi) {
+xvector<> random_xtensor(std::mt19937_64& rng, size_t dof, double lo, double hi) {
     std::uniform_real_distribution<double> dist(lo, hi);
-    xt::xarray<double> result = xt::empty<double>({dof});
+    xvector<> result = xt::empty<double>({dof});
     for (size_t i = 0; i < dof; ++i) {
         result(i) = dist(rng);
     }
@@ -1065,8 +1068,8 @@ xt::xarray<double> random_xtensor(std::mt19937_64& rng, size_t dof, double lo, d
 }
 
 // Returns xarray of shape {dof} with independent log-uniform draws from [lo, hi].
-xt::xarray<double> random_xtensor_log_uniform(std::mt19937_64& rng, size_t dof, double lo, double hi) {
-    xt::xarray<double> result = xt::empty<double>({dof});
+xvector<> random_xtensor_log_uniform(std::mt19937_64& rng, size_t dof, double lo, double hi) {
+    xvector<> result = xt::empty<double>({dof});
     for (size_t i = 0; i < dof; ++i) {
         result(i) = log_uniform(rng, lo, hi);
     }
@@ -1124,9 +1127,9 @@ trajectory_test_fixture make_random_fixture(uint64_t seed,
     std::uniform_real_distribution<double> unit_dist(-1.0, 1.0);
 
     // Shape: (k_waypoints_per_run + 1) positions, row 0 is the zero start.
-    xt::xarray<double> waypoints = xt::zeros<double>({static_cast<size_t>(k_waypoints_per_run + 1), dof});
-    xt::xarray<double> current = xt::zeros<double>({dof});
-    xt::xarray<double> last_step = xt::zeros<double>({dof});
+    xmatrix<> waypoints = xt::zeros<double>({static_cast<size_t>(k_waypoints_per_run + 1), dof});
+    xvector<> current = xt::zeros<double>({dof});
+    xvector<> last_step = xt::zeros<double>({dof});
 
     for (int i = 0; i < k_waypoints_per_run; ++i) {
         // Record current position as waypoint i.
@@ -1137,7 +1140,7 @@ trajectory_test_fixture make_random_fixture(uint64_t seed,
         // Both dice are rolled independently; reversal wins if both fire.
         const bool do_reversal = i > 0 && reversal_dist(rng);
         const bool do_colinear = i > 0 && colinear_dist(rng);
-        xt::xarray<double> step = xt::zeros<double>({dof});
+        xvector<> step = xt::zeros<double>({dof});
         if (do_reversal) {
             step = -last_step;
         } else if (do_colinear) {
@@ -1202,7 +1205,7 @@ BOOST_AUTO_TEST_CASE(waypoints_to_samples_smoke_test) {
     using namespace viam::trajex::totg::test;
 
     // 1. Create waypoints
-    const xt::xarray<double> waypoints = {
+    const xmatrix<> waypoints = {
         {0.0, 0.0},  // Start
         {1.0, 0.0},  // Move right
         {1.0, 1.0}   // Move up
@@ -1261,7 +1264,7 @@ BOOST_AUTO_TEST_CASE(cursor_manual_sampling) {
     using viam::trajex::arc_length;
 
     // Create simple trajectory with known integration points
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 1.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 1.0}};
     path p = path::create(waypoints);
 
     std::vector<trajectory::integration_point> points = {
@@ -1295,7 +1298,7 @@ BOOST_AUTO_TEST_CASE(quantized_sampler_end_to_end) {
     // Create trajectory with known integration points
     // Path length = 1.0, duration = 1.0s, constant velocity
     // At 8 Hz: putative = 8, num_samples = 9, dt = 1.0/8 = 0.125 (exact in binary!)
-    xt::xarray<double> waypoints = xt::xarray<double>::from_shape({2, 1});
+    xmatrix<> waypoints = xmatrix<>::from_shape({2, 1});
     waypoints(0, 0) = 0.0;
     waypoints(1, 0) = 1.0;
     path p = path::create(waypoints);
@@ -1351,8 +1354,8 @@ BOOST_DATA_TEST_CASE(ur_arm_incremental_waypoints_with_reversals,
     fixture.set_max_velocity(profile.max_velocity).set_max_acceleration(profile.max_acceleration).set_max_blend_deviation(0.1);
 
     // Extract subset of waypoints for this iteration
-    const xt::xarray<double>& full_waypoints_deg = get_ur_arm_waypoints_with_reversals_deg();
-    const xt::xarray<double> subset_deg = xt::view(full_waypoints_deg, xt::range(0, num_waypoints), xt::all());
+    const xmatrix<>& full_waypoints_deg = get_ur_arm_waypoints_with_reversals_deg();
+    const xmatrix<> subset_deg = xt::view(full_waypoints_deg, xt::range(0, num_waypoints), xt::all());
     fixture.set_waypoints_deg(subset_deg);
 
     // Create and validate (exploratory test - no specific event expectations)
@@ -1472,8 +1475,8 @@ BOOST_AUTO_TEST_CASE(RSDK_12979_nondifferentiable_switching_point_requires_zero_
     // Very high velocity limits (essentially unconstrained)
     // Very low acceleration limits (the actual constraint)
     fixture.enable_legacy_comparison()
-        .set_max_velocity(xt::xarray<double>{0.165, 0.167})
-        .set_max_acceleration(xt::xarray<double>{0.05, 0.04})
+        .set_max_velocity(xvector<>{0.165, 0.167})
+        .set_max_acceleration(xvector<>{0.05, 0.04})
         .set_max_blend_deviation(0.05);  // Enable curves
 
     // Waypoints that create a path with curves where joints have different tangent behavior
@@ -1502,7 +1505,7 @@ BOOST_AUTO_TEST_CASE(trajectory_json_serialization) {
     using namespace viam::trajex::types;
 
     // Create simple path with 3 waypoints
-    const xt::xarray<double> waypoints = {{0.0, 0.0, 0.0}, {1.0, 1.0, 1.0}, {2.0, 0.0, 0.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0, 0.0}, {1.0, 1.0, 1.0}, {2.0, 0.0, 0.0}};
 
     path p = path::create(waypoints, path::options{});
 
@@ -1566,8 +1569,9 @@ BOOST_AUTO_TEST_SUITE(extremal_path_tests)
 // 1 DoF: direct reversal. Path goes A -> B -> A, with a sharp cusp at B.
 // s_dot must reach zero at the cusp; s_ddot should remain non-zero (decelerating in, accelerating out).
 BOOST_DATA_TEST_CASE(one_dof_direct_reversal, EXTREMAL_DATA(1), profile) {
-    // xt::xarray needs explicit shape for 1-DoF to disambiguate 1D vs 2D constructors.
-    auto wp = xt::xarray<double>::from_shape({3, 1});
+    // The shape is given explicitly because at 1 DoF a brace literal cannot distinguish a
+    // three-row, one-column matrix from a three-element vector.
+    auto wp = xmatrix<>::from_shape({3, 1});
     wp(0, 0) = 0.0;
     wp(1, 0) = 1.0;
     wp(2, 0) = 0.0;
@@ -1584,7 +1588,7 @@ BOOST_DATA_TEST_CASE(one_dof_direct_reversal, EXTREMAL_DATA(1), profile) {
 
 // 1 DoF: exact colinear. Middle point lies exactly on the line between start and end.
 BOOST_DATA_TEST_CASE(one_dof_colinear, EXTREMAL_DATA(1), profile) {
-    auto wp = xt::xarray<double>::from_shape({3, 1});
+    auto wp = xmatrix<>::from_shape({3, 1});
     wp(0, 0) = 0.0;
     wp(1, 0) = 0.5;
     wp(2, 0) = 1.0;
@@ -1768,7 +1772,7 @@ BOOST_DATA_TEST_CASE(two_dof_asymmetric_blend_tight_loose, EXTREMAL_DATA(2), pro
 // 1 DoF: two successive reversals. Path goes A -> B -> A -> B, with cusps at B and then A.
 // Tests that the algorithm handles multiple chained cusps and still ends with s_dot=0.
 BOOST_DATA_TEST_CASE(one_dof_double_reversal, EXTREMAL_DATA(1), profile) {
-    auto wp = xt::xarray<double>::from_shape({4, 1});
+    auto wp = xmatrix<>::from_shape({4, 1});
     wp(0, 0) = 0.0;
     wp(1, 0) = 1.0;
     wp(2, 0) = 0.0;
@@ -1820,8 +1824,8 @@ BOOST_AUTO_TEST_CASE(RSDK_13450_nonfirst_extremum_is_switching_point) {
     // the expectation is that fixing RSDK-12981 will remove the need for this.
     fixture.validation_tolerance_percent *= 15;
 
-    const xt::xarray<double> max_velocity = {100.0, 100.0, 100.0, 100.0, 100.0};
-    const xt::xarray<double> max_acceleration = {6, 0.75, 2, 0.5, 4};
+    const xvector<> max_velocity = {100.0, 100.0, 100.0, 100.0, 100.0};
+    const xvector<> max_acceleration = {6, 0.75, 2, 0.5, 4};
     fixture.set_max_velocity(max_velocity)
         .set_max_acceleration(max_acceleration)
         .set_max_blend_deviation(0.1)
@@ -1901,9 +1905,7 @@ BOOST_AUTO_TEST_CASE(sharp_velocity_curve_drop_produces_velocity_escape) {
     // then the curve drops sharply.
     trajectory_test_fixture fixture(2);
 
-    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08})
-        .set_max_acceleration(xt::xarray<double>{10.0, 10.0})
-        .set_max_blend_deviation(0.03);
+    fixture.set_max_velocity(xvector<>{0.5, 0.08}).set_max_acceleration(xvector<>{10.0, 10.0}).set_max_blend_deviation(0.03);
 
     fixture.set_waypoints_rad({{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}});
 
@@ -1937,9 +1939,7 @@ BOOST_AUTO_TEST_CASE(rising_velocity_curve_no_velocity_switching_point) {
     // the expectation is that fixing RSDK-12981 will remove the need for this.
     fixture.validation_tolerance_percent *= 3;
 
-    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08})
-        .set_max_acceleration(xt::xarray<double>{10.0, 10.0})
-        .set_max_blend_deviation(0.03);
+    fixture.set_max_velocity(xvector<>{0.5, 0.08}).set_max_acceleration(xvector<>{10.0, 10.0}).set_max_blend_deviation(0.03);
 
     fixture.set_waypoints_rad({{0.0, 0.0}, {0.0, 1.0}, {1.0, 1.0}});
 
@@ -1967,9 +1967,7 @@ BOOST_AUTO_TEST_CASE(gradual_velocity_curve_drop_bisection_accuracy) {
     // drops more gradually across the blend region.
     trajectory_test_fixture fixture(2);
 
-    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08})
-        .set_max_acceleration(xt::xarray<double>{10.0, 10.0})
-        .set_max_blend_deviation(0.05);
+    fixture.set_max_velocity(xvector<>{0.5, 0.08}).set_max_acceleration(xvector<>{10.0, 10.0}).set_max_blend_deviation(0.05);
 
     fixture.set_waypoints_rad({{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}});
 
@@ -1984,9 +1982,9 @@ BOOST_AUTO_TEST_CASE(gradual_velocity_curve_drop_bisection_accuracy) {
     fixture.create_and_validate();
 
     trajectory_integration_event_collector collector;
-    const trajectory observed_traj = create_velocity_switching_test_trajectory(xt::xarray<double>{{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}},
-                                                                               xt::xarray<double>{0.5, 0.08},
-                                                                               xt::xarray<double>{10.0, 10.0},
+    const trajectory observed_traj = create_velocity_switching_test_trajectory(xmatrix<>{{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}},
+                                                                               xvector<>{0.5, 0.08},
+                                                                               xvector<>{10.0, 10.0},
                                                                                0.05,
                                                                                trajectory::seconds{0.001},
                                                                                collector);
@@ -2032,9 +2030,7 @@ BOOST_AUTO_TEST_CASE(multiple_velocity_drops_finds_first_switching_point) {
     // the expectation is that fixing RSDK-12981 will remove the need for this.
     fixture.validation_tolerance_percent *= 2;
 
-    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08})
-        .set_max_acceleration(xt::xarray<double>{10.0, 10.0})
-        .set_max_blend_deviation(0.03);
+    fixture.set_max_velocity(xvector<>{0.5, 0.08}).set_max_acceleration(xvector<>{10.0, 10.0}).set_max_blend_deviation(0.03);
 
     fixture.set_waypoints_rad({{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}});
 
@@ -2072,9 +2068,7 @@ BOOST_AUTO_TEST_CASE(multiple_velocity_escapes_wider_blends) {
     // the expectation is that fixing RSDK-12981 will remove the need for this.
     fixture.validation_tolerance_percent *= 2;
 
-    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08})
-        .set_max_acceleration(xt::xarray<double>{10.0, 10.0})
-        .set_max_blend_deviation(0.05);
+    fixture.set_max_velocity(xvector<>{0.5, 0.08}).set_max_acceleration(xvector<>{10.0, 10.0}).set_max_blend_deviation(0.05);
 
     // Three turns with moderate blend radius.
     fixture.set_waypoints_rad({{0.0, 0.0}, {0.5, 0.0}, {0.5, 0.5}, {1.0, 0.5}, {1.0, 1.0}});
@@ -2108,9 +2102,7 @@ BOOST_AUTO_TEST_CASE(constant_velocity_curve_no_switching_point) {
     // Straight line -- no blends, constant q', constant velocity limit.
     trajectory_test_fixture fixture(2);
 
-    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.5})
-        .set_max_acceleration(xt::xarray<double>{10.0, 10.0})
-        .set_max_blend_deviation(0.1);
+    fixture.set_max_velocity(xvector<>{0.5, 0.5}).set_max_acceleration(xvector<>{10.0, 10.0}).set_max_blend_deviation(0.1);
 
     // Diagonal straight line: both joints move equally, q' = (1/sqrt(2), 1/sqrt(2)).
     fixture.set_waypoints_rad({{0.0, 0.0}, {1.0, 1.0}});
@@ -2139,9 +2131,7 @@ BOOST_AUTO_TEST_CASE(velocity_switching_point_near_path_start) {
     // ensures the trajectory reaches the velocity curve on the short first segment.
     trajectory_test_fixture fixture(2);
 
-    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08})
-        .set_max_acceleration(xt::xarray<double>{10.0, 10.0})
-        .set_max_blend_deviation(0.03);
+    fixture.set_max_velocity(xvector<>{0.5, 0.08}).set_max_acceleration(xvector<>{10.0, 10.0}).set_max_blend_deviation(0.03);
 
     // Moderate first segment (0.5 rad), then 90 deg turn.
     fixture.set_waypoints_rad({{0.0, 0.0}, {0.5, 0.0}, {0.5, 1.0}});
@@ -2168,9 +2158,9 @@ BOOST_AUTO_TEST_CASE(eq40_sign_change_brackets_velocity_escape_switching_point) 
     using namespace viam::trajex::types;
 
     trajectory_integration_event_collector collector;
-    const trajectory traj = create_velocity_switching_test_trajectory(xt::xarray<double>{{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}},
-                                                                      xt::xarray<double>{0.5, 0.08},
-                                                                      xt::xarray<double>{10.0, 10.0},
+    const trajectory traj = create_velocity_switching_test_trajectory(xmatrix<>{{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}},
+                                                                      xvector<>{0.5, 0.08},
+                                                                      xvector<>{10.0, 10.0},
                                                                       0.03,
                                                                       trajectory::seconds{0.001},
                                                                       collector);
@@ -2203,9 +2193,9 @@ BOOST_AUTO_TEST_CASE(rising_velocity_curve_has_no_eq40_escape_transition) {
     using namespace viam::trajex::types;
 
     trajectory_integration_event_collector collector;
-    const trajectory traj = create_velocity_switching_test_trajectory(xt::xarray<double>{{0.0, 0.0}, {0.0, 1.0}, {1.0, 1.0}},
-                                                                      xt::xarray<double>{0.5, 0.08},
-                                                                      xt::xarray<double>{10.0, 10.0},
+    const trajectory traj = create_velocity_switching_test_trajectory(xmatrix<>{{0.0, 0.0}, {0.0, 1.0}, {1.0, 1.0}},
+                                                                      xvector<>{0.5, 0.08},
+                                                                      xvector<>{10.0, 10.0},
                                                                       0.03,
                                                                       trajectory::seconds{0.001},
                                                                       collector);
@@ -2253,13 +2243,12 @@ BOOST_AUTO_TEST_CASE(multiple_velocity_escapes_are_ordered_and_feasible) {
     using namespace viam::trajex::types;
 
     trajectory_integration_event_collector collector;
-    const trajectory traj =
-        create_velocity_switching_test_trajectory(xt::xarray<double>{{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}},
-                                                  xt::xarray<double>{0.5, 0.08},
-                                                  xt::xarray<double>{10.0, 10.0},
-                                                  0.03,
-                                                  trajectory::seconds{0.001},
-                                                  collector);
+    const trajectory traj = create_velocity_switching_test_trajectory(xmatrix<>{{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}},
+                                                                      xvector<>{0.5, 0.08},
+                                                                      xvector<>{10.0, 10.0},
+                                                                      0.03,
+                                                                      trajectory::seconds{0.001},
+                                                                      collector);
 
     validate_trajectory_invariants(traj);
 
@@ -2288,9 +2277,9 @@ BOOST_AUTO_TEST_CASE(near_start_velocity_escape_has_eq40_sign_bracket) {
     using namespace viam::trajex::types;
 
     trajectory_integration_event_collector collector;
-    const trajectory traj = create_velocity_switching_test_trajectory(xt::xarray<double>{{0.0, 0.0}, {0.5, 0.0}, {0.5, 1.0}},
-                                                                      xt::xarray<double>{0.5, 0.08},
-                                                                      xt::xarray<double>{10.0, 10.0},
+    const trajectory traj = create_velocity_switching_test_trajectory(xmatrix<>{{0.0, 0.0}, {0.5, 0.0}, {0.5, 1.0}},
+                                                                      xvector<>{0.5, 0.08},
+                                                                      xvector<>{10.0, 10.0},
                                                                       0.03,
                                                                       trajectory::seconds{0.001},
                                                                       collector);
@@ -2331,11 +2320,11 @@ BOOST_AUTO_TEST_CASE(boundary_produces_discontinuous_velocity_limit) {
     // avoids backward-integration failure.
     trajectory_integration_event_collector collector;
     const trajectory traj =
-        create_velocity_switching_test_trajectory(xt::xarray<double>{{0.0, 0.0}, {1.0, 0.0}, {1.866, 0.5}},
-                                                  xt::xarray<double>{0.5, 0.1},  // 5:1 ratio
-                                                  xt::xarray<double>{3.0, 3.0},  // accel tuned so c41 holds and trajectory constructs
-                                                  0.0007,                        // kappa ~= 49 for 30 deg turn
-                                                  trajectory::seconds{0.001},    // normal step
+        create_velocity_switching_test_trajectory(xmatrix<>{{0.0, 0.0}, {1.0, 0.0}, {1.866, 0.5}},
+                                                  xvector<>{0.5, 0.1},         // 5:1 ratio
+                                                  xvector<>{3.0, 3.0},         // accel tuned so c41 holds and trajectory constructs
+                                                  0.0007,                      // kappa ~= 49 for 30 deg turn
+                                                  trajectory::seconds{0.001},  // normal step
                                                   collector);
 
     validate_trajectory_invariants(traj);
@@ -2362,13 +2351,12 @@ BOOST_AUTO_TEST_CASE(both_discontinuous_velocity_limit_and_velocity_escape) {
     // First turn (30 deg) triggers discontinuous velocity limit (same as Case 12).
     // Second turn (90 deg, fast->slow) triggers continuous velocity escape.
     trajectory_integration_event_collector collector;
-    const trajectory traj =
-        create_velocity_switching_test_trajectory(xt::xarray<double>{{0.0, 0.0}, {1.0, 0.0}, {1.866, 0.5}, {1.866, 1.5}},
-                                                  xt::xarray<double>{0.5, 0.1},
-                                                  xt::xarray<double>{3.0, 3.0},
-                                                  0.0007,
-                                                  trajectory::seconds{0.001},
-                                                  collector);
+    const trajectory traj = create_velocity_switching_test_trajectory(xmatrix<>{{0.0, 0.0}, {1.0, 0.0}, {1.866, 0.5}, {1.866, 1.5}},
+                                                                      xvector<>{0.5, 0.1},
+                                                                      xvector<>{3.0, 3.0},
+                                                                      0.0007,
+                                                                      trajectory::seconds{0.001},
+                                                                      collector);
 
     validate_trajectory_invariants(traj);
 
@@ -2396,13 +2384,12 @@ BOOST_AUTO_TEST_CASE(multi_turn_low_accel_switching_point_search) {
 
     trajectory_integration_event_collector collector;
     // Two 90-degree turns with low acceleration and asymmetric velocity limits.
-    const trajectory traj =
-        create_velocity_switching_test_trajectory(xt::xarray<double>{{0.0, 0.0}, {0.5, 0.0}, {0.5, 0.5}, {1.0, 0.5}, {1.0, 1.0}},
-                                                  xt::xarray<double>{0.5, 0.08},  // asymmetric velocity
-                                                  xt::xarray<double>{2.0, 2.0},   // low-ish acceleration
-                                                  0.05,                           // moderate deviation
-                                                  trajectory::seconds{0.001},
-                                                  collector);
+    const trajectory traj = create_velocity_switching_test_trajectory(xmatrix<>{{0.0, 0.0}, {0.5, 0.0}, {0.5, 0.5}, {1.0, 0.5}, {1.0, 1.0}},
+                                                                      xvector<>{0.5, 0.08},  // asymmetric velocity
+                                                                      xvector<>{2.0, 2.0},   // low-ish acceleration
+                                                                      0.05,                  // moderate deviation
+                                                                      trajectory::seconds{0.001},
+                                                                      collector);
 
     validate_trajectory_invariants(traj);
 
@@ -2442,10 +2429,10 @@ BOOST_AUTO_TEST_CASE(condition_41_false_gates_boundary) {
     // Same waypoints, velocities, accelerations as Case 12, but deviation=0.005
     // instead of 0.0007.  The larger blend radius reduces curvature enough that
     // condition 41 flips to false.
-    const trajectory traj = create_velocity_switching_test_trajectory(xt::xarray<double>{{0.0, 0.0}, {1.0, 0.0}, {1.866, 0.5}},
-                                                                      xt::xarray<double>{0.5, 0.1},  // 5:1 ratio (same as Case 12)
-                                                                      xt::xarray<double>{3.0, 3.0},  // same accel
-                                                                      0.005,                         // larger deviation -> lower curvature
+    const trajectory traj = create_velocity_switching_test_trajectory(xmatrix<>{{0.0, 0.0}, {1.0, 0.0}, {1.866, 0.5}},
+                                                                      xvector<>{0.5, 0.1},  // 5:1 ratio (same as Case 12)
+                                                                      xvector<>{3.0, 3.0},  // same accel
+                                                                      0.005,                // larger deviation -> lower curvature
                                                                       trajectory::seconds{0.001},
                                                                       collector);
 
@@ -2477,18 +2464,16 @@ constexpr double k_blend_deviation = 0.1;
 
 // Waypoints where joint 2 is stationary: {0,0,0} -> {1,0,0} -> {1,1,0}.
 // Forms an L-C-L path with a 90-degree corner at the middle waypoint.
-xt::xarray<double> waypoints_joint2_stationary() {
+xmatrix<> waypoints_joint2_stationary() {
     return {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, {1.0, 1.0, 0.0}};
 }
 
 // Waypoints where joint 2 also moves: {0,0,0} -> {1,0,0.5} -> {1,1,1}.
-xt::xarray<double> waypoints_joint2_moving() {
+xmatrix<> waypoints_joint2_moving() {
     return {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.5}, {1.0, 1.0, 1.0}};
 }
 
-trajectory run_zero_limit_success(const xt::xarray<double>& waypoints,
-                                  const xt::xarray<double>& max_vel,
-                                  const xt::xarray<double>& max_acc) {
+trajectory run_zero_limit_success(const xmatrix<>& waypoints, const xvector<>& max_vel, const xvector<>& max_acc) {
     trajectory_test_fixture fix{3};
     // TODO(RSDK-12981): Tolerances, etc.
     fix.validation_tolerance_percent *= 10;
@@ -2500,7 +2485,7 @@ trajectory run_zero_limit_success(const xt::xarray<double>& waypoints,
     return fix.create_and_validate();
 }
 
-void run_zero_limit_failure(const xt::xarray<double>& waypoints, const xt::xarray<double>& max_vel, const xt::xarray<double>& max_acc) {
+void run_zero_limit_failure(const xmatrix<>& waypoints, const xvector<>& max_vel, const xvector<>& max_acc) {
     path::options popt;
     popt.set_max_blend_deviation(k_blend_deviation);
 
@@ -2517,36 +2502,36 @@ void run_zero_limit_failure(const xt::xarray<double>& waypoints, const xt::xarra
 
 BOOST_AUTO_TEST_CASE(zero_vel_limit_stationary_joint_succeeds) {
     // Joint 2 has zero velocity limit but the path never moves it.
-    run_zero_limit_success(waypoints_joint2_stationary(), xt::xarray<double>{1.0, 1.0, 0.0}, xt::xarray<double>{10.0, 10.0, 10.0});
+    run_zero_limit_success(waypoints_joint2_stationary(), xvector<>{1.0, 1.0, 0.0}, xvector<>{10.0, 10.0, 10.0});
 }
 
 BOOST_AUTO_TEST_CASE(zero_vel_limit_moving_joint_throws) {
     // Joint 2 has zero velocity limit but the path requires it to move.
-    run_zero_limit_failure(waypoints_joint2_moving(), xt::xarray<double>{1.0, 1.0, 0.0}, xt::xarray<double>{10.0, 10.0, 10.0});
+    run_zero_limit_failure(waypoints_joint2_moving(), xvector<>{1.0, 1.0, 0.0}, xvector<>{10.0, 10.0, 10.0});
 }
 
 // --- Zero acceleration limit ---
 
 BOOST_AUTO_TEST_CASE(zero_accel_limit_stationary_joint_succeeds) {
     // Joint 2 has zero acceleration limit but the path never moves it.
-    run_zero_limit_success(waypoints_joint2_stationary(), xt::xarray<double>{10.0, 10.0, 10.0}, xt::xarray<double>{10.0, 10.0, 0.0});
+    run_zero_limit_success(waypoints_joint2_stationary(), xvector<>{10.0, 10.0, 10.0}, xvector<>{10.0, 10.0, 0.0});
 }
 
 BOOST_AUTO_TEST_CASE(zero_accel_limit_moving_joint_throws) {
     // Joint 2 has zero acceleration limit but the path requires it to move.
-    run_zero_limit_failure(waypoints_joint2_moving(), xt::xarray<double>{10.0, 10.0, 10.0}, xt::xarray<double>{10.0, 10.0, 0.0});
+    run_zero_limit_failure(waypoints_joint2_moving(), xvector<>{10.0, 10.0, 10.0}, xvector<>{10.0, 10.0, 0.0});
 }
 
 // --- Zero velocity and acceleration limit ---
 
 BOOST_AUTO_TEST_CASE(zero_vel_and_accel_limit_stationary_joint_succeeds) {
     // Joint 2 has zero velocity and acceleration limits but the path never moves it.
-    run_zero_limit_success(waypoints_joint2_stationary(), xt::xarray<double>{1.0, 1.0, 0.0}, xt::xarray<double>{10.0, 10.0, 0.0});
+    run_zero_limit_success(waypoints_joint2_stationary(), xvector<>{1.0, 1.0, 0.0}, xvector<>{10.0, 10.0, 0.0});
 }
 
 BOOST_AUTO_TEST_CASE(zero_vel_and_accel_limit_moving_joint_throws) {
     // Joint 2 has zero velocity and acceleration limits but the path requires it to move.
-    run_zero_limit_failure(waypoints_joint2_moving(), xt::xarray<double>{1.0, 1.0, 0.0}, xt::xarray<double>{10.0, 10.0, 0.0});
+    run_zero_limit_failure(waypoints_joint2_moving(), xvector<>{1.0, 1.0, 0.0}, xvector<>{10.0, 10.0, 0.0});
 }
 
 BOOST_AUTO_TEST_SUITE_END()  // zero_limit_joint
@@ -2666,14 +2651,14 @@ BOOST_AUTO_TEST_CASE(gp12_tcp_terminal_acceleration_sentinel_sample) {
     BOOST_REQUIRE_MESSAGE(Json::parseFromStream(reader, in, &root, &errs), errs);
 
     const auto dof = root["max_velocity_vec_rads_per_sec"].size();
-    xt::xarray<double> max_velocity = xt::zeros<double>({static_cast<std::size_t>(dof)});
-    xt::xarray<double> max_acceleration = xt::zeros<double>({static_cast<std::size_t>(dof)});
+    xvector<> max_velocity = xt::zeros<double>({static_cast<std::size_t>(dof)});
+    xvector<> max_acceleration = xt::zeros<double>({static_cast<std::size_t>(dof)});
     for (Json::ArrayIndex i = 0; i < dof; ++i) {
         max_velocity(i) = root["max_velocity_vec_rads_per_sec"][i].asDouble();
         max_acceleration(i) = root["max_acceleration_vec_rads_per_sec2"][i].asDouble();
     }
     const auto& wps = root["waypoints_rads"];
-    xt::xarray<double> waypoints = xt::zeros<double>({static_cast<std::size_t>(wps.size()), static_cast<std::size_t>(dof)});
+    xmatrix<> waypoints = xt::zeros<double>({static_cast<std::size_t>(wps.size()), static_cast<std::size_t>(dof)});
     for (Json::ArrayIndex i = 0; i < wps.size(); ++i) {
         for (Json::ArrayIndex j = 0; j < dof; ++j) {
             waypoints(i, static_cast<std::size_t>(j)) = wps[i][j].asDouble();

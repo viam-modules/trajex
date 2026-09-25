@@ -5,17 +5,13 @@
 #include <optional>
 #include <vector>
 
-#if __has_include(<xtensor/containers/xarray.hpp>)
-#include <xtensor/containers/xarray.hpp>
-#else
-#include <xtensor/xarray.hpp>
-#endif
-
 #include <viam/trajex/totg/path.hpp>
+#include <viam/trajex/totg/streaming/private/waypoint_store.hpp>
 #include <viam/trajex/totg/trajectory.hpp>
 #include <viam/trajex/totg/uniform_sampler.hpp>
 #include <viam/trajex/totg/waypoint_accumulator.hpp>
 #include <viam/trajex/types/hertz.hpp>
+#include <viam/trajex/types/xt.hpp>
 
 namespace viam::trajex::totg::streaming {
 
@@ -241,11 +237,11 @@ class session {
     std::size_t trajectory_generation_count() const noexcept;
 
    private:
-    // Builds a trajectory from the given waypoints xarray, threading through path::options
-    // and trajectory::options. Throws on validation failure inside path::create or
-    // trajectory::create; the session's state is unaffected because this is called before
-    // any member is mutated.
-    trajectory build_trajectory_from_(const xt::xarray<double>& waypoints) const;
+    // Builds a trajectory from the given waypoints, threading through path::options and
+    // trajectory::options. Throws on validation failure inside path::create or
+    // trajectory::create, leaving every member it does not touch alone; callers that have
+    // already appended to `waypoints_` are responsible for winding that back.
+    trajectory build_trajectory_from_(const waypoint_accumulator& waypoints) const;
 
     // Emits a single sample, advancing the cursor. Triggers a rebase if the active is
     // exhausted at the next-sample index and staging is non-empty. Returns nullopt when
@@ -266,10 +262,14 @@ class session {
     // per-trajectory starting offset at pivot and rebase transitions.
     trajectory::seconds sample_period_;
 
-    // The waypoint set that built `active_`. Stable owned storage required because
-    // waypoint_accumulator stores row-views into the array it was constructed over.
-    // Empty (shape (0,)) until the first successful extend; thereafter shape (N, dof).
-    xt::xarray<double> active_waypoints_;
+    // The waypoint set that built `active_`, owned by the session because the accumulators
+    // callers pass to `extend` view memory the session does not control. Empty until the
+    // first successful extend.
+    //
+    // The store cannot be moved, which makes a session non-movable as well. That was
+    // already true in substance: `cursor_` below holds a pointer into `active_`, so moving
+    // a session would leave it pointing at the old location.
+    waypoint_store waypoints_;
 
     // The currently active trajectory, or nullopt before the first successful extend.
     // Storage in std::optional is in-place, so `&*active_` is a stable address across
@@ -301,11 +301,11 @@ class session {
 
     // Batches received while staging, each pre-stripped of its seam point. Drained
     // into the new active during the next rebase.
-    std::vector<xt::xarray<double>> staged_batches_;
+    std::vector<xmatrix<>> staged_batches_;
 
     // The most recently received waypoint, against which the next extend's seam is
     // bit-exactly validated. Empty (shape (0,)) before the first extend.
-    xt::xarray<double> last_waypoint_;
+    xvector<> last_waypoint_;
 
     // Cumulative count of trajectories the session has installed as active. Increments
     // on first build, on each pivot, and on each rebase.

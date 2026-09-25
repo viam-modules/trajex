@@ -18,17 +18,13 @@
 #include <string>
 #include <vector>
 
-#if __has_include(<xtensor/containers/xarray.hpp>)
-#include <xtensor/containers/xarray.hpp>
-#else
-#include <xtensor/xarray.hpp>
-#endif
-
 #if __has_include(<xtensor/views/xview.hpp>)
 #include <xtensor/views/xview.hpp>
 #else
 #include <xtensor/xview.hpp>
 #endif
+
+#include <viam/trajex/types/xt.hpp>
 
 #include <viam/trajex/totg/path.hpp>
 #include <viam/trajex/totg/streaming/session.hpp>
@@ -39,6 +35,7 @@
 
 namespace {
 
+using viam::trajex::xmatrix;
 using viam::trajex::totg::parse_replay_record;
 using viam::trajex::totg::path;
 using viam::trajex::totg::trajectory;
@@ -187,7 +184,7 @@ struct cell_result {
     std::optional<double> min_branch_slack;
 };
 
-cell_result simulate_cell(const xt::xarray<double>& workload,
+cell_result simulate_cell(const xmatrix<>& workload,
                           const path::options& popts,
                           const trajectory::options& topts,
                           double sample_rate_hz,
@@ -218,7 +215,7 @@ cell_result simulate_cell(const xt::xarray<double>& workload,
         // trajectory. Use exactly two so subsequent batches can default to batch_size=2 with
         // one new waypoint each.
         {
-            const xt::xarray<double> bootstrap = xt::view(workload, xt::range(std::size_t{0}, std::size_t{2}), xt::all());
+            const xmatrix<> bootstrap = xt::view(workload, xt::range(std::size_t{0}, std::size_t{2}), xt::all());
             const waypoint_accumulator acc(bootstrap);
             sess.extend(acc);
             next_wp_idx = 2;
@@ -301,7 +298,7 @@ cell_result simulate_cell(const xt::xarray<double>& workload,
                 // (next_wp_idx - 1); batch covers [next_wp_idx - 1, batch_end).
                 const std::size_t batch_start = next_wp_idx - 1;
                 const std::size_t batch_end = std::min(next_wp_idx + batch_size - 1, n);
-                const xt::xarray<double> batch_data = xt::view(workload, xt::range(batch_start, batch_end), xt::all());
+                const xmatrix<> batch_data = xt::view(workload, xt::range(batch_start, batch_end), xt::all());
                 const waypoint_accumulator acc(batch_data);
 
                 const double watermark_before = sess.current_time().count();

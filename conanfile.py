@@ -38,6 +38,7 @@ class trajex_service(ConanFile):
         self.requires("eigen/[>=3.4 <5.0]")
         self.requires("boost/[>=1.74.0]")
         self.requires("jsoncpp/[>=1.9.5]")
+        self.requires("benchmark/[>=1.9.0]")
         # Note: grpc comes via viam-cpp-sdk
         # Note: trajex doesn't need URCL (Universal Robots Client Library)
 

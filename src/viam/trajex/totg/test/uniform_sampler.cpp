@@ -1,12 +1,17 @@
 // Uniform sampler tests
 // Extracted from test.cpp lines 2062-2141
 
+#include <cstddef>
+
 #include <viam/trajex/totg/trajectory.hpp>
 #include <viam/trajex/totg/uniform_sampler.hpp>
 #include <viam/trajex/types/arc_length.hpp>
 #include <viam/trajex/types/arc_velocity.hpp>
+#include <viam/trajex/types/xt.hpp>
 
 #include <boost/test/unit_test.hpp>
+
+using viam::trajex::xmatrix;
 
 BOOST_AUTO_TEST_SUITE(uniform_sampler_tests)
 
@@ -89,7 +94,7 @@ BOOST_AUTO_TEST_CASE(no_duplicate_timestamps_at_end) {
     using viam::trajex::arc_velocity;
 
     // Create a simple path
-    const xt::xarray<double> waypoints = {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}};
     path p = path::create(waypoints);
 
     // Create trajectory with explicit integration points to have precise control over duration.
@@ -169,7 +174,7 @@ viam::trajex::totg::trajectory build_unit_duration_trajectory() {
     using viam::trajex::arc_length;
     using viam::trajex::arc_velocity;
 
-    const xt::xarray<double> waypoints = {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}};
     path p = path::create(waypoints);
 
     std::vector<trajectory::integration_point> points = {
@@ -239,6 +244,104 @@ BOOST_AUTO_TEST_CASE(quantized_for_trajectory_throws_on_start_beyond_duration) {
     const trajectory traj = build_unit_duration_trajectory();
     const auto past = traj.duration() + trajectory::seconds{0.5};
     BOOST_CHECK_THROW(uniform_sampler::quantized_for_trajectory(traj, hertz{10.0}, past), std::invalid_argument);
+}
+
+BOOST_AUTO_TEST_CASE(cursor_fill_sample_matches_value_sample) {
+    using namespace viam::trajex::totg;
+
+    const trajectory traj = build_unit_duration_trajectory();
+
+    auto value_cursor = traj.create_cursor();
+    auto fill_cursor = traj.create_cursor();
+
+    // Reused across iterations deliberately: after the first fill its arrays are already
+    // correctly shaped, which is the path the range takes for every sample but the first.
+    struct trajectory::sample filled;
+
+    for (int step = 0; step <= 10; ++step) {
+        const auto t = trajectory::seconds{static_cast<double>(step) / 10.0};
+
+        value_cursor.seek(t);
+        fill_cursor.seek(t);
+
+        const auto expected = value_cursor.sample();
+        fill_cursor.sample(filled);
+
+        BOOST_CHECK_EQUAL(filled.time.count(), expected.time.count());
+        BOOST_REQUIRE_EQUAL(filled.configuration.size(), expected.configuration.size());
+
+        for (std::size_t i = 0; i != expected.configuration.size(); ++i) {
+            BOOST_CHECK_EQUAL(filled.configuration(i), expected.configuration(i));
+            BOOST_CHECK_EQUAL(filled.velocity(i), expected.velocity(i));
+            BOOST_CHECK_EQUAL(filled.acceleration(i), expected.acceleration(i));
+        }
+    }
+}
+
+BOOST_AUTO_TEST_CASE(range_refills_sample_storage_in_place) {
+    using namespace viam::trajex::totg;
+    using namespace viam::trajex::types;
+
+    const trajectory traj = build_unit_duration_trajectory();
+    auto range = traj.samples(uniform_sampler::quantized_for_trajectory(traj, hertz{10.0}));
+
+    auto it = range.begin();
+    BOOST_REQUIRE(it != range.end());
+
+    // The iterator refills one sample rather than replacing it, so its storage must not move
+    // as the range advances. Going back to assigning a freshly built sample per step would
+    // relocate these and cost three allocations per sample, which is the whole point.
+    const double* const configuration_storage = (*it).configuration.data();
+    const double* const velocity_storage = (*it).velocity.data();
+    const double* const acceleration_storage = (*it).acceleration.data();
+
+    std::size_t seen = 1;
+    for (++it; it != range.end(); ++it) {
+        BOOST_CHECK_EQUAL((*it).configuration.data(), configuration_storage);
+        BOOST_CHECK_EQUAL((*it).velocity.data(), velocity_storage);
+        BOOST_CHECK_EQUAL((*it).acceleration.data(), acceleration_storage);
+        ++seen;
+    }
+
+    BOOST_CHECK_GT(seen, std::size_t{1});
+}
+
+BOOST_AUTO_TEST_CASE(range_emits_expected_sample_count_then_ends) {
+    using namespace viam::trajex::totg;
+    using namespace viam::trajex::types;
+
+    const trajectory traj = build_unit_duration_trajectory();
+    const auto expected = uniform_sampler::calculate_quantized_samples(traj.duration().count(), 10.0);
+
+    std::size_t seen = 0;
+    for (const auto& sample : traj.samples(uniform_sampler::quantized_for_trajectory(traj, hertz{10.0}))) {
+        static_cast<void>(sample);
+        ++seen;
+    }
+
+    BOOST_CHECK_EQUAL(seen, expected);
+}
+
+BOOST_AUTO_TEST_CASE(advance_and_next_agree) {
+    using namespace viam::trajex::totg;
+    using namespace viam::trajex::types;
+
+    const trajectory traj = build_unit_duration_trajectory();
+
+    auto next_sampler = uniform_sampler::quantized_for_trajectory(traj, hertz{10.0});
+    auto advance_sampler = uniform_sampler::quantized_for_trajectory(traj, hertz{10.0});
+
+    auto next_cursor = traj.create_cursor();
+    auto advance_cursor = traj.create_cursor();
+
+    // `next` is documented as `advance` followed by `sample`, so the two must agree on both
+    // the times visited and when they run out.
+    while (const auto expected = next_sampler.next(next_cursor)) {
+        BOOST_REQUIRE(advance_sampler.advance(advance_cursor));
+        BOOST_CHECK_EQUAL(advance_cursor.sample().time.count(), expected->time.count());
+    }
+
+    BOOST_CHECK(!advance_sampler.advance(advance_cursor));
 }
 
 BOOST_AUTO_TEST_SUITE_END()

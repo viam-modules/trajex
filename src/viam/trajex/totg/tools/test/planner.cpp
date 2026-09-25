@@ -5,18 +5,15 @@
 
 #include <boost/test/unit_test.hpp>
 
-#if __has_include(<xtensor/containers/xarray.hpp>)
-#include <xtensor/containers/xarray.hpp>
-#else
-#include <xtensor/xarray.hpp>
-#endif
-
 #include <viam/trajex/totg/test/test_utils.hpp>
 #include <viam/trajex/totg/tools/replay.hpp>
+#include <viam/trajex/types/xt.hpp>
 
 namespace {
 
 using namespace viam::trajex::totg;
+using viam::trajex::xmatrix;
+using viam::trajex::xvector;
 using viam::trajex::totg::test::gp12_model_table;
 
 struct test_receiver {
@@ -27,8 +24,8 @@ struct test_receiver {
 
 planner<test_receiver>::config simple_config() {
     return {
-        .velocity_limits = xt::xarray<double>{1.0, 1.0, 1.0},
-        .acceleration_limits = xt::xarray<double>{1.0, 1.0, 1.0},
+        .velocity_limits = xvector<>{1.0, 1.0, 1.0},
+        .acceleration_limits = xvector<>{1.0, 1.0, 1.0},
         .path_blend_tolerance = 0.001,
         .colinearization_ratio = std::nullopt,
         .min_blend_curvature = std::nullopt,
@@ -36,9 +33,9 @@ planner<test_receiver>::config simple_config() {
     };
 }
 
-// waypoint_accumulator views data, doesn't own it, so the xarray must
+// waypoint_accumulator views data, doesn't own it, so the matrix must
 // outlive the accumulator. Stash is the mechanism for that.
-waypoint_accumulator stash_waypoints(planner<test_receiver>& p, xt::xarray<double> wp) {
+waypoint_accumulator stash_waypoints(planner<test_receiver>& p, xmatrix<> wp) {
     auto data = p.stash(std::move(wp));
     return waypoint_accumulator{*data};
 }
@@ -232,9 +229,9 @@ BOOST_AUTO_TEST_CASE(stash_extends_data_lifetime) {
     auto result =
         planner<test_receiver>(simple_config())
             .with_waypoint_provider([](auto& p) {
-                auto data = p.stash(xt::xarray<double>{{0.0, 0.0, 0.0}});
+                auto data = p.stash(xmatrix<>{{0.0, 0.0, 0.0}});
                 waypoint_accumulator accumulator{*data};
-                auto more = p.stash(xt::xarray<double>{{1.0, 0.0, 0.0}});
+                auto more = p.stash(xmatrix<>{{1.0, 0.0, 0.0}});
                 accumulator.add_waypoints(*more);
                 return accumulator;
             })
@@ -309,8 +306,8 @@ BOOST_AUTO_TEST_CASE(legacy_replay_of_tcp_record_drops_tcp_limit) {
     const auto table = gp12_model_table();
 
     planner<test_receiver>::config cfg{
-        .velocity_limits = xt::xarray<double>{1.0, 1.0, 1.0, 1.0, 1.0, 1.0},
-        .acceleration_limits = xt::xarray<double>{1.0, 1.0, 1.0, 1.0, 1.0, 1.0},
+        .velocity_limits = xvector<>{1.0, 1.0, 1.0, 1.0, 1.0, 1.0},
+        .acceleration_limits = xvector<>{1.0, 1.0, 1.0, 1.0, 1.0, 1.0},
         .path_blend_tolerance = 0.01,
         .colinearization_ratio = std::nullopt,
     };
@@ -318,7 +315,7 @@ BOOST_AUTO_TEST_CASE(legacy_replay_of_tcp_record_drops_tcp_limit) {
     cfg.model_table = table;
 
     planner<test_receiver> p(std::move(cfg));
-    auto data = p.stash(xt::xarray<double>{{0.0, 0.0, 0.0, 0.0, 0.0, 0.0}, {0.3, 0.1, 0.0, 0.0, 0.0, 0.0}});
+    auto data = p.stash(xmatrix<>{{0.0, 0.0, 0.0, 0.0, 0.0, 0.0}, {0.3, 0.1, 0.0, 0.0, 0.0, 0.0}});
     const std::string record = p.serialize_for_replay(waypoint_accumulator{*data});
 
     std::istringstream in(record);
@@ -335,16 +332,9 @@ BOOST_AUTO_TEST_CASE(legacy_replay_of_tcp_record_drops_tcp_limit) {
 // serialize_for_replay would throw on the failure paths that call it to record diagnostics,
 // destroying the replay record for the original error.
 BOOST_AUTO_TEST_CASE(malformed_model_table_rejected_at_construction) {
-    {
-        auto cfg = simple_config();
-        cfg.model_table = xt::xarray<double>{1.0, 2.0, 3.0};  // 1-D, not (n, 10)
-        BOOST_CHECK_THROW(static_cast<void>(planner<test_receiver>(cfg)), std::invalid_argument);
-    }
-    {
-        auto cfg = simple_config();
-        cfg.model_table = xt::xarray<double>{{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};  // (2, 3), not (n, 10)
-        BOOST_CHECK_THROW(static_cast<void>(planner<test_receiver>(cfg)), std::invalid_argument);
-    }
+    auto cfg = simple_config();
+    cfg.model_table = xmatrix<>{{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};  // (2, 3), not (n, 10)
+    BOOST_CHECK_THROW(static_cast<void>(planner<test_receiver>(cfg)), std::invalid_argument);
 }
 
 // A config carrying a TCP limit and its model-table provenance survives a
@@ -354,8 +344,8 @@ BOOST_AUTO_TEST_CASE(replay_record_round_trips_tcp_limit) {
     const auto table = gp12_model_table();
 
     planner<test_receiver>::config cfg{
-        .velocity_limits = xt::xarray<double>{1.0, 1.0, 1.0, 1.0, 1.0, 1.0},
-        .acceleration_limits = xt::xarray<double>{1.0, 1.0, 1.0, 1.0, 1.0, 1.0},
+        .velocity_limits = xvector<>{1.0, 1.0, 1.0, 1.0, 1.0, 1.0},
+        .acceleration_limits = xvector<>{1.0, 1.0, 1.0, 1.0, 1.0, 1.0},
         .path_blend_tolerance = 0.01,
         .colinearization_ratio = std::nullopt,
     };
@@ -363,7 +353,7 @@ BOOST_AUTO_TEST_CASE(replay_record_round_trips_tcp_limit) {
     cfg.model_table = table;
 
     planner<test_receiver> p(std::move(cfg));
-    auto data = p.stash(xt::xarray<double>{{0.0, 0.0, 0.0, 0.0, 0.0, 0.0}, {0.3, 0.1, 0.0, 0.0, 0.0, 0.0}});
+    auto data = p.stash(xmatrix<>{{0.0, 0.0, 0.0, 0.0, 0.0, 0.0}, {0.3, 0.1, 0.0, 0.0, 0.0, 0.0}});
     const std::string record = p.serialize_for_replay(waypoint_accumulator{*data});
 
     std::istringstream in(record);
@@ -380,7 +370,7 @@ BOOST_AUTO_TEST_CASE(replay_record_round_trips_tcp_limit) {
     // The rebuilt jacobian is callable and returns the 3xN linear-velocity block for the six
     // actuated joints, confirming the callback was reconstructed (not merely the scalar copied).
     BOOST_REQUIRE(static_cast<bool>(rc.tcp->linear_jacobian));
-    const auto J = rc.tcp->linear_jacobian(xt::xarray<double>{0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
+    const auto J = rc.tcp->linear_jacobian(xvector<>{0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
     BOOST_REQUIRE_EQUAL(J.dimension(), 2U);
     BOOST_CHECK_EQUAL(J.shape(0), 3U);
     BOOST_CHECK_EQUAL(J.shape(1), 6U);
@@ -395,8 +385,8 @@ BOOST_AUTO_TEST_CASE(replay_record_round_trips_tcp_limit) {
 // records neither the cap nor the table, and the round-tripped config carries no TCP limit.
 BOOST_AUTO_TEST_CASE(replay_record_omits_tcp_without_model_table) {
     planner<test_receiver>::config cfg{
-        .velocity_limits = xt::xarray<double>{1.0, 1.0, 1.0, 1.0, 1.0, 1.0},
-        .acceleration_limits = xt::xarray<double>{1.0, 1.0, 1.0, 1.0, 1.0, 1.0},
+        .velocity_limits = xvector<>{1.0, 1.0, 1.0, 1.0, 1.0, 1.0},
+        .acceleration_limits = xvector<>{1.0, 1.0, 1.0, 1.0, 1.0, 1.0},
         .path_blend_tolerance = 0.01,
         .colinearization_ratio = std::nullopt,
     };
@@ -404,7 +394,7 @@ BOOST_AUTO_TEST_CASE(replay_record_omits_tcp_without_model_table) {
     // cfg.model_table intentionally left unset.
 
     planner<test_receiver> p(std::move(cfg));
-    auto data = p.stash(xt::xarray<double>{{0.0, 0.0, 0.0, 0.0, 0.0, 0.0}, {0.3, 0.1, 0.0, 0.0, 0.0, 0.0}});
+    auto data = p.stash(xmatrix<>{{0.0, 0.0, 0.0, 0.0, 0.0, 0.0}, {0.3, 0.1, 0.0, 0.0, 0.0, 0.0}});
     const std::string record = p.serialize_for_replay(waypoint_accumulator{*data});
 
     std::istringstream in(record);

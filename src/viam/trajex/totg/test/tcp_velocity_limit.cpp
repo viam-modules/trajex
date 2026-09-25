@@ -16,6 +16,7 @@
 #include <viam/trajex/totg/path.hpp>
 #include <viam/trajex/totg/tools/json_serialization.hpp>
 #include <viam/trajex/totg/trajectory.hpp>
+#include <viam/trajex/types/xt.hpp>
 
 #include "test_utils.hpp"
 
@@ -25,13 +26,13 @@ namespace {
 
 // A simple 2-DOF path for TCP tests (planar 2-link joint space).
 inline path make_2dof_path() {
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.5}, {2.0, 0.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 0.5}, {2.0, 0.0}};
     return path::create(waypoints);
 }
 
 // Baseline options for a 2-DOF path (joints effectively unconstrained unless overridden).
 inline trajectory::options base_2dof_options() {
-    return trajectory::options{.max_velocity = xt::xarray<double>{100.0, 100.0}, .max_acceleration = xt::xarray<double>{1000.0, 1000.0}};
+    return trajectory::options{.max_velocity = xvector<>{100.0, 100.0}, .max_acceleration = xvector<>{1000.0, 1000.0}};
 }
 
 }  // namespace
@@ -43,10 +44,9 @@ BOOST_AUTO_TEST_CASE(create_rejects_bad_tcp_limit) {
     auto opt = base_2dof_options();
 
     // non-positive max_velocity
-    opt.tcp =
-        trajectory::tcp_limits{.max_linear_velocity = 0.0,
-                               .linear_jacobian = [](const xt::xarray<double>& q) { return test::planar_2link_jacobian(1.0, 1.0, q); },
-                               .linear_velocity_gain = {}};
+    opt.tcp = trajectory::tcp_limits{.max_linear_velocity = 0.0,
+                                     .linear_jacobian = [](const xvector<>& q) { return test::planar_2link_jacobian(1.0, 1.0, q); },
+                                     .linear_velocity_gain = {}};
     BOOST_CHECK_THROW(static_cast<void>(trajectory::create(p, opt)), std::invalid_argument);
 
     // missing jacobian
@@ -56,8 +56,8 @@ BOOST_AUTO_TEST_CASE(create_rejects_bad_tcp_limit) {
     // default-initialized limit with only the callbacks filled in: max_velocity is
     // zero-initialized, so validation must reject it deterministically
     trajectory::tcp_limits default_init;
-    default_init.linear_jacobian = [](const xt::xarray<double>& q) { return test::planar_2link_jacobian(1.0, 1.0, q); };
-    default_init.linear_velocity_gain = [](const xt::xarray<double>& q, const xt::xarray<double>& qp, const xt::xarray<double>& qpp) {
+    default_init.linear_jacobian = [](const xvector<>& q) { return test::planar_2link_jacobian(1.0, 1.0, q); };
+    default_init.linear_velocity_gain = [](const xvector<>& q, const xvector<>& qp, const xvector<>& qpp) {
         return test::planar_2link_linear_velocity_gain(1.0, 1.0, q, qp, qpp);
     };
     opt.tcp = default_init;
@@ -75,7 +75,7 @@ BOOST_AUTO_TEST_CASE(tcp_velocity_component_basic_and_singularity) {
     // planar_2link_jacobian(1,1,[0,0]) = [[0,0],[2,1],[0,0]]. Straight path along [1,0] through
     // q=[0,0]: J*tangent = [0,2,0], norm 2 -> limit = 0.5/2 = 0.25.
     {
-        const path p = path::create(xt::xarray<double>{{-1.0, 0.0}, {1.0, 0.0}});
+        const path p = path::create(xmatrix<>{{-1.0, 0.0}, {1.0, 0.0}});
         auto opt = base_2dof_options();
         opt.tcp = test::planar_2link_tcp_limits(0.5);
         const auto traj = trajectory::create(p, opt);
@@ -86,7 +86,7 @@ BOOST_AUTO_TEST_CASE(tcp_velocity_component_basic_and_singularity) {
     // Straight path along [1,-2] through q=[0,0]: that tangent is in the null space of J at [0,0]
     // (2*1 + 1*(-2) = 0), so ||J*tangent|| = 0 and the TCP component is +inf (singularity).
     {
-        const path p = path::create(xt::xarray<double>{{-1.0, 2.0}, {1.0, -2.0}});
+        const path p = path::create(xmatrix<>{{-1.0, 2.0}, {1.0, -2.0}});
         auto opt = base_2dof_options();
         opt.tcp = test::planar_2link_tcp_limits(0.5);
         const auto traj = trajectory::create(p, opt);
@@ -104,9 +104,9 @@ BOOST_AUTO_TEST_CASE(tcp_velocity_component_basic_and_singularity) {
 // crossing is benign (the ceiling does not fall faster than the arm can decelerate), and the
 // realized TCP speed stays under the cap.
 BOOST_AUTO_TEST_CASE(benign_crossover_respects_tcp_limit) {
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 2.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 2.0}};
     const path p = path::create(waypoints);
-    auto opt = trajectory::options{.max_velocity = xt::xarray<double>{0.6, 0.6}, .max_acceleration = xt::xarray<double>{1000.0, 1000.0}};
+    auto opt = trajectory::options{.max_velocity = xvector<>{0.6, 0.6}, .max_acceleration = xvector<>{1000.0, 1000.0}};
     opt.tcp = test::planar_2link_tcp_limits(1.0);
     const auto traj = trajectory::create(p, opt);
 
@@ -141,7 +141,7 @@ BOOST_AUTO_TEST_CASE(benign_crossover_respects_tcp_limit) {
 // overshoot; none of these paths currently trigger it.
 BOOST_AUTO_TEST_CASE(tcp_dip_and_recovery_produces_feasible_trajectory) {
     struct dip_case {
-        xt::xarray<double> wp;
+        xmatrix<> wp;
         double V;
         double vt;
         double A;
@@ -157,7 +157,7 @@ BOOST_AUTO_TEST_CASE(tcp_dip_and_recovery_produces_feasible_trajectory) {
 
     for (const auto& tc : cases) {
         const path p = path::create(tc.wp);
-        auto opt = trajectory::options{.max_velocity = xt::xarray<double>{tc.V, tc.V}, .max_acceleration = xt::xarray<double>{tc.A, tc.A}};
+        auto opt = trajectory::options{.max_velocity = xvector<>{tc.V, tc.V}, .max_acceleration = xvector<>{tc.A, tc.A}};
         opt.tcp = test::planar_2link_tcp_limits(tc.vt);
 
         // create() must not throw on the dip-and-recovery (uncaught throw fails the case).
@@ -172,8 +172,8 @@ BOOST_AUTO_TEST_CASE(tcp_dip_and_recovery_produces_feasible_trajectory) {
 // q1-dominant approach lets the trajectory accelerate up to the TCP ceiling, which then
 // falls steeply as q2 sweeps toward 0 (||J*f'|| rises) under a tiny accel budget.
 BOOST_AUTO_TEST_CASE(tcp_limit_respected_end_to_end) {
-    const path p = path::create(xt::xarray<double>{{0.0, 2.0}, {10.0, 0.0}});
-    auto opt = trajectory::options{.max_velocity = xt::xarray<double>{100.0, 100.0}, .max_acceleration = xt::xarray<double>{0.05, 0.05}};
+    const path p = path::create(xmatrix<>{{0.0, 2.0}, {10.0, 0.0}});
+    auto opt = trajectory::options{.max_velocity = xvector<>{100.0, 100.0}, .max_acceleration = xvector<>{0.05, 0.05}};
     opt.tcp = test::planar_2link_tcp_limits(0.3);
 
     const auto traj = trajectory::create(p, opt);
@@ -201,10 +201,10 @@ BOOST_AUTO_TEST_CASE(loose_tcp_matches_joint_only_baseline) {
 // drop. So the steep-falling crossing is respected end-to-end with no crossover-specific
 // handling.
 BOOST_AUTO_TEST_CASE(steep_falling_crossing_respects_tcp_limit) {
-    const path p = path::create(xt::xarray<double>{{0.0, 2.5}, {8.0, 0.3}});
+    const path p = path::create(xmatrix<>{{0.0, 2.5}, {8.0, 0.3}});
     // joint limit (0.35/max|f'|) sits inside the TCP curve's range along the path, so joint is
     // active early (TCP above it) and TCP active later (TCP falls below), a genuine crossing.
-    auto opt = trajectory::options{.max_velocity = xt::xarray<double>{0.35, 0.35}, .max_acceleration = xt::xarray<double>{0.02, 0.02}};
+    auto opt = trajectory::options{.max_velocity = xvector<>{0.35, 0.35}, .max_acceleration = xvector<>{0.02, 0.02}};
     opt.tcp = test::planar_2link_tcp_limits(0.3);
     const auto traj = trajectory::create(p, opt);
 
@@ -239,9 +239,8 @@ BOOST_AUTO_TEST_CASE(steep_falling_crossing_respects_tcp_limit) {
 // acceleration must be finite and the trajectory sampleable at its exact duration.
 BOOST_AUTO_TEST_CASE(terminal_acceleration_finite_and_sampleable_at_exact_duration) {
     for (const double cap : {0.05, 0.1, 0.15, 0.2, 0.3, 0.5, 1.0}) {
-        const path p = path::create(xt::xarray<double>{{0.0, 2.0}, {10.0, 0.0}});
-        auto opt =
-            trajectory::options{.max_velocity = xt::xarray<double>{100.0, 100.0}, .max_acceleration = xt::xarray<double>{0.05, 0.05}};
+        const path p = path::create(xmatrix<>{{0.0, 2.0}, {10.0, 0.0}});
+        auto opt = trajectory::options{.max_velocity = xvector<>{100.0, 100.0}, .max_acceleration = xvector<>{0.05, 0.05}};
         opt.tcp = test::planar_2link_tcp_limits(cap);
 
         const auto traj = trajectory::create(p, opt);
@@ -260,28 +259,16 @@ BOOST_AUTO_TEST_CASE(tcp_jacobian_callback_wrong_shape_throws) {
     auto opt = base_2dof_options();
 
     // Fewer than 3 rows.
-    opt.tcp =
-        trajectory::tcp_limits{.max_linear_velocity = 0.5,
-                               .linear_jacobian = [](const xt::xarray<double>&) { return xt::xarray<double>{{1.0, 0.0}, {0.0, 1.0}}; },
-                               .linear_velocity_gain = {}};
+    opt.tcp = trajectory::tcp_limits{.max_linear_velocity = 0.5,
+                                     .linear_jacobian = [](const xvector<>&) { return xmatrix<>{{1.0, 0.0}, {0.0, 1.0}}; },
+                                     .linear_velocity_gain = {}};
     BOOST_CHECK_THROW(static_cast<void>(trajectory::create(p, opt)), std::invalid_argument);
 
     // Right number of rows, wrong column count (3 columns for a 2-DOF tangent).
     opt.tcp = trajectory::tcp_limits{
         .max_linear_velocity = 0.5,
-        .linear_jacobian = [](const xt::xarray<double>&) { return xt::xarray<double>{{1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0}}; },
+        .linear_jacobian = [](const xvector<>&) { return xmatrix<>{{1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0}}; },
         .linear_velocity_gain = {}};
-    BOOST_CHECK_THROW(static_cast<void>(trajectory::create(p, opt)), std::invalid_argument);
-}
-
-// A 1-D array (dimension 1) whose length happens to be 3 must be rejected cleanly. Without a
-// dimension check, validating the column count reads shape(1) out of bounds on a rank-1 shape.
-BOOST_AUTO_TEST_CASE(tcp_jacobian_callback_wrong_dimension_throws) {
-    const path p = make_2dof_path();
-    auto opt = base_2dof_options();
-    opt.tcp = trajectory::tcp_limits{.max_linear_velocity = 0.5,
-                                     .linear_jacobian = [](const xt::xarray<double>&) { return xt::xarray<double>{1.0, 2.0, 3.0}; },
-                                     .linear_velocity_gain = {}};
     BOOST_CHECK_THROW(static_cast<void>(trajectory::create(p, opt)), std::invalid_argument);
 }
 
@@ -357,7 +344,7 @@ BOOST_AUTO_TEST_CASE(serialized_trajectory_exposes_tcp_limit_curve) {
 // point the sampled trajectory cannot honor.
 BOOST_AUTO_TEST_CASE(integration_points_respect_combined_velocity_limit) {
     struct limit_case {
-        xt::xarray<double> wp;
+        xmatrix<> wp;
         double V;
         double vt;
         double A;
@@ -371,7 +358,7 @@ BOOST_AUTO_TEST_CASE(integration_points_respect_combined_velocity_limit) {
 
     for (const auto& tc : cases) {
         const path p = path::create(tc.wp);
-        auto opt = trajectory::options{.max_velocity = xt::xarray<double>{tc.V, tc.V}, .max_acceleration = xt::xarray<double>{tc.A, tc.A}};
+        auto opt = trajectory::options{.max_velocity = xvector<>{tc.V, tc.V}, .max_acceleration = xvector<>{tc.A, tc.A}};
         opt.tcp = test::planar_2link_tcp_limits(tc.vt);
         const auto traj = trajectory::create(p, opt);
 
@@ -390,14 +377,13 @@ BOOST_AUTO_TEST_CASE(integration_points_respect_combined_velocity_limit) {
 // an unguarded non-finite slope silently corrupts every curve-following decision downstream
 // (trap detection, tangent following); the integrator must reject it loudly instead.
 BOOST_AUTO_TEST_CASE(tcp_non_finite_limit_slope_throws) {
-    const path p = path::create(xt::xarray<double>{{0.0, 2.0}, {10.0, 0.0}});
-    auto opt = trajectory::options{.max_velocity = xt::xarray<double>{100.0, 100.0}, .max_acceleration = xt::xarray<double>{0.05, 0.05}};
+    const path p = path::create(xmatrix<>{{0.0, 2.0}, {10.0, 0.0}});
+    auto opt = trajectory::options{.max_velocity = xvector<>{100.0, 100.0}, .max_acceleration = xvector<>{0.05, 0.05}};
     opt.tcp = trajectory::tcp_limits{
         .max_linear_velocity = 0.3,
-        .linear_jacobian = [](const xt::xarray<double>& q) { return test::planar_2link_jacobian(1.0, 1.0, q); },
-        .linear_velocity_gain = [](const xt::xarray<double>&,
-                                   const xt::xarray<double>&,
-                                   const xt::xarray<double>&) { return jacobian::kinematic_chain::linear_velocity_gain{0.0, 0.0}; },
+        .linear_jacobian = [](const xvector<>& q) { return test::planar_2link_jacobian(1.0, 1.0, q); },
+        .linear_velocity_gain =
+            [](const xvector<>&, const xvector<>&, const xvector<>&) { return jacobian::kinematic_chain::linear_velocity_gain{0.0, 0.0}; },
     };
     BOOST_CHECK_THROW(static_cast<void>(trajectory::create(p, opt)), std::runtime_error);
 }
@@ -405,10 +391,9 @@ BOOST_AUTO_TEST_CASE(tcp_non_finite_limit_slope_throws) {
 BOOST_AUTO_TEST_CASE(tcp_limit_without_velocity_derivative_throws) {
     const path p = make_2dof_path();
     auto opt = base_2dof_options();
-    opt.tcp =
-        trajectory::tcp_limits{.max_linear_velocity = 0.5,
-                               .linear_jacobian = [](const xt::xarray<double>& q) { return test::planar_2link_jacobian(1.0, 1.0, q); },
-                               .linear_velocity_gain = {}};
+    opt.tcp = trajectory::tcp_limits{.max_linear_velocity = 0.5,
+                                     .linear_jacobian = [](const xvector<>& q) { return test::planar_2link_jacobian(1.0, 1.0, q); },
+                                     .linear_velocity_gain = {}};
     BOOST_CHECK_THROW(static_cast<void>(trajectory::create(p, opt)), std::invalid_argument);
 }
 

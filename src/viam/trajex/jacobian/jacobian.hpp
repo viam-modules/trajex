@@ -5,11 +5,7 @@
 #include <cstdint>
 #include <vector>
 
-#if __has_include(<xtensor/containers/xarray.hpp>)
-#include <xtensor/containers/xarray.hpp>
-#else
-#include <xtensor/xarray.hpp>
-#endif
+#include <viam/trajex/types/xt.hpp>
 
 namespace viam::trajex::jacobian {
 
@@ -32,21 +28,21 @@ class kinematic_chain {
     ///         joint type (continuous or prismatic), or a revolute row with
     ///         zero-magnitude axis
     ///
-    [[nodiscard]] static kinematic_chain from(const xt::xarray<double>& tensor);
+    [[nodiscard]] static kinematic_chain from(const xmatrix<>& tensor);
 
     ///
     /// Computes the geometric Jacobian at joint positions q.
     ///
     /// @param q (N_actuated,) vector with one element per revolute row in the
     ///        table, in chain order. Fixed rows do not consume a q entry.
-    /// @return A (6, N_actuated) xarray where rows 0..2 are the
+    /// @return A (6, N_actuated) matrix where rows 0..2 are the
     ///         linear-velocity columns J_v_i = w_i x (p_e - p_i) and rows 3..5
     ///         are the angular-velocity columns J_w_i = w_i, with w_i the
     ///         world-frame axis of revolute joint i, p_i its world position,
     ///         and p_e the end-effector position.
     /// @throws std::invalid_argument on q-size mismatch
     ///
-    [[nodiscard]] xt::xarray<double> jacobian(const xt::xarray<double>& q) const;
+    [[nodiscard]] xmatrix<> jacobian(const xvector<>& q) const;
 
     ///
     /// Computes the linear-velocity block of the geometric Jacobian at joint
@@ -54,10 +50,10 @@ class kinematic_chain {
     ///
     /// @param q (N_actuated,) vector with one element per revolute row in the
     ///        table, in chain order. Fixed rows do not consume a q entry.
-    /// @return A (3, N_actuated) xarray of linear-velocity columns.
+    /// @return A (3, N_actuated) matrix of linear-velocity columns.
     /// @throws std::invalid_argument on q-size mismatch
     ///
-    [[nodiscard]] xt::xarray<double> linear_jacobian(const xt::xarray<double>& q) const;
+    [[nodiscard]] xmatrix<> linear_jacobian(const xvector<>& q) const;
 
     /// Linear velocity gain ||J_v*f'||: task-space length per unit of path arc length, in
     /// whatever length unit the model table uses, with its rate of change along the path.
@@ -78,9 +74,9 @@ class kinematic_chain {
     /// @return the gain and its s-derivative
     /// @throws std::invalid_argument on a q, q_prime, or q_double_prime size mismatch
     ///
-    [[nodiscard]] linear_velocity_gain linear_velocity_gain_at(const xt::xarray<double>& q,
-                                                               const xt::xarray<double>& q_prime,
-                                                               const xt::xarray<double>& q_double_prime) const;
+    [[nodiscard]] linear_velocity_gain linear_velocity_gain_at(const xvector<>& q,
+                                                               const xvector<>& q_prime,
+                                                               const xvector<>& q_double_prime) const;
 
    private:
     // URDF joint type, restricted to arm-relevant joints. Underlying values
@@ -124,7 +120,7 @@ class kinematic_chain {
     // Evaluates the forward kinematics at joint positions q, capturing the
     // per-joint quantities the Jacobian assemblies need. Throws
     // std::invalid_argument on q-size mismatch.
-    chain_state_ compute_chain_state_(const xt::xarray<double>& q) const;
+    chain_state_ compute_chain_state_(const xvector<>& q) const;
 
     std::vector<joint_row_> rows_;
     std::vector<row_constants_> constants_;

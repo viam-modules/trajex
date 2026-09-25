@@ -20,6 +20,12 @@ endif()
 # Defaults ON for standalone builds, OFF for FetchContent consumers.
 option(VIAM_TRAJEX_BUILD_TESTS "Build the Trajex test programs" ${VIAM_TRAJEX_STANDALONE_BUILD})
 
+# Build the trajex benchmark programs (google-benchmark executables, deliberately NOT
+# registered with ctest: benchmarks under ctest give noisy numbers and slow the test loop).
+# Requires `VIAM_TRAJEX_ENABLE_TOOLS` for replay record parsing.
+# Defaults ON for standalone builds, OFF for FetchContent consumers.
+option(VIAM_TRAJEX_BUILD_BENCHMARKS "Build the Trajex benchmark programs" ${VIAM_TRAJEX_STANDALONE_BUILD})
+
 # Enable the third-party reference implementation (`third_party/trajectories`) and the
 # `viam::trajex::totg::legacy::` colinearization helpers used by the legacy generator
 # path. Pulls in Eigen. Useful for cross-validating the new TOTG implementation.
@@ -135,6 +141,9 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Minimum required version for each external dependency. An empty value means
 # we do not enforce a minimum; the package's `find_package` (or its
 # `FIND_PACKAGE_ARGS`-mediated equivalent) accepts whatever is found.
+# Below 1.9.5 `RegisterBenchmarkInternal` takes a raw pointer and clang-tidy reports every
+# benchmark registration as a leak.
+set(VIAM_TRAJEX_BENCHMARK_VERSION_MINIMUM 1.9.5)
 set(VIAM_TRAJEX_BOOST_VERSION_MINIMUM "")    # TODO: Decide this
 set(VIAM_TRAJEX_EIGEN3_VERSION_MINIMUM "")   # TODO: Decide this
 set(VIAM_TRAJEX_JSONCPP_VERSION_MINIMUM "")  # TODO: Decide this
@@ -160,6 +169,9 @@ set(VIAM_TRAJEX_XTL_VERSION_MINIMUM 0.7.2)
 #                  The service code path uses Boost headers too but receives them
 #                  transitively through viam-cpp-sdk).
 #   jsoncpp        ENABLE_TOOLS (planner / replay / serialization sources).
+#   benchmark      BUILD_BENCHMARKS; FetchContent with system fallback via
+#                  FIND_PACKAGE_ARGS, so a system install (e.g. homebrew) is preferred
+#                  and the fetch is only a backstop.
 
 include(FetchContent)
 
@@ -209,6 +221,20 @@ if (VIAM_TRAJEX_ENABLE_TOOLS)
   if (NOT TARGET jsoncpp_lib)
     find_package(jsoncpp ${VIAM_TRAJEX_JSONCPP_VERSION_MINIMUM} CONFIG REQUIRED)
   endif()
+endif()
+
+if (VIAM_TRAJEX_BUILD_BENCHMARKS)
+  # google-benchmark's own test suite pulls googletest, which we have no use for.
+  set(BENCHMARK_ENABLE_TESTING OFF)
+  set(BENCHMARK_ENABLE_INSTALL OFF)
+  FetchContent_Declare(
+    benchmark
+    GIT_REPOSITORY https://github.com/google/benchmark.git
+    GIT_TAG        v1.9.5
+    SYSTEM
+    FIND_PACKAGE_ARGS ${VIAM_TRAJEX_BENCHMARK_VERSION_MINIMUM} CONFIG
+  )
+  FetchContent_MakeAvailable(benchmark)
 endif()
 
 
@@ -468,6 +494,40 @@ if (VIAM_TRAJEX_ENABLE_TOOLS)
   )
 
   apply_wall_werror(viam-trajex-totg-replay-exe)
+endif()
+
+
+#
+# Benchmarks
+#
+
+# Deliberately not registered with ctest. Benchmarks are run by hand, compared with
+# google-benchmark's `compare.py`, and would only make the test loop slower and noisier.
+if (VIAM_TRAJEX_BUILD_BENCHMARKS)
+  if (NOT VIAM_TRAJEX_ENABLE_TOOLS)
+    message(FATAL_ERROR "VIAM_TRAJEX_BUILD_BENCHMARKS requires VIAM_TRAJEX_ENABLE_TOOLS (replay record parsing)")
+  endif()
+
+  add_executable(viam-trajex-totg-bench)
+
+  target_sources(viam-trajex-totg-bench
+    PRIVATE
+      src/viam/trajex/totg/bench/main.cpp
+      src/viam/trajex/totg/bench/pipeline.cpp
+      src/viam/trajex/totg/bench/xtensor_idioms.cpp
+  )
+
+  target_link_libraries(viam-trajex-totg-bench
+    PRIVATE
+      viam::trajex::totg::tools
+      benchmark::benchmark
+  )
+
+  target_compile_definitions(viam-trajex-totg-bench PRIVATE
+    VIAM_TRAJEX_BENCH_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/viam/trajex/totg/test/data"
+  )
+
+  apply_wall_werror(viam-trajex-totg-bench)
 endif()
 
 

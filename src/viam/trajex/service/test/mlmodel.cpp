@@ -15,12 +15,6 @@
 
 #include <boost/variant/get.hpp>
 
-#if __has_include(<xtensor/containers/xarray.hpp>)
-#include <xtensor/containers/xarray.hpp>
-#else
-#include <xtensor/xarray.hpp>
-#endif
-
 #include <viam/sdk/config/resource.hpp>
 #include <viam/sdk/services/mlmodel.hpp>
 

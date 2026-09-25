@@ -1,10 +1,6 @@
 // Tests for viam::trajex::totg::streaming::session.
 
-#if __has_include(<xtensor/containers/xarray.hpp>)
-#include <xtensor/containers/xarray.hpp>
-#else
-#include <xtensor/xarray.hpp>
-#endif
+#include <viam/trajex/types/xt.hpp>
 
 #include <viam/trajex/totg/path.hpp>
 #include <viam/trajex/totg/streaming/session.hpp>
@@ -23,6 +19,8 @@
 
 namespace {
 
+using viam::trajex::xmatrix;
+using viam::trajex::xvector;
 using viam::trajex::totg::path;
 using viam::trajex::totg::trajectory;
 using viam::trajex::totg::waypoint_accumulator;
@@ -41,8 +39,8 @@ types::hertz default_sample_rate() {
 
 trajectory::options default_trajectory_options() {
     trajectory::options topt;
-    topt.max_velocity = xt::xarray<double>{2.0, 2.0};
-    topt.max_acceleration = xt::xarray<double>{5.0, 5.0};
+    topt.max_velocity = xvector<>{2.0, 2.0};
+    topt.max_acceleration = xvector<>{5.0, 5.0};
     return topt;
 }
 
@@ -52,12 +50,12 @@ path::options default_path_options() {
     return popt;
 }
 
-xt::xarray<double> three_waypoints() {
-    return xt::xarray<double>{{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}};
+xmatrix<> three_waypoints() {
+    return xmatrix<>{{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}};
 }
 
-xt::xarray<double> six_waypoints() {
-    return xt::xarray<double>{
+xmatrix<> six_waypoints() {
+    return xmatrix<>{
         {0.0, 0.0},
         {1.0, 0.0},
         {1.0, 1.0},
@@ -70,23 +68,23 @@ xt::xarray<double> six_waypoints() {
 // Builds a trajectory directly from waypoints with the same options the session uses.
 // This is the reference any session sample stream should agree with where the active
 // trajectory's geometry matches the full merged waypoint set.
-trajectory reference_trajectory(const xt::xarray<double>& waypoints) {
+trajectory reference_trajectory(const xmatrix<>& waypoints) {
     path p = path::create(waypoints, default_path_options());
     return trajectory::create(std::move(p), default_trajectory_options());
 }
 
-// Pins a waypoints xarray and a waypoint_accumulator over it together so the pair can be
+// Pins a waypoints matrix and a waypoint_accumulator over it together so the pair can be
 // handed to session.extend() in a single expression without lifetime hazards.
 //
-// waypoint_accumulator holds views into its source xarray and explicitly deletes the
+// waypoint_accumulator holds views into its source matrix and explicitly deletes the
 // rvalue-source constructor; ad-hoc factories returning an accumulator over a temporary
-// xarray won't compile. This wrapper stores both pieces and pins itself.
+// matrix won't compile. This wrapper stores both pieces and pins itself.
 //
 // TODO(streaming-test-utils): hoist alongside other shared test helpers once a second
 // streaming test file needs the same scaffolding. Until then, duplication here is cheap.
 class pinned_waypoints {
    public:
-    explicit pinned_waypoints(xt::xarray<double> data) : data_(std::move(data)), accumulator_(data_) {}
+    explicit pinned_waypoints(xmatrix<> data) : data_(std::move(data)), accumulator_(data_) {}
 
     pinned_waypoints(const pinned_waypoints&) = delete;
     pinned_waypoints& operator=(const pinned_waypoints&) = delete;
@@ -96,19 +94,19 @@ class pinned_waypoints {
     const waypoint_accumulator& accumulator() const noexcept {
         return accumulator_;
     }
-    const xt::xarray<double>& data() const noexcept {
+    const xmatrix<>& data() const noexcept {
         return data_;
     }
 
    private:
-    xt::xarray<double> data_;
+    xmatrix<> data_;
     waypoint_accumulator accumulator_;
 };
 
 // Returns true if every element of `a` is within `tolerance` of `b`. Used for direct
 // configuration / velocity / acceleration comparisons between session samples and
 // reference trajectory samples.
-bool configs_match(const xt::xarray<double>& a, const xt::xarray<double>& b, double tolerance = 1e-9) {
+bool configs_match(const xvector<>& a, const xvector<>& b, double tolerance = 1e-9) {
     if (a.shape(0) != b.shape(0)) {
         return false;
     }
@@ -194,7 +192,7 @@ BOOST_AUTO_TEST_CASE(first_extend_with_valid_batch_creates_active_trajectory) {
 
 BOOST_AUTO_TEST_CASE(first_extend_with_single_waypoint_propagates_invalid_argument) {
     auto sess = fresh_session();
-    const pinned_waypoints wp(xt::xarray<double>{{0.0, 0.0}});
+    const pinned_waypoints wp(xmatrix<>{{0.0, 0.0}});
 
     BOOST_CHECK_THROW(sess.extend(wp.accumulator()), std::invalid_argument);
 
@@ -208,7 +206,7 @@ BOOST_AUTO_TEST_CASE(first_extend_with_dof_mismatch_against_options_propagates_i
     // Default options have 2-DOF velocity / acceleration limits; provide 3-DOF waypoints
     // so that trajectory construction rejects the result.
     auto sess = fresh_session();
-    const pinned_waypoints wp(xt::xarray<double>{{0.0, 0.0, 0.0}, {1.0, 1.0, 1.0}, {2.0, 2.0, 2.0}});
+    const pinned_waypoints wp(xmatrix<>{{0.0, 0.0, 0.0}, {1.0, 1.0, 1.0}, {2.0, 2.0, 2.0}});
 
     BOOST_CHECK_THROW(sess.extend(wp.accumulator()), std::invalid_argument);
 
@@ -298,7 +296,7 @@ BOOST_AUTO_TEST_CASE(second_extend_with_seam_mismatch_throws_invalid_argument) {
     sess.extend(initial.accumulator());
 
     // The last stored waypoint is {1.0, 1.0}. Provide a batch whose first waypoint differs.
-    const pinned_waypoints mismatched(xt::xarray<double>{{9.0, 9.0}, {2.0, 2.0}});
+    const pinned_waypoints mismatched(xmatrix<>{{9.0, 9.0}, {2.0, 2.0}});
     BOOST_CHECK_THROW(sess.extend(mismatched.accumulator()), std::invalid_argument);
 }
 
@@ -307,7 +305,7 @@ BOOST_AUTO_TEST_CASE(second_extend_with_dof_mismatch_throws_invalid_argument) {
     const pinned_waypoints initial(three_waypoints());
     sess.extend(initial.accumulator());
 
-    const pinned_waypoints wrong_dof(xt::xarray<double>{{1.0, 1.0, 0.0}, {2.0, 2.0, 0.0}});
+    const pinned_waypoints wrong_dof(xmatrix<>{{1.0, 1.0, 0.0}, {2.0, 2.0, 0.0}});
     BOOST_CHECK_THROW(sess.extend(wrong_dof.accumulator()), std::invalid_argument);
 }
 
@@ -316,13 +314,13 @@ BOOST_AUTO_TEST_CASE(second_extend_with_bit_exact_seam_matches_merged_reference)
     // The sample stream after both extends should agree with a reference trajectory
     // built directly over that merged set.
     auto sess = fresh_session();
-    const pinned_waypoints initial(xt::xarray<double>{{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}});
+    const pinned_waypoints initial(xmatrix<>{{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}});
     sess.extend(initial.accumulator());
 
-    const pinned_waypoints extension(xt::xarray<double>{{1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}});
+    const pinned_waypoints extension(xmatrix<>{{1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}});
     sess.extend(extension.accumulator());
 
-    const xt::xarray<double> merged{{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}};
+    const xmatrix<> merged{{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}};
     const auto reference = reference_trajectory(merged);
 
     const auto samples = sess.sample_at_least(reference.duration());
@@ -345,7 +343,7 @@ BOOST_AUTO_TEST_CASE(seam_only_batch_leaves_the_session_untouched) {
     const auto time_before = sess.current_time();
     const auto duration_before = sess.active_trajectory()->duration();
 
-    const pinned_waypoints seam_only(xt::xarray<double>{{1.0, 1.0}});
+    const pinned_waypoints seam_only(xmatrix<>{{1.0, 1.0}});
     const auto result = sess.extend(seam_only.accumulator());
 
     BOOST_CHECK(result.kind == streaming::session::extend_result::kinds::k_noop);
@@ -372,7 +370,7 @@ BOOST_AUTO_TEST_CASE(extend_with_branch_ahead_of_watermark_pivots) {
     sess.sample_next(1);
 
     const auto duration_before = sess.active_trajectory()->duration();
-    const pinned_waypoints extension(xt::xarray<double>{{1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}});
+    const pinned_waypoints extension(xmatrix<>{{1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}});
     const auto result = sess.extend(extension.accumulator());
 
     // Generation incremented: a new active trajectory was produced (pivot).
@@ -397,7 +395,7 @@ BOOST_AUTO_TEST_CASE(pivot_preserves_active_epoch) {
     sess.sample_next(1);
 
     const auto pre_extend_epoch = sess.active_epoch();
-    const pinned_waypoints extension(xt::xarray<double>{{1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}});
+    const pinned_waypoints extension(xmatrix<>{{1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}});
     sess.extend(extension.accumulator());
 
     // Confirm a pivot actually happened, then assert epoch is preserved across it.
@@ -412,7 +410,7 @@ BOOST_AUTO_TEST_CASE(pivot_preserves_current_time) {
     sess.sample_next(3);
 
     const auto pre_extend_time = sess.current_time();
-    const pinned_waypoints extension(xt::xarray<double>{{1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}});
+    const pinned_waypoints extension(xmatrix<>{{1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}});
     sess.extend(extension.accumulator());
 
     // Confirm a pivot actually happened, then assert current_time is preserved across it.
@@ -441,7 +439,7 @@ BOOST_AUTO_TEST_CASE(pivot_whose_resume_offset_overshoots_candidate_stages) {
     // fixed margin. Setting period = D_cand - D_act/2 + margin makes that offset D_cand +
     // margin regardless of the actual durations.
     const auto d_act = reference_trajectory(three_waypoints()).duration();
-    const xt::xarray<double> merged{{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}, {1.0, 1.05}};
+    const xmatrix<> merged{{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}, {1.0, 1.05}};
     const auto d_cand = reference_trajectory(merged).duration();
 
     constexpr double k_margin_sec = 0.05;
@@ -459,7 +457,7 @@ BOOST_AUTO_TEST_CASE(pivot_whose_resume_offset_overshoots_candidate_stages) {
 
     // The tiny appended tail would pivot (the branch is ahead of the watermark), but the
     // resume offset overshoots, so the session must stage instead of throwing.
-    const pinned_waypoints extension(xt::xarray<double>{{1.0, 1.0}, {1.0, 1.05}});
+    const pinned_waypoints extension(xmatrix<>{{1.0, 1.0}, {1.0, 1.05}});
     streaming::session::extend_result result{};
     BOOST_CHECK_NO_THROW(result = sess.extend(extension.accumulator()));
     BOOST_CHECK_EQUAL(sess.trajectory_generation_count(), 1U);
@@ -487,7 +485,7 @@ BOOST_AUTO_TEST_CASE(overshoot_stage_then_drain_consumes_the_staged_batch) {
     //
     // Construction mirrors the staging test above.
     const auto d_act = reference_trajectory(three_waypoints()).duration();
-    const xt::xarray<double> merged{{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}, {1.0, 1.05}};
+    const xmatrix<> merged{{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}, {1.0, 1.05}};
     const auto d_cand = reference_trajectory(merged).duration();
 
     constexpr double k_margin_sec = 0.05;
@@ -498,14 +496,14 @@ BOOST_AUTO_TEST_CASE(overshoot_stage_then_drain_consumes_the_staged_batch) {
     sess.extend(initial.accumulator());
     sess.sample_next(2);  // park the watermark at D_act/2: mid-grid and ahead of the branch
 
-    const pinned_waypoints extension(xt::xarray<double>{{1.0, 1.0}, {1.0, 1.05}});
+    const pinned_waypoints extension(xmatrix<>{{1.0, 1.0}, {1.0, 1.05}});
     sess.extend(extension.accumulator());
     BOOST_REQUIRE_EQUAL(sess.trajectory_generation_count(), 1U);  // staged, not pivoted
 
     // Precondition: the rebuild rebase_ will attempt ({active terminal waypoint} + {staged
     // tail}) is shorter than one sample period, so the unfixed resume-at-sample_period_ offset
     // overshoots. This is the regime the fix must handle by consuming the batch, not dropping.
-    const auto d_rebuild = reference_trajectory(xt::xarray<double>{{1.0, 1.0}, {1.0, 1.05}}).duration();
+    const auto d_rebuild = reference_trajectory(xmatrix<>{{1.0, 1.0}, {1.0, 1.05}}).duration();
     BOOST_REQUIRE_GE(period, d_rebuild.count());
 
     // Draining past the active's terminal triggers the rebase. It must consume the staged tail,
@@ -519,7 +517,7 @@ BOOST_AUTO_TEST_CASE(overshoot_stage_then_drain_consumes_the_staged_batch) {
     // The batch's motion was delivered: the last emitted sample reaches the final waypoint.
     BOOST_REQUIRE(!drained.empty());
     const auto& terminal = drained.back();
-    const xt::xarray<double> final_waypoint{1.0, 1.05};
+    const xvector<> final_waypoint{1.0, 1.05};
     BOOST_CHECK(configs_match(terminal.configuration, final_waypoint, 1e-3));
 
     // The short-rebuild terminal is a true rest-to-rest endpoint, so it has zero velocity and
@@ -558,7 +556,7 @@ BOOST_AUTO_TEST_CASE(extend_with_branch_behind_watermark_stages) {
     BOOST_REQUIRE(initial_active != nullptr);
     sess.sample_at_least(initial_active->duration());
 
-    const pinned_waypoints extension(xt::xarray<double>{{1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}});
+    const pinned_waypoints extension(xmatrix<>{{1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}});
     const auto result = sess.extend(extension.accumulator());
 
     // Stage: no new trajectory became active, so the generation count is unchanged.
@@ -583,7 +581,7 @@ BOOST_AUTO_TEST_CASE(staged_batch_rebases_when_sampling_past_terminal) {
 
     sess.sample_at_least(initial_duration);  // exhaust the active before extending
 
-    const pinned_waypoints extension(xt::xarray<double>{{1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}});
+    const pinned_waypoints extension(xmatrix<>{{1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}});
     sess.extend(extension.accumulator());
 
     // After extend: stage. Generation count is still 1.
@@ -611,7 +609,7 @@ BOOST_AUTO_TEST_CASE(rebase_seam_configuration_is_continuous) {
 
     sess.sample_at_least(initial_duration);
 
-    const pinned_waypoints extension(xt::xarray<double>{{1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}});
+    const pinned_waypoints extension(xmatrix<>{{1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}});
     sess.extend(extension.accumulator());
 
     const auto post_rebase_samples = sess.sample_next(1);
@@ -639,7 +637,7 @@ BOOST_AUTO_TEST_CASE(rebase_seam_time_keeps_flowing_forward) {
     sess.sample_at_least(initial_duration);
     const auto pre_rebase_time = sess.current_time();
     BOOST_REQUIRE_EQUAL(sess.trajectory_generation_count(), 1U);
-    const pinned_waypoints extension(xt::xarray<double>{{1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}});
+    const pinned_waypoints extension(xmatrix<>{{1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}});
     sess.extend(extension.accumulator());
     const auto post_rebase_samples = sess.sample_next(1);
     BOOST_REQUIRE_EQUAL(post_rebase_samples.size(), 1U);
@@ -667,13 +665,13 @@ BOOST_AUTO_TEST_CASE(staged_batch_that_fails_to_build_surfaces_as_error_at_rebas
     // Drain to the terminal so the next extend stages (branch behind the watermark), locking out.
     sess.sample_at_least(sess.active_trajectory()->duration());
 
-    const pinned_waypoints good(xt::xarray<double>{{1.0, 1.0}, {2.0, 1.0}});
+    const pinned_waypoints good(xmatrix<>{{1.0, 1.0}, {2.0, 1.0}});
     sess.extend(good.accumulator());
     BOOST_REQUIRE_EQUAL(sess.trajectory_generation_count(), 1U);  // staged, locked out
 
     // Locked out: this batch is recorded, not built. Its tail {2,1} duplicates the prior staged
     // waypoint, so the eventual rebuild {1,1},{2,1},{2,1} carries a zero-length segment.
-    const pinned_waypoints bad(xt::xarray<double>{{2.0, 1.0}, {2.0, 1.0}});
+    const pinned_waypoints bad(xmatrix<>{{2.0, 1.0}, {2.0, 1.0}});
     BOOST_REQUIRE_NO_THROW(sess.extend(bad.accumulator()));  // locked-out extend defers the build
 
     // Draining fires the rebase, whose build fails. It must surface as an exception (the C ABI
@@ -698,19 +696,19 @@ BOOST_AUTO_TEST_CASE(repeated_admissible_extends_compose_into_long_trajectory) {
     // fully merged waypoint set.
     auto sess = fresh_session();
 
-    const pinned_waypoints batch_1(xt::xarray<double>{{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}});
+    const pinned_waypoints batch_1(xmatrix<>{{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}});
     sess.extend(batch_1.accumulator());
     BOOST_REQUIRE_EQUAL(sess.trajectory_generation_count(), 1U);
 
-    const pinned_waypoints batch_2(xt::xarray<double>{{1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}});
+    const pinned_waypoints batch_2(xmatrix<>{{1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}});
     sess.extend(batch_2.accumulator());
     BOOST_REQUIRE_EQUAL(sess.trajectory_generation_count(), 2U);
 
-    const pinned_waypoints batch_3(xt::xarray<double>{{2.0, 2.0}, {3.0, 2.0}});
+    const pinned_waypoints batch_3(xmatrix<>{{2.0, 2.0}, {3.0, 2.0}});
     sess.extend(batch_3.accumulator());
     BOOST_REQUIRE_EQUAL(sess.trajectory_generation_count(), 3U);
 
-    const xt::xarray<double> merged{
+    const xmatrix<> merged{
         {0.0, 0.0},
         {1.0, 0.0},
         {1.0, 1.0},
@@ -738,14 +736,14 @@ BOOST_AUTO_TEST_CASE(mixed_pivot_and_stage_eventually_drains_all_input) {
 
     // Sample one tick, then extend (a pivot).
     sess.sample_next(1);
-    const pinned_waypoints pivot_batch(xt::xarray<double>{{1.0, 1.0}, {2.0, 1.0}});
+    const pinned_waypoints pivot_batch(xmatrix<>{{1.0, 1.0}, {2.0, 1.0}});
     sess.extend(pivot_batch.accumulator());
     BOOST_REQUIRE_EQUAL(sess.trajectory_generation_count(), 2U);
 
     // Sample past where the next extend's branch will lie, forcing it to stage.
     const auto duration_before_stage = sess.active_trajectory()->duration();
     sess.sample_at_least(duration_before_stage);
-    const pinned_waypoints stage_batch(xt::xarray<double>{{2.0, 1.0}, {2.0, 2.0}});
+    const pinned_waypoints stage_batch(xmatrix<>{{2.0, 1.0}, {2.0, 2.0}});
     sess.extend(stage_batch.accumulator());
     BOOST_REQUIRE_EQUAL(sess.trajectory_generation_count(), 2U);  // staged, not pivoted
 
@@ -772,13 +770,13 @@ BOOST_AUTO_TEST_CASE(multi_batch_staging_accumulates_into_single_rebase) {
     // Drain to the terminal so the next extend stages (branch behind the watermark), locking out.
     sess.sample_at_least(initial_duration);
 
-    const pinned_waypoints batch_a(xt::xarray<double>{{1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}});
+    const pinned_waypoints batch_a(xmatrix<>{{1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}});
     const auto first_stage = sess.extend(batch_a.accumulator());
     BOOST_REQUIRE_EQUAL(sess.trajectory_generation_count(), 1U);  // staged, locked out
     BOOST_CHECK(first_stage.kind == streaming::session::extend_result::kinds::k_staged_branch_sampled);
 
     // Second extend arrives while locked out: it accumulates onto staging rather than rebasing.
-    const pinned_waypoints batch_b(xt::xarray<double>{{2.0, 2.0}, {3.0, 2.0}});
+    const pinned_waypoints batch_b(xmatrix<>{{2.0, 2.0}, {3.0, 2.0}});
     const auto second_stage = sess.extend(batch_b.accumulator());
     BOOST_REQUIRE_EQUAL(sess.trajectory_generation_count(), 1U);  // still just accumulated
 
@@ -798,7 +796,7 @@ BOOST_AUTO_TEST_CASE(multi_batch_staging_accumulates_into_single_rebase) {
     // Both batches folded in: the terminal reaches batch_b's last waypoint {3,2} at rest. Had
     // accumulation dropped or misassembled batch_b, the terminal would be batch_a's last, {2,2}.
     const auto& terminal = drained.back();
-    const xt::xarray<double> final_waypoint{3.0, 2.0};
+    const xvector<> final_waypoint{3.0, 2.0};
     BOOST_CHECK(configs_match(terminal.configuration, final_waypoint, 1e-3));
     BOOST_REQUIRE_EQUAL(terminal.velocity.shape(0), 2U);
     BOOST_REQUIRE_EQUAL(terminal.acceleration.shape(0), 2U);
@@ -853,7 +851,7 @@ BOOST_AUTO_TEST_CASE(extend_after_exhaustion_eventually_starts_new_chain) {
 
     sess.sample_at_least(initial_duration * 2.0);  // drain to empty
 
-    const pinned_waypoints extension(xt::xarray<double>{{1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}});
+    const pinned_waypoints extension(xmatrix<>{{1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}});
     sess.extend(extension.accumulator());
 
     // Extend on an exhausted session: stages, no new active built yet.
@@ -906,7 +904,7 @@ BOOST_AUTO_TEST_CASE(final_emitted_sample_after_rebase_lies_at_rebased_terminal_
     sess.sample_at_least(initial_duration);  // drain the initial chain through its terminal
 
     // Stage an extension by extending while the watermark sits at the terminal.
-    const pinned_waypoints extension(xt::xarray<double>{{1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}});
+    const pinned_waypoints extension(xmatrix<>{{1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}});
     sess.extend(extension.accumulator());
     BOOST_REQUIRE_EQUAL(sess.trajectory_generation_count(), 1U);
 
@@ -955,7 +953,7 @@ BOOST_AUTO_TEST_CASE(remaining_active_duration_is_measured_in_global_time) {
 
     // Drain to the terminal, stage a batch, then sample once more to fire the rebase.
     sess.sample_at_least(sess.active_trajectory()->duration());
-    const pinned_waypoints extension(xt::xarray<double>{{1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}});
+    const pinned_waypoints extension(xmatrix<>{{1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}});
     sess.extend(extension.accumulator());
     sess.sample_next(1);
     BOOST_REQUIRE_EQUAL(sess.trajectory_generation_count(), 2U);

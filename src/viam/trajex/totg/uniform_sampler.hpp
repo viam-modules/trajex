@@ -86,7 +86,22 @@ class uniform_sampler {
     static std::size_t calculate_quantized_samples(double duration_sec, double frequency_hz);
 
     ///
+    /// Advances the cursor to the next sample time.
+    ///
+    /// Positions the cursor without producing a sample, leaving the caller to decide whether
+    /// to build one and where to put it.
+    ///
+    /// @param cursor Cursor to advance
+    /// @return True if the cursor was advanced, false if the trajectory is exhausted
+    ///
+    bool advance(trajectory::cursor& cursor);
+
+    ///
     /// Gets next sample, advancing cursor by dt.
+    ///
+    /// Equivalent to `advance()` followed by `cursor.sample()`. Allocates a sample per call;
+    /// callers sampling in a loop should prefer `advance()` with the cursor's filling
+    /// `sample()` overload and reuse one destination.
     ///
     /// @param cursor Cursor to sample and advance
     /// @return Sample at current cursor time, or nullopt if past trajectory end

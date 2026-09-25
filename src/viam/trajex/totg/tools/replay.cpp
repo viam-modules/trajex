@@ -7,12 +7,6 @@
 
 #include <json/json.h>
 
-#if __has_include(<xtensor/containers/xarray.hpp>)
-#include <xtensor/containers/xarray.hpp>
-#else
-#include <xtensor/xarray.hpp>
-#endif
-
 #if __has_include(<xtensor/core/xmath.hpp>)
 #include <xtensor/core/xmath.hpp>
 #else
@@ -21,7 +15,7 @@
 
 namespace viam::trajex::totg {
 
-std::pair<planner_base::config, xt::xarray<double>> parse_replay_record(std::istream& in) {
+std::pair<planner_base::config, xmatrix<>> parse_replay_record(std::istream& in) {
     Json::Value root;
     const Json::CharReaderBuilder reader;
     std::string errs;
@@ -53,17 +47,17 @@ std::pair<planner_base::config, xt::xarray<double>> parse_replay_record(std::ist
     const auto dof = static_cast<std::size_t>(vel_json.size());
     const auto num_waypoints = static_cast<std::size_t>(wps_json.size());
 
-    xt::xarray<double> velocity_limits = xt::zeros<double>(std::vector<std::size_t>{dof});
+    xvector<> velocity_limits = xt::zeros<double>(std::vector<std::size_t>{dof});
     for (Json::ArrayIndex i = 0; i < vel_json.size(); ++i) {
         velocity_limits(i) = vel_json[i].asDouble();
     }
 
-    xt::xarray<double> acceleration_limits = xt::zeros<double>(std::vector<std::size_t>{static_cast<std::size_t>(acc_json.size())});
+    xvector<> acceleration_limits = xt::zeros<double>(std::vector<std::size_t>{static_cast<std::size_t>(acc_json.size())});
     for (Json::ArrayIndex i = 0; i < acc_json.size(); ++i) {
         acceleration_limits(i) = acc_json[i].asDouble();
     }
 
-    xt::xarray<double> waypoints = xt::zeros<double>(std::vector<std::size_t>{num_waypoints, dof});
+    xmatrix<> waypoints = xt::zeros<double>(std::vector<std::size_t>{num_waypoints, dof});
     for (Json::ArrayIndex i = 0; i < wps_json.size(); ++i) {
         const auto& wp = wps_json[i];
         if (!wp.isArray() || static_cast<std::size_t>(wp.size()) != dof) {
@@ -99,7 +93,7 @@ std::pair<planner_base::config, xt::xarray<double>> parse_replay_record(std::ist
             throw std::runtime_error("model_table must be a non-empty array of rows");
         }
         const auto rows = static_cast<std::size_t>(mt_json.size());
-        xt::xarray<double> model_table = xt::zeros<double>(std::vector<std::size_t>{rows, std::size_t{10}});
+        xmatrix<> model_table = xt::zeros<double>(std::vector<std::size_t>{rows, std::size_t{10}});
         for (Json::ArrayIndex i = 0; i < mt_json.size(); ++i) {
             const auto& row = mt_json[i];
             if (!row.isArray() || row.size() != 10) {
@@ -122,7 +116,7 @@ std::pair<planner_base::config, xt::xarray<double>> parse_replay_record(std::ist
     return {std::move(cfg), std::move(waypoints)};
 }
 
-std::pair<planner_base::config, xt::xarray<double>> parse_replay_record(const std::filesystem::path& path) {
+std::pair<planner_base::config, xmatrix<>> parse_replay_record(const std::filesystem::path& path) {
     std::ifstream in(path);
     if (!in) {
         throw std::runtime_error("failed to open replay record file: " + path.string());
@@ -140,7 +134,7 @@ replay_planner replay_planner::create(std::istream& in, std::optional<std::size_
 
     // Validate prefix request up-front so callers see a clear error before the planner is constructed.
     // When a prefix shorter than the full set is requested, materialize the leading rows into a fresh
-    // xarray and drop the original. The remainder of this function then runs unchanged against `waypoints`.
+    // matrix and drop the original. The remainder of this function then runs unchanged against `waypoints`.
     const auto total_waypoints = waypoints.shape(0);
     if (prefix_waypoint_count.has_value()) {
         if (*prefix_waypoint_count == 0 || *prefix_waypoint_count > total_waypoints) {
@@ -148,7 +142,7 @@ replay_planner replay_planner::create(std::istream& in, std::optional<std::size_
                                     " is out of range for a record with " + std::to_string(total_waypoints) + " waypoints");
         }
         if (*prefix_waypoint_count < total_waypoints) {
-            xt::xarray<double> prefix = xt::view(waypoints, xt::range(std::size_t{0}, *prefix_waypoint_count), xt::all());
+            xmatrix<> prefix = xt::view(waypoints, xt::range(std::size_t{0}, *prefix_waypoint_count), xt::all());
             waypoints = std::move(prefix);
         }
     }

@@ -16,7 +16,7 @@
 
 namespace viam::trajex::totg::test {
 
-bool configs_close(const xt::xarray<double>& a, const xt::xarray<double>& b, double tolerance) {
+bool configs_close(const xvector<>& a, const xvector<>& b, double tolerance) {
     if (a.shape(0) != b.shape(0)) {
         return false;
     }
@@ -28,11 +28,11 @@ bool configs_close(const xt::xarray<double>& a, const xt::xarray<double>& b, dou
     return true;
 }
 
-void verify_path_visits_waypoints(const path& p, const xt::xarray<double>& waypoints, double max_deviation) {
+void verify_path_visits_waypoints(const path& p, const xmatrix<>& waypoints, double max_deviation) {
     using namespace viam::trajex;
 
     for (size_t i = 0; i < waypoints.shape(0); ++i) {
-        const xt::xarray<double> waypoint = xt::view(waypoints, i, xt::all());
+        const xvector<> waypoint = xt::view(waypoints, i, xt::all());
 
         // Find minimum distance from waypoint to any point on path
         double min_distance = std::numeric_limits<double>::max();

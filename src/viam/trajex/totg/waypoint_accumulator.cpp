@@ -4,7 +4,7 @@
 
 namespace viam::trajex::totg {
 
-waypoint_accumulator::waypoint_accumulator(const xt::xarray<double>& waypoints) {
+waypoint_accumulator::waypoint_accumulator(const xmatrix<>& waypoints) {
     if (waypoints.dimension() != 2) {
         throw std::invalid_argument{"Waypoints must be 2-dimensional"};
     }
@@ -43,7 +43,7 @@ waypoint_accumulator& waypoint_accumulator::operator=(const waypoint_accumulator
 
 waypoint_accumulator& waypoint_accumulator::operator=(waypoint_accumulator&&) noexcept = default;
 
-waypoint_accumulator& waypoint_accumulator::add_waypoints(const xt::xarray<double>& waypoints) {
+waypoint_accumulator& waypoint_accumulator::add_waypoints(const xmatrix<>& waypoints) {
     if (waypoints.dimension() != 2) {
         throw std::invalid_argument{"Waypoints must be 2-dimensional"};
     }

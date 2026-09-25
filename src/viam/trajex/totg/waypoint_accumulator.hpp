@@ -4,15 +4,15 @@
 #include <utility>
 #include <vector>
 
-#if __has_include(<xtensor/containers/xarray.hpp>)
-#include <xtensor/containers/xarray.hpp>
+#if __has_include(<xtensor/views/xview.hpp>)
 #include <xtensor/views/xslice.hpp>
 #include <xtensor/views/xview.hpp>
 #else
-#include <xtensor/xarray.hpp>
 #include <xtensor/xslice.hpp>
 #include <xtensor/xview.hpp>
 #endif
+
+#include <viam/trajex/types/xt.hpp>
 
 namespace viam::trajex::totg {
 
@@ -34,7 +34,7 @@ class waypoint_accumulator {
     ///
     /// View type for individual waypoints.
     ///
-    using waypoint_view_t = decltype(xt::view(std::declval<const xt::xarray<double>&>(), std::declval<size_t>(), xt::all()));
+    using waypoint_view_t = decltype(xt::view(std::declval<const xmatrix<>&>(), std::declval<size_t>(), xt::all()));
 
     ///
     /// Constructs with initial waypoints.
@@ -42,8 +42,8 @@ class waypoint_accumulator {
     /// @param waypoints 2D array (num_waypoints, num_joints)
     /// @note The waypoints array must outlive the waypoint_accumulator object
     ///
-    explicit waypoint_accumulator(const xt::xarray<double>& waypoints);
-    explicit waypoint_accumulator(xt::xarray<double>&& waypoints) = delete;
+    explicit waypoint_accumulator(const xmatrix<>& waypoints);
+    explicit waypoint_accumulator(xmatrix<>&& waypoints) = delete;
 
     ///
     /// Constructs with a single waypoint view.
@@ -84,8 +84,8 @@ class waypoint_accumulator {
     /// @return Reference to this for method chaining
     /// @note The waypoints array must outlive the waypoint_accumulator object
     ///
-    waypoint_accumulator& add_waypoints(const xt::xarray<double>& waypoints);
-    waypoint_accumulator& add_waypoints(xt::xarray<double>&& waypoints) = delete;
+    waypoint_accumulator& add_waypoints(const xmatrix<>& waypoints);
+    waypoint_accumulator& add_waypoints(xmatrix<>&& waypoints) = delete;
 
     ///
     /// Adds a single waypoint view.

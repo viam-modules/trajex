@@ -17,12 +17,10 @@
 #include <variant>
 #include <version>
 
-#if __has_include(<xtensor/containers/xarray.hpp>)
-#include <xtensor/containers/xarray.hpp>
+#if __has_include(<xtensor/views/xview.hpp>)
 #include <xtensor/views/xslice.hpp>
 #include <xtensor/views/xview.hpp>
 #else
-#include <xtensor/xarray.hpp>
 #include <xtensor/xslice.hpp>
 #include <xtensor/xview.hpp>
 #endif
@@ -34,19 +32,30 @@
 #include <viam/trajex/totg/waypoint_accumulator.hpp>
 #include <viam/trajex/totg/waypoint_utils.hpp>
 #include <viam/trajex/types/hertz.hpp>
+#include <viam/trajex/types/xt.hpp>
 
 // The opaque tensor-map type. Forward-declared in the C header; the full
 // definition lives here so callers see only an opaque pointer.
 //
-// Storage is a variant of owning xtensor arrays. The variant index
-// corresponds 1:1 with `viam_trajex_dtype_t` values, and the alternative
-// types carry both the typed data and the shape, eliminating any need for
-// a parallel raw-byte representation or a separate dtype field. Trajex
-// hand-off is a direct const-ref pull via std::get; caller-facing view
-// queries are std::visit dispatches that expose the xarray's data and
-// shape pointers without copying.
+// Storage is a variant of owning xtensor arrays over element type and rank,
+// so an alternative carries the dtype and the rank as well as the data and
+// shape: no parallel raw-byte representation, no separate dtype field, and
+// no runtime rank check anywhere behind this boundary. Trajex hand-off is a
+// direct const-ref pull via std::get, which is why the alternatives are the
+// same types trajex itself uses; caller-facing view queries are std::visit
+// dispatches that expose data and shape pointers without copying.
+//
+// Rank is capped at 2 because that is what the API carries -- waypoints and
+// sample blocks are matrices, limits and time vectors are vectors -- and
+// because converting a dynamically ranked array to a statically ranked one
+// of the wrong rank is silent undefined behaviour in xtensor rather than an
+// error. Enumerating the ranks here makes that conversion unreachable: the
+// rank is decided once, at insert, against the caller's own dims.
 struct viam_trajex_tensor_map {
-    using tensor_value = std::variant<xt::xarray<double>, xt::xarray<std::int64_t>>;
+    using tensor_value = std::variant<viam::trajex::xvector<double>,
+                                      viam::trajex::xmatrix<double>,
+                                      viam::trajex::xvector<std::int64_t>,
+                                      viam::trajex::xmatrix<std::int64_t>>;
 
     // Transparent hasher for heterogeneous lookup. std::unordered_map's
     // C++20 heterogeneous lookup requires a hash type with `is_transparent`;
@@ -136,47 +145,70 @@ auto find_tensor(const Map& map, std::string_view key) {
 #endif
 }
 
-// Resolve a required input by key, returning the typed xarray reference.
-// Throws std::invalid_argument if the key is missing or carries a
-// different element type than `T`.
-template <typename T>
-const xt::xarray<T>& require_xarray(const viam_trajex_tensor_map& inputs, std::string_view key) {
+// Describes what the caller actually stored, for diagnostics when the
+// alternative they asked for is not the one present.
+std::string describe_tensor(const viam_trajex_tensor_map::tensor_value& value) {
+    return std::visit(
+        [](const auto& tensor) {
+            using element_t = typename std::decay_t<decltype(tensor)>::value_type;
+            std::ostringstream oss;
+            oss << (std::is_same_v<element_t, double> ? "f64" : "i64") << " rank-" << tensor.dimension();
+            return oss.str();
+        },
+        value);
+}
+
+// Names the alternative a call site asked for, to pair with describe_tensor.
+template <typename A>
+std::string describe_requested() {
+    std::ostringstream oss;
+    oss << (std::is_same_v<typename A::value_type, double> ? "f64" : "i64") << " rank-" << A::rank;
+    return oss.str();
+}
+
+// Resolve a required input by key, returning a reference to the stored array.
+// `A` names both the element type and the rank, so a call site that asks for a
+// matrix cannot be handed a vector. Throws std::invalid_argument if the key is
+// missing or holds a different alternative.
+template <typename A>
+const A& require_tensor(const viam_trajex_tensor_map& inputs, std::string_view key) {
     const auto it = find_tensor(inputs.tensors, key);
     if (it == inputs.tensors.end()) {
         std::ostringstream oss;
         oss << "missing required input: " << key;
         throw std::invalid_argument(oss.str());
     }
-    const auto* ptr = std::get_if<xt::xarray<T>>(&it->second);
+    const auto* ptr = std::get_if<A>(&it->second);
     if (ptr == nullptr) {
         std::ostringstream oss;
-        oss << "input '" << key << "' has wrong dtype";
+        oss << "input '" << key << "' is " << describe_tensor(it->second) << ", expected " << describe_requested<A>();
         throw std::invalid_argument(oss.str());
     }
     return *ptr;
 }
 
 // Resolve an optional input by key. Returns nullptr if the key is missing.
-// Throws std::invalid_argument if the key is present but carries a
-// different element type than `T`.
-template <typename T>
-const xt::xarray<T>* find_xarray(const viam_trajex_tensor_map& inputs, std::string_view key) {
+// Throws std::invalid_argument if the key is present but holds a different
+// alternative than `A`.
+template <typename A>
+const A* find_optional_tensor(const viam_trajex_tensor_map& inputs, std::string_view key) {
     const auto it = find_tensor(inputs.tensors, key);
     if (it == inputs.tensors.end()) {
         return nullptr;
     }
-    const auto* ptr = std::get_if<xt::xarray<T>>(&it->second);
+    const auto* ptr = std::get_if<A>(&it->second);
     if (ptr == nullptr) {
         std::ostringstream oss;
-        oss << "input '" << key << "' has wrong dtype";
+        oss << "input '" << key << "' is " << describe_tensor(it->second) << ", expected " << describe_requested<A>();
         throw std::invalid_argument(oss.str());
     }
     return ptr;
 }
 
+// Rank is carried by the type the accessors return, so these check extent only.
 template <typename T>
-void require_shape_1d(const xt::xarray<T>& xarray, std::string_view key, std::size_t expected_size) {
-    if (xarray.dimension() != 1 || xarray.shape(0) != expected_size) {
+void require_size(const viam::trajex::xvector<T>& vector, std::string_view key, std::size_t expected_size) {
+    if (vector.shape(0) != expected_size) {
         std::ostringstream oss;
         oss << "input '" << key << "' has wrong shape (expected 1D [" << expected_size << "])";
         throw std::invalid_argument(oss.str());
@@ -184,8 +216,8 @@ void require_shape_1d(const xt::xarray<T>& xarray, std::string_view key, std::si
 }
 
 template <typename T>
-void require_scalar(const xt::xarray<T>& xarray, std::string_view key) {
-    if (xarray.dimension() != 1 || xarray.shape(0) != 1) {
+void require_scalar(const viam::trajex::xvector<T>& vector, std::string_view key) {
+    if (vector.shape(0) != 1) {
         std::ostringstream oss;
         oss << "input '" << key << "' must be a scalar (shape [1])";
         throw std::invalid_argument(oss.str());
@@ -202,38 +234,37 @@ viam_trajex_tensor_map totg_generate_impl(const viam_trajex_tensor_map& inputs) 
 
     // Required inputs
 
-    const auto& waypoints = require_xarray<double>(inputs, viam_trajex_totg_key_waypoints_rads);
-    if (waypoints.dimension() != 2) {
-        throw std::invalid_argument("waypoints_rads must be 2D [n_waypoints, n_dof]");
-    }
+    const auto& waypoints = require_tensor<viam::trajex::xmatrix<double>>(inputs, viam_trajex_totg_key_waypoints_rads);
     const auto n_dof = waypoints.shape(1);
 
-    const auto& velocity_limits = require_xarray<double>(inputs, viam_trajex_totg_key_velocity_limits_rads_per_sec);
-    require_shape_1d(velocity_limits, viam_trajex_totg_key_velocity_limits_rads_per_sec, n_dof);
+    const auto& velocity_limits = require_tensor<viam::trajex::xvector<double>>(inputs, viam_trajex_totg_key_velocity_limits_rads_per_sec);
+    require_size(velocity_limits, viam_trajex_totg_key_velocity_limits_rads_per_sec, n_dof);
 
-    const auto& acceleration_limits = require_xarray<double>(inputs, viam_trajex_totg_key_acceleration_limits_rads_per_sec2);
-    require_shape_1d(acceleration_limits, viam_trajex_totg_key_acceleration_limits_rads_per_sec2, n_dof);
+    const auto& acceleration_limits =
+        require_tensor<viam::trajex::xvector<double>>(inputs, viam_trajex_totg_key_acceleration_limits_rads_per_sec2);
+    require_size(acceleration_limits, viam_trajex_totg_key_acceleration_limits_rads_per_sec2, n_dof);
 
-    const auto& path_tolerance_xa = require_xarray<double>(inputs, viam_trajex_totg_key_path_tolerance_delta_rads);
+    const auto& path_tolerance_xa = require_tensor<viam::trajex::xvector<double>>(inputs, viam_trajex_totg_key_path_tolerance_delta_rads);
     require_scalar(path_tolerance_xa, viam_trajex_totg_key_path_tolerance_delta_rads);
     const auto path_tolerance = path_tolerance_xa(0);
 
     // Optional inputs
 
     auto colinearization_ratio = k_default_colinearization_ratio;
-    if (const auto* xa = find_xarray<double>(inputs, viam_trajex_totg_key_path_colinearization_ratio)) {
+    if (const auto* xa = find_optional_tensor<viam::trajex::xvector<double>>(inputs, viam_trajex_totg_key_path_colinearization_ratio)) {
         require_scalar(*xa, viam_trajex_totg_key_path_colinearization_ratio);
         colinearization_ratio = (*xa)(0);
     }
 
     auto dedup_tolerance = k_default_dedup_tolerance;
-    if (const auto* xa = find_xarray<double>(inputs, viam_trajex_totg_key_waypoint_deduplication_tolerance_rads)) {
+    if (const auto* xa =
+            find_optional_tensor<viam::trajex::xvector<double>>(inputs, viam_trajex_totg_key_waypoint_deduplication_tolerance_rads)) {
         require_scalar(*xa, viam_trajex_totg_key_waypoint_deduplication_tolerance_rads);
         dedup_tolerance = (*xa)(0);
     }
 
     auto sampling_freq = k_default_sampling_freq_hz;
-    if (const auto* xa = find_xarray<double>(inputs, viam_trajex_totg_key_trajectory_sampling_freq_hz)) {
+    if (const auto* xa = find_optional_tensor<viam::trajex::xvector<double>>(inputs, viam_trajex_totg_key_trajectory_sampling_freq_hz)) {
         require_scalar(*xa, viam_trajex_totg_key_trajectory_sampling_freq_hz);
         sampling_freq = (*xa)(0);
     }
@@ -263,11 +294,10 @@ viam_trajex_tensor_map totg_generate_impl(const viam_trajex_tensor_map& inputs) 
         throw std::logic_error("internal: sampler produced no samples");
     }
 
-    using shape_t = typename xt::xarray<double>::shape_type;
-    xt::xarray<double> times(shape_t{n_samples});
-    xt::xarray<double> configurations(shape_t{n_samples, n_dof});
-    xt::xarray<double> velocities(shape_t{n_samples, n_dof});
-    xt::xarray<double> accelerations(shape_t{n_samples, n_dof});
+    viam::trajex::xvector<double> times(viam::trajex::xvector<double>::shape_type{n_samples});
+    viam::trajex::xmatrix<double> configurations(viam::trajex::xmatrix<double>::shape_type{n_samples, n_dof});
+    viam::trajex::xmatrix<double> velocities(viam::trajex::xmatrix<double>::shape_type{n_samples, n_dof});
+    viam::trajex::xmatrix<double> accelerations(viam::trajex::xmatrix<double>::shape_type{n_samples, n_dof});
 
     std::size_t idx = 0;
     for (const auto& sample : traj.samples(sampler)) {
@@ -302,25 +332,23 @@ viam_trajex_tensor_map totg_generate_impl(const viam_trajex_tensor_map& inputs) 
 std::unique_ptr<viam_trajex_totg_streaming_session> build_streaming_session(const viam_trajex_tensor_map& options) {
     namespace totg = viam::trajex::totg;
 
-    const auto& velocity_limits = require_xarray<double>(options, viam_trajex_totg_key_velocity_limits_rads_per_sec);
-    if (velocity_limits.dimension() != 1) {
-        throw std::invalid_argument("velocity_limits_rads_per_sec must be 1D [n_dof]");
-    }
+    const auto& velocity_limits = require_tensor<viam::trajex::xvector<double>>(options, viam_trajex_totg_key_velocity_limits_rads_per_sec);
     const auto n_dof = velocity_limits.shape(0);
 
-    const auto& acceleration_limits = require_xarray<double>(options, viam_trajex_totg_key_acceleration_limits_rads_per_sec2);
-    require_shape_1d(acceleration_limits, viam_trajex_totg_key_acceleration_limits_rads_per_sec2, n_dof);
+    const auto& acceleration_limits =
+        require_tensor<viam::trajex::xvector<double>>(options, viam_trajex_totg_key_acceleration_limits_rads_per_sec2);
+    require_size(acceleration_limits, viam_trajex_totg_key_acceleration_limits_rads_per_sec2, n_dof);
 
-    const auto& path_tolerance_xa = require_xarray<double>(options, viam_trajex_totg_key_path_tolerance_delta_rads);
+    const auto& path_tolerance_xa = require_tensor<viam::trajex::xvector<double>>(options, viam_trajex_totg_key_path_tolerance_delta_rads);
     require_scalar(path_tolerance_xa, viam_trajex_totg_key_path_tolerance_delta_rads);
     const auto path_tolerance = path_tolerance_xa(0);
 
-    const auto& sample_rate_xa = require_xarray<double>(options, viam_trajex_totg_key_trajectory_sampling_freq_hz);
+    const auto& sample_rate_xa = require_tensor<viam::trajex::xvector<double>>(options, viam_trajex_totg_key_trajectory_sampling_freq_hz);
     require_scalar(sample_rate_xa, viam_trajex_totg_key_trajectory_sampling_freq_hz);
     const auto sample_rate_hz = sample_rate_xa(0);
 
     auto colinearization_ratio = k_default_colinearization_ratio;
-    if (const auto* xa = find_xarray<double>(options, viam_trajex_totg_key_path_colinearization_ratio)) {
+    if (const auto* xa = find_optional_tensor<viam::trajex::xvector<double>>(options, viam_trajex_totg_key_path_colinearization_ratio)) {
         require_scalar(*xa, viam_trajex_totg_key_path_colinearization_ratio);
         colinearization_ratio = (*xa)(0);
     }
@@ -344,11 +372,10 @@ std::unique_ptr<viam_trajex_totg_streaming_session> build_streaming_session(cons
 viam_trajex_tensor_map materialize_samples(const std::vector<struct viam::trajex::totg::trajectory::sample>& samples, std::size_t n_dof) {
     const std::size_t n = samples.size();
 
-    using shape_t = typename xt::xarray<double>::shape_type;
-    xt::xarray<double> times = xt::zeros<double>(shape_t{n});
-    xt::xarray<double> configurations = xt::zeros<double>(shape_t{n, n_dof});
-    xt::xarray<double> velocities = xt::zeros<double>(shape_t{n, n_dof});
-    xt::xarray<double> accelerations = xt::zeros<double>(shape_t{n, n_dof});
+    viam::trajex::xvector<double> times = xt::zeros<double>(viam::trajex::xvector<double>::shape_type{n});
+    viam::trajex::xmatrix<double> configurations = xt::zeros<double>(viam::trajex::xmatrix<double>::shape_type{n, n_dof});
+    viam::trajex::xmatrix<double> velocities = xt::zeros<double>(viam::trajex::xmatrix<double>::shape_type{n, n_dof});
+    viam::trajex::xmatrix<double> accelerations = xt::zeros<double>(viam::trajex::xmatrix<double>::shape_type{n, n_dof});
 
     for (std::size_t i = 0; i < n; ++i) {
         times(i) = samples[i].time.count();
@@ -436,7 +463,7 @@ void viam_trajex_tensor_map_destroy(viam_trajex_tensor_map_t* tensor_map) {
     try {
         delete tensor_map;
     } catch (...) {  // NOLINT(bugprone-empty-catch)
-        // Variant of xt::xarray destruction is noexcept under our element
+        // Variant of xtensor destruction is noexcept under our element
         // types; this catch is purely a boundary discipline guarantee.
     }
 }
@@ -448,7 +475,9 @@ int viam_trajex_tensor_map_insert(viam_trajex_tensor_map_t* tensor_map,
                                   const std::size_t* dims,
                                   const void* data) {
     try {
-        if (!tensor_map || !key || rank < 1 || !dims || !data) {
+        // Rank is validated here and nowhere else: past this point it is part of
+        // the stored type, so every consumer gets it from the type system.
+        if (!tensor_map || !key || rank < 1 || rank > 2 || !dims || !data) {
             return -1;
         }
         if (!dtype_is_valid(dtype)) {
@@ -463,25 +492,33 @@ int viam_trajex_tensor_map_insert(viam_trajex_tensor_map_t* tensor_map,
         }
         const auto total_bytes = total_elements * dtype_size_bytes(dtype);
 
-        // Build the replacement xarray fully before touching the map, so
-        // a mid-call allocation failure leaves any prior entry intact.
+        // Build the replacement array fully before touching the map, so a
+        // mid-call allocation failure leaves any prior entry intact.
         // Move-assignment into the map slot is noexcept under our element
-        // types (xt::xarray move is noexcept).
-        using shape_t = typename xt::xarray<double>::shape_type;
-        const shape_t shape(dims, dims + rank);
+        // types (xtensor move is noexcept).
+        const auto store = [&]<typename A>(std::type_identity<A>) {
+            typename A::shape_type shape{};
+            std::copy_n(dims, A::rank, shape.begin());
+            A tensor(shape);
+            std::memcpy(tensor.data(), data, total_bytes);
+            tensor_map->tensors.insert_or_assign(std::string(key), std::move(tensor));
+        };
+
         switch (dtype) {
-            case VIAM_TRAJEX_DTYPE_F64: {
-                xt::xarray<double> xarray(shape);
-                std::memcpy(xarray.data(), data, total_bytes);
-                tensor_map->tensors.insert_or_assign(std::string(key), std::move(xarray));
+            case VIAM_TRAJEX_DTYPE_F64:
+                if (rank == 1) {
+                    store(std::type_identity<viam::trajex::xvector<double>>{});
+                } else {
+                    store(std::type_identity<viam::trajex::xmatrix<double>>{});
+                }
                 break;
-            }
-            case VIAM_TRAJEX_DTYPE_I64: {
-                xt::xarray<std::int64_t> xarray(shape);
-                std::memcpy(xarray.data(), data, total_bytes);
-                tensor_map->tensors.insert_or_assign(std::string(key), std::move(xarray));
+            case VIAM_TRAJEX_DTYPE_I64:
+                if (rank == 1) {
+                    store(std::type_identity<viam::trajex::xvector<std::int64_t>>{});
+                } else {
+                    store(std::type_identity<viam::trajex::xmatrix<std::int64_t>>{});
+                }
                 break;
-            }
         }
         return 0;
     } catch (...) {
@@ -633,10 +670,7 @@ int viam_trajex_totg_streaming_session_extend(viam_trajex_totg_streaming_session
         if (!batch) {
             throw std::invalid_argument("batch is null");
         }
-        const auto& waypoints = require_xarray<double>(*batch, viam_trajex_totg_key_waypoints_rads);
-        if (waypoints.dimension() != 2) {
-            throw std::invalid_argument("waypoints_rads must be 2D [n_waypoints, n_dof]");
-        }
+        const auto& waypoints = require_tensor<viam::trajex::xmatrix<double>>(*batch, viam_trajex_totg_key_waypoints_rads);
         if (waypoints.shape(1) != session->n_dof) {
             throw std::invalid_argument("waypoints_rads DOF does not match session DOF");
         }

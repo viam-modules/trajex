@@ -2,7 +2,7 @@
 
 #include <cmath>
 
-#if __has_include(<xtensor/containers/xarray.hpp>)
+#if __has_include(<xtensor/core/xmath.hpp>)
 #include <xtensor/core/xmath.hpp>
 #include <xtensor/reducers/xnorm.hpp>
 #else

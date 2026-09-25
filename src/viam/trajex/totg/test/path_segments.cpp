@@ -4,6 +4,7 @@
 #include <viam/trajex/totg/path.hpp>
 #include <viam/trajex/types/angles.hpp>
 #include <viam/trajex/types/arc_length.hpp>
+#include <viam/trajex/types/xt.hpp>
 
 #if __has_include(<xtensor/reducers/xnorm.hpp>)
 #include <xtensor/reducers/xnorm.hpp>
@@ -18,13 +19,15 @@
 BOOST_AUTO_TEST_SUITE(segment_tests)
 
 using viam::trajex::degrees_to_radians;
+using viam::trajex::xmatrix;
+using viam::trajex::xvector;
 BOOST_AUTO_TEST_CASE(linear_constructor) {
     using namespace viam::trajex::totg;
     using viam::trajex::arc_length;
 
     // Should be able to create linear segments
-    const xt::xarray<double> start = {1.0, 2.0, 3.0};
-    const xt::xarray<double> end = {4.0, 5.0, 6.0};
+    const xvector<> start = {1.0, 2.0, 3.0};
+    const xvector<> end = {4.0, 5.0, 6.0};
     BOOST_CHECK_NO_THROW((path::segment::linear{start, end}));
 }
 
@@ -33,9 +36,9 @@ BOOST_AUTO_TEST_CASE(circular_constructor) {
     using viam::trajex::arc_length;
 
     // Should be able to create circular segments
-    const xt::xarray<double> center = {0.0, 0.0, 0.0};
-    const xt::xarray<double> x = {1.0, 0.0, 0.0};
-    const xt::xarray<double> y = {0.0, 1.0, 0.0};
+    const xvector<> center = {0.0, 0.0, 0.0};
+    const xvector<> x = {1.0, 0.0, 0.0};
+    const xvector<> y = {0.0, 1.0, 0.0};
     BOOST_CHECK_NO_THROW((path::segment::circular{center, x, y, 1.0, 1.57}));
 }
 
@@ -44,7 +47,7 @@ BOOST_AUTO_TEST_CASE(segment_view_type_check) {
     using viam::trajex::arc_length;
 
     // Create linear segment
-    const path::segment::linear linear_data{xt::xarray<double>{1.0, 2.0, 3.0}, xt::xarray<double>{4.0, 5.0, 6.0}};
+    const path::segment::linear linear_data{xvector<>{1.0, 2.0, 3.0}, xvector<>{4.0, 5.0, 6.0}};
     const path::segment linear_seg{linear_data};
     const path::segment::view linear_view{linear_seg, arc_length{0.0}, linear_data.length};
 
@@ -52,8 +55,7 @@ BOOST_AUTO_TEST_CASE(segment_view_type_check) {
     BOOST_CHECK(!linear_view.is<path::segment::circular>());
 
     // Create circular segment
-    const path::segment::circular circular_data{
-        xt::xarray<double>{0.0, 0.0, 0.0}, xt::xarray<double>{1.0, 0.0, 0.0}, xt::xarray<double>{0.0, 1.0, 0.0}, 1.0, 1.57};
+    const path::segment::circular circular_data{xvector<>{0.0, 0.0, 0.0}, xvector<>{1.0, 0.0, 0.0}, xvector<>{0.0, 1.0, 0.0}, 1.0, 1.57};
     const path::segment circular_seg{circular_data};
     const path::segment::view circular_view{circular_seg, arc_length{0.0}, arc_length{1.57}};
 
@@ -66,7 +68,7 @@ BOOST_AUTO_TEST_CASE(segment_view_visit) {
     using viam::trajex::arc_length;
 
     // Create linear segment
-    const path::segment::linear linear_data{xt::xarray<double>{1.0, 2.0, 3.0}, xt::xarray<double>{4.0, 5.0, 6.0}};
+    const path::segment::linear linear_data{xvector<>{1.0, 2.0, 3.0}, xvector<>{4.0, 5.0, 6.0}};
     const path::segment linear_seg{linear_data};
     const path::segment::view linear_view{linear_seg, arc_length{0.0}, linear_data.length};
 
@@ -84,8 +86,7 @@ BOOST_AUTO_TEST_CASE(segment_view_visit) {
     BOOST_CHECK(visited_linear);
 
     // Create circular segment
-    const path::segment::circular circular_data{
-        xt::xarray<double>{0.0, 0.0, 0.0}, xt::xarray<double>{1.0, 0.0, 0.0}, xt::xarray<double>{0.0, 1.0, 0.0}, 2.5, 1.57};
+    const path::segment::circular circular_data{xvector<>{0.0, 0.0, 0.0}, xvector<>{1.0, 0.0, 0.0}, xvector<>{0.0, 1.0, 0.0}, 2.5, 1.57};
     const path::segment circular_seg{circular_data};
     const path::segment::view circular_view{circular_seg, arc_length{0.0}, arc_length{1.57}};
 
@@ -106,7 +107,7 @@ BOOST_AUTO_TEST_CASE(linear_segment_configuration) {
     using viam::trajex::arc_length;
 
     // Linear segment from (0,0) to (3,4) - length = 5, direction = (0.6, 0.8)
-    const path::segment::linear data{xt::xarray<double>{0.0, 0.0}, xt::xarray<double>{3.0, 4.0}};
+    const path::segment::linear data{xvector<>{0.0, 0.0}, xvector<>{3.0, 4.0}};
     const path::segment seg{data};
     const path::segment::view view{seg, arc_length{0.0}, data.length};
 
@@ -132,7 +133,7 @@ BOOST_AUTO_TEST_CASE(linear_segment_tangent) {
 
     // Linear segment from (0,0) to (3,4) - length = 5
     // Unit tangent should be (0.6, 0.8)
-    const path::segment::linear data{xt::xarray<double>{0.0, 0.0}, xt::xarray<double>{3.0, 4.0}};
+    const path::segment::linear data{xvector<>{0.0, 0.0}, xvector<>{3.0, 4.0}};
     const path::segment seg{data};
     const path::segment::view view{seg, arc_length{0.0}, data.length};
 
@@ -155,7 +156,7 @@ BOOST_AUTO_TEST_CASE(linear_segment_curvature) {
     using viam::trajex::arc_length;
 
     // Linear segments have zero curvature
-    const path::segment::linear data{xt::xarray<double>{0.0, 0.0}, xt::xarray<double>{3.0, 4.0}};
+    const path::segment::linear data{xvector<>{0.0, 0.0}, xvector<>{3.0, 4.0}};
     const path::segment seg{data};
     const path::segment::view view{seg, arc_length{0.0}, data.length};
 
@@ -171,11 +172,11 @@ BOOST_AUTO_TEST_CASE(circular_segment_configuration) {
     // Quarter circle in xy plane, radius 1, centered at origin
     // x = (1, 0), y = (0, 1), arc from (1,0) to (0,1)
     const path::segment::circular data{
-        xt::xarray<double>{0.0, 0.0},  // center
-        xt::xarray<double>{1.0, 0.0},  // x
-        xt::xarray<double>{0.0, 1.0},  // y
-        1.0,                           // radius
-        degrees_to_radians(90.0)       // angle_rads (90 degrees)
+        xvector<>{0.0, 0.0},      // center
+        xvector<>{1.0, 0.0},      // x
+        xvector<>{0.0, 1.0},      // y
+        1.0,                      // radius
+        degrees_to_radians(90.0)  // angle_rads (90 degrees)
     };
     const path::segment seg{data};
     const path::segment::view view{seg, arc_length{0.0}, arc_length{degrees_to_radians(90.0)}};
@@ -202,11 +203,11 @@ BOOST_AUTO_TEST_CASE(circular_segment_tangent) {
 
     // Quarter circle, tangent should be perpendicular to radius
     const path::segment::circular data{
-        xt::xarray<double>{0.0, 0.0},  // center
-        xt::xarray<double>{1.0, 0.0},  // x
-        xt::xarray<double>{0.0, 1.0},  // y
-        1.0,                           // radius
-        degrees_to_radians(90.0)       // angle_rads
+        xvector<>{0.0, 0.0},      // center
+        xvector<>{1.0, 0.0},      // x
+        xvector<>{0.0, 1.0},      // y
+        1.0,                      // radius
+        degrees_to_radians(90.0)  // angle_rads
     };
     const path::segment seg{data};
     const path::segment::view view{seg, arc_length{0.0}, arc_length{degrees_to_radians(90.0)}};
@@ -228,11 +229,11 @@ BOOST_AUTO_TEST_CASE(circular_segment_curvature) {
 
     // Curvature vector points toward center with magnitude 1/radius
     const path::segment::circular data{
-        xt::xarray<double>{0.0, 0.0},  // center
-        xt::xarray<double>{1.0, 0.0},  // x
-        xt::xarray<double>{0.0, 1.0},  // y
-        2.0,                           // radius = 2
-        degrees_to_radians(90.0)       // angle_rads
+        xvector<>{0.0, 0.0},      // center
+        xvector<>{1.0, 0.0},      // x
+        xvector<>{0.0, 1.0},      // y
+        2.0,                      // radius = 2
+        degrees_to_radians(90.0)  // angle_rads
     };
     const path::segment seg{data};
     const path::segment::view view{seg, arc_length{0.0}, arc_length{degrees_to_radians(180.0)}};
@@ -251,7 +252,7 @@ BOOST_AUTO_TEST_CASE(segment_view_bounds_checking) {
     using namespace viam::trajex::totg;
     using viam::trajex::arc_length;
 
-    const path::segment::linear data{xt::xarray<double>{0.0, 0.0}, xt::xarray<double>{3.0, 4.0}};
+    const path::segment::linear data{xvector<>{0.0, 0.0}, xvector<>{3.0, 4.0}};
     const path::segment seg{data};
     const path::segment::view view{seg, arc_length{0.0}, data.length};
 
@@ -271,7 +272,7 @@ BOOST_AUTO_TEST_CASE(path_container_semantics) {
     using viam::trajex::arc_length;
 
     // Create a path with 3 waypoints -> 2 linear segments
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}};
     auto p = path::create(waypoints);
 
     // Test size and empty

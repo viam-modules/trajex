@@ -6,18 +6,13 @@
 #include <memory>
 #include <optional>
 
-#if __has_include(<xtensor/containers/xarray.hpp>)
-#include <xtensor/containers/xarray.hpp>
-#else
-#include <xtensor/xarray.hpp>
-#endif
-
 #include <viam/trajex/jacobian/jacobian.hpp>
 #include <viam/trajex/totg/path.hpp>
 #include <viam/trajex/types/arc_acceleration.hpp>
 #include <viam/trajex/types/arc_length.hpp>
 #include <viam/trajex/types/arc_velocity.hpp>
 #include <viam/trajex/types/epsilon.hpp>
+#include <viam/trajex/types/xt.hpp>
 
 namespace viam::trajex::totg {
 
@@ -32,8 +27,14 @@ namespace trajectory_details {
 /// A sampler decides the next sample time given cursor state.
 /// Parameterized to work with any cursor and sample types.
 ///
+/// `advance` is the primitive: it positions the cursor at the next sample time and reports
+/// whether there was one. `next` is the convenience built on top, producing the sample as a
+/// value. Ranges use `advance` so they can refill storage they already own, where `next`
+/// necessarily builds a new sample per call.
+///
 template <typename S, typename Cursor, typename Sample>
 concept sampler = requires(S s, Cursor& c) {
+    { s.advance(c) } -> std::same_as<bool>;
     { s.next(c) } -> std::convertible_to<std::optional<Sample>>;
 };
 
@@ -58,10 +59,10 @@ class trajectory {
     /// Sample from a trajectory.
     ///
     struct sample {
-        seconds time;                      ///< Sample time
-        xt::xarray<double> configuration;  ///< Configuration at sample time
-        xt::xarray<double> velocity;       ///< Velocity at sample time
-        xt::xarray<double> acceleration;   ///< Acceleration at sample time
+        seconds time;             ///< Sample time
+        xvector<> configuration;  ///< Configuration at sample time
+        xvector<> velocity;       ///< Velocity at sample time
+        xvector<> acceleration;   ///< Acceleration at sample time
     };
 
     // Forward declaration for observer interface.
@@ -92,11 +93,11 @@ class trajectory {
     ///
     struct tcp_limits {
         /// Maps joint config q to the 3xN linear-velocity Jacobian. Used for the limit value.
-        using linear_jacobian_fn = std::function<xt::xarray<double>(const xt::xarray<double>&)>;
+        using linear_jacobian_fn = std::function<xmatrix<>(const xvector<>&)>;
 
         /// Maps (q, q_prime, q_double_prime) to the linear velocity gain. Used for the limit slope.
-        using linear_velocity_gain_fn = std::function<jacobian::kinematic_chain::linear_velocity_gain(
-            const xt::xarray<double>&, const xt::xarray<double>&, const xt::xarray<double>&)>;
+        using linear_velocity_gain_fn =
+            std::function<jacobian::kinematic_chain::linear_velocity_gain(const xvector<>&, const xvector<>&, const xvector<>&)>;
 
         ///
         /// Builds both callbacks from one kinematic chain parsed from a model table.
@@ -107,7 +108,7 @@ class trajectory {
         /// @return A limits object whose callbacks share a single chain
         /// @throws std::invalid_argument on a malformed model table
         ///
-        [[nodiscard]] static tcp_limits from(const xt::xarray<double>& model_table, double max_linear_velocity);
+        [[nodiscard]] static tcp_limits from(const xmatrix<>& model_table, double max_linear_velocity);
 
         /// Zero-initialized so a default-constructed limit fails validation deterministically
         /// instead of reading an indeterminate value.
@@ -123,12 +124,12 @@ class trajectory {
         ///
         /// Maximum velocity per DOF (units match configuration space).
         ///
-        xt::xarray<double> max_velocity;
+        xvector<> max_velocity;
 
         ///
         /// Maximum acceleration per DOF (units match configuration space).
         ///
-        xt::xarray<double> max_acceleration;
+        xvector<> max_acceleration;
 
         ///
         /// Default integration time step for phase plane integration.
@@ -621,7 +622,7 @@ class trajectory::integration_event_observer : public trajectory::integration_ob
 ///
 /// Maintains position and dual hint state for O(1) amortized sequential access:
 /// - Time hint: Iterator into samples_ vector for O(1) time lookups
-/// - Path hint: Embedded path::cursor for O(1) path geometry queries
+/// - Path hint: Embedded path::cursor::rich for O(1) path geometry queries, reusing its storage
 ///
 /// Sequential sampling (the common case) is O(1) amortized because both hints
 /// follow along as the cursor advances through time.
@@ -654,6 +655,19 @@ class trajectory::cursor {
     /// @throws std::out_of_range if cursor is at sentinel position or before start
     ///
     struct trajectory::sample sample() const;
+
+    ///
+    /// Samples trajectory at current cursor position into caller-provided storage.
+    ///
+    /// The value-returning overload allocates three arrays per call. This one writes into
+    /// arrays the caller already holds, which is what lets a sampling run of any length cost
+    /// a fixed number of allocations. Arrays already sized to the path's degrees of freedom
+    /// are written in place; differently sized ones are resized first.
+    ///
+    /// @param into Destination sample, overwritten entirely
+    /// @throws std::out_of_range if cursor is at sentinel position or before start
+    ///
+    void sample(struct trajectory::sample& into) const;
 
     ///
     /// Seeks cursor to specific time (absolute positioning).
@@ -722,7 +736,11 @@ class trajectory::cursor {
     // Path cursor for O(1) amortized path geometry queries
     // Positioned at interpolated arc length corresponding to current time_
     // Invariant: After seek(), path_cursor_ is at the s corresponding to time_
-    path::cursor path_cursor_;
+    //
+    // Rich rather than plain: a sampling run queries all three geometry components at every
+    // sample, and a plain cursor allocates a fresh array for each. This one allocates once
+    // when the cursor is built and refills that storage in place as it advances.
+    path::cursor::rich path_cursor_;
 };
 
 ///
@@ -819,6 +837,11 @@ class trajectory::sampled<S>::iterator {
     friend class sampled;
     iterator(cursor cursor, S* sampler);
 
+    // Advances the sampler and refills `current_` in place, or disengages it when the
+    // sampler is exhausted. Filling through the engaged optional is what preserves the
+    // sample's storage across steps; assigning a new optional would not.
+    void fill_or_disengage_();
+
     cursor cursor_;
     S* sampler_;
     std::optional<struct trajectory::sample> current_;
@@ -848,9 +871,24 @@ std::default_sentinel_t trajectory::sampled<S>::end() const noexcept {
 
 // Implementation of trajectory::sampled::iterator methods
 
+// `current_` is engaged once here and refilled in place from then on. Assigning a fresh
+// optional per step, as this once did, would allocate a new sample each time and free the
+// previous one -- for a long trajectory that is three allocations per sample for storage the
+// iterator never stopped owning. It is disengaged only at exhaustion.
 template <typename S>
-trajectory::sampled<S>::iterator::iterator(cursor cursor, S* sampler)
-    : cursor_{std::move(cursor)}, sampler_{sampler}, current_{sampler_->next(cursor_)} {}
+trajectory::sampled<S>::iterator::iterator(cursor cursor, S* sampler) : cursor_{std::move(cursor)}, sampler_{sampler} {
+    current_.emplace();
+    fill_or_disengage_();
+}
+
+template <typename S>
+void trajectory::sampled<S>::iterator::fill_or_disengage_() {
+    if (sampler_->advance(cursor_)) {
+        cursor_.sample(*current_);
+    } else {
+        current_.reset();
+    }
+}
 
 template <typename S>
 const struct trajectory::sample& trajectory::sampled<S>::iterator::operator*() const noexcept {
@@ -864,7 +902,7 @@ const struct trajectory::sample* trajectory::sampled<S>::iterator::operator->() 
 
 template <typename S>
 typename trajectory::sampled<S>::iterator& trajectory::sampled<S>::iterator::operator++() {
-    current_ = sampler_->next(cursor_);
+    fill_or_disengage_();
     return *this;
 }
 

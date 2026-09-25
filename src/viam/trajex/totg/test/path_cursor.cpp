@@ -1,8 +1,15 @@
 // Path cursor tests: sequential traversal and seeking
 // Extracted from test.cpp lines 2259-2798
 
+#include <cstddef>
+#include <iterator>
+#include <span>
+#include <stdexcept>
+#include <vector>
+
 #include <viam/trajex/totg/path.hpp>
 #include <viam/trajex/types/arc_length.hpp>
+#include <viam/trajex/types/xt.hpp>
 
 #if __has_include(<xtensor/reducers/xnorm.hpp>)
 #include <xtensor/reducers/xnorm.hpp>
@@ -12,12 +19,15 @@
 
 #include <boost/test/unit_test.hpp>
 
+using viam::trajex::xmatrix;
+using viam::trajex::xvector;
+
 BOOST_AUTO_TEST_SUITE(path_cursor_tests)
 
 BOOST_AUTO_TEST_CASE(construct_and_get_path_reference) {
     using namespace viam::trajex::totg;
 
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 1.0}, {2.0, 0.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 1.0}, {2.0, 0.0}};
     const path p = path::create(waypoints);
 
     const path::cursor cursor = p.create_cursor();
@@ -31,7 +41,7 @@ BOOST_AUTO_TEST_CASE(construct_with_minimal_path) {
     using namespace viam::trajex::totg;
 
     // Create minimal valid path (2 distinct waypoints)
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
     const path p = path::create(waypoints);
 
     // Should be able to construct cursor with minimal path
@@ -45,7 +55,7 @@ BOOST_AUTO_TEST_CASE(initial_position_at_start) {
     using namespace viam::trajex::totg;
     using viam::trajex::arc_length;
 
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 1.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 1.0}};
     const path p = path::create(waypoints);
 
     const path::cursor cursor = p.create_cursor();
@@ -59,7 +69,7 @@ BOOST_AUTO_TEST_CASE(forward_integration_small_steps) {
     using namespace viam::trajex::totg;
     using viam::trajex::arc_length;
 
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
     const path p = path::create(waypoints);
 
     path::cursor cursor = p.create_cursor();
@@ -82,7 +92,7 @@ BOOST_AUTO_TEST_CASE(forward_integration_to_end) {
     using namespace viam::trajex::totg;
     using viam::trajex::arc_length;
 
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 1.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 1.0}};
     const path p = path::create(waypoints);
 
     path::cursor cursor = p.create_cursor();
@@ -97,7 +107,7 @@ BOOST_AUTO_TEST_CASE(backward_integration_small_steps) {
     using namespace viam::trajex::totg;
     using viam::trajex::arc_length;
 
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
     const path p = path::create(waypoints);
 
     path::cursor cursor = p.create_cursor();
@@ -124,7 +134,7 @@ BOOST_AUTO_TEST_CASE(backward_integration_to_start) {
     using namespace viam::trajex::totg;
     using viam::trajex::arc_length;
 
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 1.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 1.0}};
     const path p = path::create(waypoints);
 
     path::cursor cursor = p.create_cursor();
@@ -141,7 +151,7 @@ BOOST_AUTO_TEST_CASE(bidirectional_integration) {
     using namespace viam::trajex::totg;
     using viam::trajex::arc_length;
 
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
     const path p = path::create(waypoints);
 
     path::cursor cursor = p.create_cursor();
@@ -165,7 +175,7 @@ BOOST_AUTO_TEST_CASE(reset_to_start_and_end) {
     using namespace viam::trajex::totg;
     using viam::trajex::arc_length;
 
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
     const path p = path::create(waypoints);
 
     path::cursor cursor = p.create_cursor();
@@ -185,7 +195,7 @@ BOOST_AUTO_TEST_CASE(reset_to_specific_position) {
     using namespace viam::trajex::totg;
     using viam::trajex::arc_length;
 
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
     const path p = path::create(waypoints);
 
     path::cursor cursor = p.create_cursor();
@@ -207,7 +217,7 @@ BOOST_AUTO_TEST_CASE(reset_to_specific_position) {
 BOOST_AUTO_TEST_CASE(configuration_query_at_positions) {
     using namespace viam::trajex::totg;
 
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 1.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 1.0}};
     const path p = path::create(waypoints);
 
     path::cursor cursor = p.create_cursor();
@@ -234,7 +244,7 @@ BOOST_AUTO_TEST_CASE(tangent_query) {
     using namespace viam::trajex::totg;
     using viam::trajex::arc_length;
 
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
     const path p = path::create(waypoints);
 
     path::cursor cursor = p.create_cursor();
@@ -253,7 +263,7 @@ BOOST_AUTO_TEST_CASE(tangent_query) {
 BOOST_AUTO_TEST_CASE(curvature_query) {
     using namespace viam::trajex::totg;
 
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
     const path p = path::create(waypoints);
 
     const path::cursor cursor = p.create_cursor();
@@ -269,7 +279,7 @@ BOOST_AUTO_TEST_CASE(integration_across_multiple_segments) {
     using viam::trajex::arc_length;
 
     // Create path with circular blend
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}};
     path::options opts;
     opts.set_max_blend_deviation(0.1);
     const path p = path::create(waypoints, opts);
@@ -300,7 +310,7 @@ BOOST_AUTO_TEST_CASE(backward_integration_across_multiple_segments) {
     using viam::trajex::arc_length;
 
     // Create path with circular blend
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}};
     path::options opts;
     opts.set_max_blend_deviation(0.1);
     const path p = path::create(waypoints, opts);
@@ -324,7 +334,7 @@ BOOST_AUTO_TEST_CASE(hint_optimization_forward_sequential) {
     using viam::trajex::arc_length;
 
     // Create path with many segments
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}, {2.0, 0.0}, {3.0, 0.0}, {4.0, 0.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 0.0}, {2.0, 0.0}, {3.0, 0.0}, {4.0, 0.0}};
     const path p = path::create(waypoints);
 
     path::cursor cursor = p.create_cursor();
@@ -345,7 +355,7 @@ BOOST_AUTO_TEST_CASE(advance_by_and_sentinel_detection) {
     using namespace viam::trajex::totg;
     using viam::trajex::arc_length;
 
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
     const path p = path::create(waypoints);
     path::cursor cursor = p.create_cursor();
 
@@ -369,7 +379,7 @@ BOOST_AUTO_TEST_CASE(advance_by_negative_and_start_clamping) {
     using namespace viam::trajex::totg;
     using viam::trajex::arc_length;
 
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
     const path p = path::create(waypoints);
     path::cursor cursor = p.create_cursor(p.length());  // Start at end
 
@@ -396,7 +406,7 @@ BOOST_AUTO_TEST_CASE(seek_to_position_and_clamping) {
     using namespace viam::trajex::totg;
     using viam::trajex::arc_length;
 
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
     const path p = path::create(waypoints);
     path::cursor cursor = p.create_cursor();
 
@@ -418,7 +428,7 @@ BOOST_AUTO_TEST_CASE(create_cursor_at_various_positions) {
     using namespace viam::trajex::totg;
     using viam::trajex::arc_length;
 
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
     const path p = path::create(waypoints);
 
     // Create at start (default)
@@ -451,7 +461,7 @@ BOOST_AUTO_TEST_CASE(large_jumps_across_many_segments) {
     using viam::trajex::arc_length;
 
     // Create path with many segments (12 segments: 6 linear + 6 circular blends)
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}, {2.0, 0.0}, {3.0, 0.0}, {3.0, 1.0}, {3.0, 2.0}, {2.0, 2.0}, {1.0, 2.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 0.0}, {2.0, 0.0}, {3.0, 0.0}, {3.0, 1.0}, {3.0, 2.0}, {2.0, 2.0}, {1.0, 2.0}};
     path::options opts;
     opts.set_max_blend_deviation(0.1);
     const path p = path::create(waypoints, opts);
@@ -511,7 +521,7 @@ BOOST_AUTO_TEST_CASE(dereference_operator_returns_segment_view) {
     using viam::trajex::arc_length;
 
     // Create path with circular blend to have different segment types
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}};
     path::options opts;
     opts.set_max_blend_deviation(0.1);
     const path p = path::create(waypoints, opts);
@@ -561,7 +571,7 @@ BOOST_AUTO_TEST_CASE(cursor_at_boundary_advances_to_next_segment) {
     path::options opts;
     opts.set_max_deviation(0.0);  // No blending - hard corners
 
-    const xt::xarray<double> waypoints = {
+    const xmatrix<> waypoints = {
         {0.0, 0.0},  // Start
         {1.0, 0.0},  // First corner
         {1.0, 1.0},  // Second corner
@@ -614,7 +624,7 @@ BOOST_AUTO_TEST_CASE(segment_view_accepts_query_at_start) {
     path::options opts;
     opts.set_max_deviation(0.0);
 
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}};
 
     const path p = path::create(waypoints, opts);
     BOOST_REQUIRE_GE(p.size(), 2);
@@ -644,7 +654,7 @@ BOOST_AUTO_TEST_CASE(segment_view_accepts_query_at_end) {
     path::options opts;
     opts.set_max_deviation(0.0);
 
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}};
 
     const path p = path::create(waypoints, opts);
     BOOST_REQUIRE_GE(p.size(), 2);
@@ -675,7 +685,7 @@ BOOST_AUTO_TEST_CASE(adjacent_segments_differ_at_boundary) {
     opts.set_max_deviation(0.0);
 
     // Create path with a sharp corner to ensure geometric discontinuity
-    const xt::xarray<double> waypoints = {
+    const xmatrix<> waypoints = {
         {0.0, 0.0},  // Start - moving in +x direction
         {1.0, 0.0},  // Corner - 90 degree turn
         {1.0, 1.0}   // End - now moving in +y direction
@@ -726,7 +736,7 @@ BOOST_AUTO_TEST_CASE(cursor_seek_behavior_around_boundary) {
     path::options opts;
     opts.set_max_deviation(0.0);
 
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}};
 
     const path p = path::create(waypoints, opts);
     BOOST_REQUIRE_EQUAL(p.size(), 2);
@@ -786,7 +796,7 @@ BOOST_AUTO_TEST_CASE(safe_boundary_sampling_workflow) {
     path::options opts;
     opts.set_max_deviation(0.0);
 
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}};
 
     const path p = path::create(waypoints, opts);
 
@@ -829,7 +839,7 @@ BOOST_AUTO_TEST_CASE(cursor_boundary_behavior_with_circular_blends) {
     opts.set_max_deviation(0.1);  // Enable blending
 
     // Create path that will have blend
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}};
 
     const path p = path::create(waypoints, opts);
 
@@ -868,6 +878,288 @@ BOOST_AUTO_TEST_CASE(cursor_boundary_behavior_with_circular_blends) {
         BOOST_CHECK(view.is<path::segment::linear>());
         BOOST_CHECK_EQUAL(view.start(), boundary);
     }
+}
+
+namespace {
+
+// The filling and value-returning accessors run the same arithmetic over the same inputs,
+// so anything short of bit equality means one of them has been reimplemented independently.
+void check_exactly_equal(const xvector<>& value, std::span<const double> filled) {
+    BOOST_REQUIRE_EQUAL(value.size(), filled.size());
+
+    for (std::size_t i = 0; i < filled.size(); ++i) {
+        BOOST_CHECK_EQUAL(value(i), filled[i]);
+    }
+}
+
+// Two linear runs joined by a circular blend, so both segment kinds get exercised.
+viam::trajex::totg::path make_blended_path() {
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 1.0}, {2.0, 0.0}};
+    return viam::trajex::totg::path::create(waypoints);
+}
+
+viam::trajex::arc_length fraction_of(viam::trajex::arc_length length, double f) {
+    return viam::trajex::arc_length{static_cast<double>(length) * f};
+}
+
+}  // namespace
+
+BOOST_AUTO_TEST_CASE(fill_accessors_match_value_accessors) {
+    using namespace viam::trajex::totg;
+
+    const path p = make_blended_path();
+    path::cursor c = p.create_cursor();
+
+    std::vector<double> filled(p.dof());
+
+    for (int step = 0; step <= 20; ++step) {
+        c.seek(fraction_of(p.length(), static_cast<double>(step) / 20.0));
+
+        c.configuration(filled);
+        check_exactly_equal(c.configuration(), filled);
+
+        c.tangent(filled);
+        check_exactly_equal(c.tangent(), filled);
+
+        c.curvature(filled);
+        check_exactly_equal(c.curvature(), filled);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(fill_accessors_reject_wrong_sized_span) {
+    using namespace viam::trajex::totg;
+
+    const path p = make_blended_path();
+    const path::cursor c = p.create_cursor();
+
+    std::vector<double> too_small(p.dof() - 1);
+    std::vector<double> too_large(p.dof() + 1);
+
+    BOOST_CHECK_THROW(c.configuration(too_small), std::invalid_argument);
+    BOOST_CHECK_THROW(c.tangent(too_small), std::invalid_argument);
+    BOOST_CHECK_THROW(c.curvature(too_small), std::invalid_argument);
+
+    BOOST_CHECK_THROW(c.configuration(too_large), std::invalid_argument);
+    BOOST_CHECK_THROW(c.tangent(too_large), std::invalid_argument);
+    BOOST_CHECK_THROW(c.curvature(too_large), std::invalid_argument);
+}
+
+BOOST_AUTO_TEST_CASE(fill_accessors_throw_at_sentinel) {
+    using namespace viam::trajex::totg;
+    using viam::trajex::arc_length;
+
+    const path p = make_blended_path();
+    path::cursor c = p.create_cursor();
+    c.seek(p.length() + arc_length{1.0});
+
+    BOOST_REQUIRE(c == c.end());
+
+    std::vector<double> filled(p.dof());
+
+    BOOST_CHECK_THROW(c.configuration(filled), std::out_of_range);
+    BOOST_CHECK_THROW(c.tangent(filled), std::out_of_range);
+    BOOST_CHECK_THROW(c.curvature(filled), std::out_of_range);
+}
+
+BOOST_AUTO_TEST_CASE(rich_matches_plain_cursor_at_many_positions) {
+    using namespace viam::trajex::totg;
+
+    const path p = make_blended_path();
+    path::cursor plain = p.create_cursor();
+    path::cursor::rich r = p.create_cursor().enrich();
+
+    for (int step = 0; step <= 20; ++step) {
+        const auto s = fraction_of(p.length(), static_cast<double>(step) / 20.0);
+
+        plain.seek(s);
+        r.seek(s);
+
+        BOOST_CHECK_EQUAL(r.position(), plain.position());
+
+        const auto& configuration = r.configuration();
+        const auto& tangent = r.tangent();
+        const auto& curvature = r.curvature();
+
+        check_exactly_equal(plain.configuration(), {configuration.data(), configuration.size()});
+        check_exactly_equal(plain.tangent(), {tangent.data(), tangent.size()});
+        check_exactly_equal(plain.curvature(), {curvature.data(), curvature.size()});
+    }
+}
+
+BOOST_AUTO_TEST_CASE(rich_storage_address_stable_across_seek) {
+    using namespace viam::trajex::totg;
+
+    const path p = make_blended_path();
+    path::cursor::rich r = p.create_cursor().enrich();
+
+    // Invalidation must discard the cached *values* without releasing the storage holding
+    // them. Were the fill ever rewritten as an assignment from a returned array, the
+    // move-assignment would swap buffers and this would fail -- along with the guarantee
+    // that a reference handed to a caller keeps referring to live storage.
+    const double* const configuration_storage = r.configuration().data();
+    const double* const tangent_storage = r.tangent().data();
+    const double* const curvature_storage = r.curvature().data();
+
+    for (int step = 1; step <= 5; ++step) {
+        r.seek(fraction_of(p.length(), static_cast<double>(step) / 5.0));
+
+        BOOST_CHECK_EQUAL(r.configuration().data(), configuration_storage);
+        BOOST_CHECK_EQUAL(r.tangent().data(), tangent_storage);
+        BOOST_CHECK_EQUAL(r.curvature().data(), curvature_storage);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(rich_accessors_lazy_in_any_order) {
+    using namespace viam::trajex::totg;
+
+    const path p = make_blended_path();
+    const auto s = fraction_of(p.length(), 0.4);
+
+    path::cursor plain = p.create_cursor();
+    plain.seek(s);
+
+    // Each component fills on first use, so the order they are first touched after a move
+    // must not matter. Take them in reverse and compare against a plain cursor.
+    path::cursor::rich r = p.create_cursor().enrich();
+    r.seek(s);
+
+    const auto& curvature = r.curvature();
+    check_exactly_equal(plain.curvature(), {curvature.data(), curvature.size()});
+
+    const auto& tangent = r.tangent();
+    check_exactly_equal(plain.tangent(), {tangent.data(), tangent.size()});
+
+    const auto& configuration = r.configuration();
+    check_exactly_equal(plain.configuration(), {configuration.data(), configuration.size()});
+}
+
+BOOST_AUTO_TEST_CASE(rich_reference_is_window_not_snapshot) {
+    using namespace viam::trajex::totg;
+
+    const path p = make_blended_path();
+    const auto start = fraction_of(p.length(), 0.25);
+    const auto moved = fraction_of(p.length(), 0.75);
+
+    path::cursor::rich r = p.create_cursor().enrich();
+    r.seek(start);
+
+    const auto& configuration = r.configuration();
+    const std::vector<double> at_start(configuration.begin(), configuration.end());
+
+    // Seeking clears the validity bits but leaves the storage holding the old values, so a
+    // reference taken before the move still reads the old position.
+    r.seek(moved);
+    check_exactly_equal(xvector<>{configuration}, at_start);
+
+    // Asking again refills the same storage in place, at which point the reference taken
+    // before the move begins reporting the new position. This is the documented hazard; it
+    // is pinned here so that changing it cannot pass silently.
+    const auto& refilled = r.configuration();
+    BOOST_CHECK_EQUAL(&refilled, &configuration);
+
+    path::cursor plain = p.create_cursor();
+    plain.seek(moved);
+    check_exactly_equal(plain.configuration(), {configuration.data(), configuration.size()});
+}
+
+BOOST_AUTO_TEST_CASE(rich_plain_is_independent_copy) {
+    using namespace viam::trajex::totg;
+
+    const path p = make_blended_path();
+    const auto start = fraction_of(p.length(), 0.3);
+
+    path::cursor::rich r = p.create_cursor().enrich();
+    r.seek(start);
+
+    path::cursor extracted = r.plain();
+    BOOST_CHECK_EQUAL(extracted.position(), r.position());
+    BOOST_CHECK_EQUAL(&extracted.path(), &p);
+
+    // Moving the extracted cursor must not drag the rich one along with it.
+    extracted.seek(fraction_of(p.length(), 0.9));
+    BOOST_CHECK_EQUAL(r.position(), start);
+    BOOST_CHECK(extracted.position() != r.position());
+}
+
+BOOST_AUTO_TEST_CASE(rich_enrich_leaves_source_unchanged) {
+    using namespace viam::trajex::totg;
+
+    const path p = make_blended_path();
+    const auto start = fraction_of(p.length(), 0.6);
+
+    path::cursor source = p.create_cursor();
+    source.seek(start);
+
+    path::cursor::rich r = source.enrich();
+    BOOST_CHECK_EQUAL(r.position(), start);
+
+    r.seek(fraction_of(p.length(), 0.1));
+    BOOST_CHECK_EQUAL(source.position(), start);
+}
+
+BOOST_AUTO_TEST_CASE(rich_sentinel_comparison) {
+    using namespace viam::trajex::totg;
+    using viam::trajex::arc_length;
+
+    const path p = make_blended_path();
+    path::cursor::rich r = p.create_cursor().enrich();
+
+    BOOST_CHECK(r != r.end());
+    BOOST_CHECK(r != end(r));
+
+    r.seek(p.length() + arc_length{1.0});
+
+    BOOST_CHECK(r == r.end());
+    BOOST_CHECK(r == end(r));
+    BOOST_CHECK(std::default_sentinel == r);
+}
+
+BOOST_AUTO_TEST_CASE(rich_failed_query_is_not_cached) {
+    using namespace viam::trajex::totg;
+    using viam::trajex::arc_length;
+
+    const path p = make_blended_path();
+    const auto reachable = fraction_of(p.length(), 0.5);
+
+    path::cursor::rich r = p.create_cursor().enrich();
+    r.seek(p.length() + arc_length{1.0});
+
+    BOOST_CHECK_THROW(static_cast<void>(r.configuration()), std::out_of_range);
+
+    // A throwing fill must leave the validity bit clear. Were it set, this query would hand
+    // back whatever the storage happened to contain instead of computing the position.
+    r.seek(reachable);
+
+    path::cursor plain = p.create_cursor();
+    plain.seek(reachable);
+
+    const auto& configuration = r.configuration();
+    check_exactly_equal(plain.configuration(), {configuration.data(), configuration.size()});
+}
+
+BOOST_AUTO_TEST_CASE(rich_copy_has_independent_storage) {
+    using namespace viam::trajex::totg;
+
+    const path p = make_blended_path();
+    const auto start = fraction_of(p.length(), 0.45);
+
+    path::cursor::rich original = p.create_cursor().enrich();
+    original.seek(start);
+    const auto& original_configuration = original.configuration();
+
+    path::cursor::rich copy = original;
+    const auto& copy_configuration = copy.configuration();
+
+    BOOST_CHECK(copy_configuration.data() != original_configuration.data());
+    check_exactly_equal(xvector<>{copy_configuration}, {original_configuration.data(), original_configuration.size()});
+
+    // Moving the copy must not disturb the original's cached values.
+    copy.seek(fraction_of(p.length(), 0.05));
+    static_cast<void>(copy.configuration());
+
+    path::cursor plain = p.create_cursor();
+    plain.seek(start);
+    check_exactly_equal(plain.configuration(), {original_configuration.data(), original_configuration.size()});
 }
 
 BOOST_AUTO_TEST_SUITE_END()

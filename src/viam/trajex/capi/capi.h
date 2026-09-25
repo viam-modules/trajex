@@ -117,7 +117,8 @@ void viam_trajex_tensor_map_destroy(viam_trajex_tensor_map_t* tensor_map);
 ///
 /// @param dtype Element type of the tensor.
 ///
-/// @param rank Number of dimensions. Must be >= 1.
+/// @param rank Number of dimensions. Must be 1 or 2; higher ranks are rejected, as nothing
+///        this API carries needs them.
 ///
 /// @param dims Array of `rank` size_t values describing the shape. All values must be >= 1. Must not be NULL.
 ///
@@ -140,7 +141,8 @@ int viam_trajex_tensor_map_insert(
 ///
 /// @param key Insertion key. Must be a NUL-terminated string, not NULL.
 ///
-/// @param rank Number of dimensions. Must be >= 1.
+/// @param rank Number of dimensions. Must be 1 or 2; higher ranks are rejected, as nothing
+///        this API carries needs them.
 ///
 /// @param dims Array of `rank` size_t values describing the shape. All values must be >= 1. Must not be NULL.
 ///
@@ -162,7 +164,8 @@ int viam_trajex_tensor_map_insert_f64(
 ///
 /// @param key Insertion key. Must be a NUL-terminated string, not NULL.
 ///
-/// @param rank Number of dimensions. Must be >= 1.
+/// @param rank Number of dimensions. Must be 1 or 2; higher ranks are rejected, as nothing
+///        this API carries needs them.
 ///
 /// @param dims Array of `rank` size_t values describing the shape. All values must be >= 1. Must not be NULL.
 ///
@@ -225,7 +228,7 @@ int viam_trajex_tensor_map_insert_scalar_i64(viam_trajex_tensor_map_t* tensor_ma
 ///
 /// @param dtype_out Receives the element type on success. Must not be NULL.
 ///
-/// @param rank_out Receives the rank on success (always >= 1). Must not be NULL.
+/// @param rank_out Receives the rank on success (always 1 or 2). Must not be NULL.
 ///
 /// @param dims_out Receives a pointer to the shape array (size `*rank_out`). Must not be NULL.
 ///

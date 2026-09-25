@@ -2,10 +2,13 @@
 #include <viam/trajex/totg/path.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <numbers>
 #include <optional>
 #include <stdexcept>
+#include <type_traits>
+#include <utility>
 
 #if __has_include(<xtensor/reducers/xnorm.hpp>)
 #include <xtensor/reducers/xnorm.hpp>
@@ -65,7 +68,7 @@ double path::options::min_blend_curvature() const noexcept {
     return min_blend_curvature_;
 }
 
-path::segment::linear::linear(xt::xarray<double> start, const xt::xarray<double>& end) : start{std::move(start)}, length{0.0} {
+path::segment::linear::linear(xvector<> start, const xvector<>& end) : start{std::move(start)}, length{0.0} {
     const auto diff = end - this->start;
     const double norm = xt::norm_l2(diff)();
 
@@ -81,14 +84,14 @@ path::segment::linear::linear(xt::xarray<double> start, const xt::xarray<double>
     this->length = arc_length{norm};
 }
 
-path::segment::linear::linear(xt::xarray<double> start, xt::xarray<double> unit_direction, arc_length length)
+path::segment::linear::linear(xvector<> start, xvector<> unit_direction, arc_length length)
     : start{std::move(start)}, unit_direction{std::move(unit_direction)}, length{length} {
     if (static_cast<double>(length) <= 0.0) {
         throw std::invalid_argument{"Linear segment: length must be positive"};
     }
 }
 
-path::segment::circular::circular(xt::xarray<double> center, xt::xarray<double> x, xt::xarray<double> y, double radius, double angle_rads)
+path::segment::circular::circular(xvector<> center, xvector<> x, xvector<> y, double radius, double angle_rads)
     : center{std::move(center)}, x{std::move(x)}, y{std::move(y)}, radius{radius}, angle_rads{angle_rads} {
     const double x_norm = xt::norm_l2(this->x)();
     const double y_norm = xt::norm_l2(this->y)();
@@ -127,7 +130,31 @@ arc_length path::segment::view::length() const noexcept {
     return end_ - start_;
 }
 
-xt::xarray<double> path::segment::view::configuration(arc_length s) const {
+namespace {
+
+void require_dof(std::span<const double> out, std::size_t dof) {
+    if (out.size() != dof) [[unlikely]] {
+        throw std::invalid_argument{"Output span size does not match path degrees of freedom"};
+    }
+}
+
+}  // namespace
+
+std::size_t path::segment::view::dof_() const {
+    return std::visit(
+        [](const auto& seg_data) -> std::size_t {
+            using T = std::decay_t<decltype(seg_data)>;
+
+            if constexpr (std::is_same_v<T, segment::linear>) {
+                return seg_data.start.shape(0);
+            } else if constexpr (std::is_same_v<T, segment::circular>) {
+                return seg_data.center.shape(0);
+            }
+        },
+        seg_.get().data_);
+}
+
+void path::segment::view::configuration(arc_length s, std::span<double> out) const {
     // `Correction 1`: Need to offset before Kunz & Stilman equation 7.
     const arc_length local_s = s - start_;
 
@@ -135,23 +162,36 @@ xt::xarray<double> path::segment::view::configuration(arc_length s) const {
         throw std::out_of_range{"Arc length outside segment bounds"};
     }
 
-    return std::visit(
-        [local_s](const auto& seg_data) -> xt::xarray<double> {
+    std::visit(
+        [local_s, out](const auto& seg_data) {
             using T = std::decay_t<decltype(seg_data)>;
 
             if constexpr (std::is_same_v<T, segment::linear>) {
+                require_dof(out, seg_data.start.shape(0));
+
                 // Linear interpolation: config = start + local_s * unit_direction
-                return seg_data.start + (static_cast<double>(local_s) * seg_data.unit_direction);
+                const double distance = static_cast<double>(local_s);
+
+                for (std::size_t i = 0; i < out.size(); ++i) {
+                    out[i] = seg_data.start(i) + (distance * seg_data.unit_direction(i));
+                }
             } else if constexpr (std::is_same_v<T, segment::circular>) {
+                require_dof(out, seg_data.center.shape(0));
+
                 // Circular arc configuration - Kunz & Stilman equation 7:
                 const double angle = static_cast<double>(local_s) / seg_data.radius;
-                return seg_data.center + (seg_data.radius * (seg_data.x * std::cos(angle) + seg_data.y * std::sin(angle)));
+                const double cos_angle = std::cos(angle);
+                const double sin_angle = std::sin(angle);
+
+                for (std::size_t i = 0; i < out.size(); ++i) {
+                    out[i] = seg_data.center(i) + (seg_data.radius * ((seg_data.x(i) * cos_angle) + (seg_data.y(i) * sin_angle)));
+                }
             }
         },
         seg_.get().data_);
 }
 
-xt::xarray<double> path::segment::view::tangent(arc_length s) const {
+void path::segment::view::tangent(arc_length s, std::span<double> out) const {
     // `Correction 1`: Need to offset before Kunz & Stilman equation 8.
     const arc_length local_s = s - start_;
 
@@ -159,23 +199,34 @@ xt::xarray<double> path::segment::view::tangent(arc_length s) const {
         throw std::out_of_range{"Arc length outside segment bounds"};
     }
 
-    return std::visit(
-        [local_s](const auto& seg_data) -> xt::xarray<double> {
+    std::visit(
+        [local_s, out](const auto& seg_data) {
             using T = std::decay_t<decltype(seg_data)>;
 
             if constexpr (std::is_same_v<T, segment::linear>) {
+                require_dof(out, seg_data.start.shape(0));
+
                 // Linear segment: constant unit tangent
-                return seg_data.unit_direction;
+                for (std::size_t i = 0; i < out.size(); ++i) {
+                    out[i] = seg_data.unit_direction(i);
+                }
             } else if constexpr (std::is_same_v<T, segment::circular>) {
+                require_dof(out, seg_data.center.shape(0));
+
                 // Circular arc unit tangent - Kunz & Stilman equation 8:
                 const double angle = static_cast<double>(local_s) / seg_data.radius;
-                return (-seg_data.x * std::sin(angle)) + (seg_data.y * std::cos(angle));
+                const double cos_angle = std::cos(angle);
+                const double sin_angle = std::sin(angle);
+
+                for (std::size_t i = 0; i < out.size(); ++i) {
+                    out[i] = (-seg_data.x(i) * sin_angle) + (seg_data.y(i) * cos_angle);
+                }
             }
         },
         seg_.get().data_);
 }
 
-xt::xarray<double> path::segment::view::curvature(arc_length s) const {
+void path::segment::view::curvature(arc_length s, std::span<double> out) const {
     // `Correction 1`: Need to offset before Kunz & Stilman equation 9.
     const arc_length local_s = s - start_;
 
@@ -183,20 +234,48 @@ xt::xarray<double> path::segment::view::curvature(arc_length s) const {
         throw std::out_of_range{"Arc length outside segment bounds"};
     }
 
-    return std::visit(
-        [local_s](const auto& seg_data) -> xt::xarray<double> {
+    std::visit(
+        [local_s, out](const auto& seg_data) {
             using T = std::decay_t<decltype(seg_data)>;
 
             if constexpr (std::is_same_v<T, segment::linear>) {
+                require_dof(out, seg_data.start.shape(0));
+
                 // Linear segment: zero curvature vector
-                return xt::zeros<double>({seg_data.start.shape(0)});
+                std::ranges::fill(out, 0.0);
             } else if constexpr (std::is_same_v<T, segment::circular>) {
+                require_dof(out, seg_data.center.shape(0));
+
                 // Circular arc curvature vector - Kunz & Stilman equation 9:
                 const double angle = static_cast<double>(local_s) / seg_data.radius;
-                return (-(1.0 / seg_data.radius)) * (seg_data.x * std::cos(angle) + seg_data.y * std::sin(angle));
+                const double cos_angle = std::cos(angle);
+                const double sin_angle = std::sin(angle);
+                const double negative_inverse_radius = -(1.0 / seg_data.radius);
+
+                for (std::size_t i = 0; i < out.size(); ++i) {
+                    out[i] = negative_inverse_radius * ((seg_data.x(i) * cos_angle) + (seg_data.y(i) * sin_angle));
+                }
             }
         },
         seg_.get().data_);
+}
+
+xvector<> path::segment::view::configuration(arc_length s) const {
+    auto result = xvector<>::from_shape(std::array<std::size_t, 1>{dof_()});
+    configuration(s, std::span<double>{result.data(), result.size()});
+    return result;
+}
+
+xvector<> path::segment::view::tangent(arc_length s) const {
+    auto result = xvector<>::from_shape(std::array<std::size_t, 1>{dof_()});
+    tangent(s, std::span<double>{result.data(), result.size()});
+    return result;
+}
+
+xvector<> path::segment::view::curvature(arc_length s) const {
+    auto result = xvector<>::from_shape(std::array<std::size_t, 1>{dof_()});
+    curvature(s, std::span<double>{result.data(), result.size()});
+    return result;
 }
 
 path::path(std::vector<positioned_segment> segments, size_t dof, arc_length length)
@@ -249,7 +328,17 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
 
         const double radius = max_deviation / 2.0;
 
-        const auto start_to_next = next - start;
+        // Evaluated rather than left lazy because it has five uses below: the zero
+        // test, both halves of the squared length, the dot product, and the
+        // projection. A lazy binding would walk the subtraction once per use.
+        const auto start_to_next = xt::eval(next - start);
+
+        // eval yields the expression's temporary_type, which inherits the operands' shape
+        // type: it materializes into a statically ranked vector only because the waypoints
+        // are statically ranked. Should that stop being true, eval would quietly go back to
+        // handing out a dynamically ranked array and the saving above would evaporate with
+        // nothing to show for it, so pin the type rather than trust the inheritance.
+        static_assert(std::is_same_v<std::decay_t<decltype(start_to_next)>, xvector<>>);
 
         // Check if start and next are exactly the same position (all components identically zero)
         if (xt::all(xt::equal(start_to_next, 0.0))) {
@@ -292,9 +381,8 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
     // Kunz & Stilman Section IV. The blend arc is tangent to both the incoming and
     // outgoing segments, trimming equal distances from each side. The blend keeps
     // the path within max_blend_deviation of the original corner waypoint.
-    const auto try_create_blend = [&opts](const xt::xarray<double>& current_pos,
-                                          const xt::xarray<double>& corner,
-                                          const xt::xarray<double>& next_waypoint) -> std::optional<blend_geometry> {
+    const auto try_create_blend =
+        [&opts](const xvector<>& current_pos, const xvector<>& corner, const xvector<>& next_waypoint) -> std::optional<blend_geometry> {
         if (opts.max_blend_deviation() <= 0.0) {
             return std::nullopt;
         }
@@ -447,7 +535,7 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
     // configuration copy (not just an iterator) because after creating a circular blend, the
     // current position becomes the blend exit point, which is a computed position between
     // waypoints rather than one of the original waypoints in the accumulator.
-    xt::xarray<double> current_position = *segment_start;
+    xvector<> current_position = *segment_start;
 
     for (auto locus = std::next(waypoints_range.begin()); locus != waypoints_range.end(); ++locus) {
         auto next = std::next(locus);
@@ -520,7 +608,7 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
     return path{std::move(segments), waypoints.dof(), cumulative_length};
 }
 
-path path::create(const xt::xarray<double>& waypoints, const options& opts) {
+path path::create(const xmatrix<>& waypoints, const options& opts) {
     return create(waypoint_accumulator{waypoints}, opts);
 }
 
@@ -620,15 +708,15 @@ path::segment::view path::operator()(arc_length s) const {
     return {it->seg, segment_start, segment_end};
 }
 
-xt::xarray<double> path::configuration(arc_length s) const {
+xvector<> path::configuration(arc_length s) const {
     return (*this)(s).configuration(s);
 }
 
-xt::xarray<double> path::tangent(arc_length s) const {
+xvector<> path::tangent(arc_length s) const {
     return (*this)(s).tangent(s);
 }
 
-xt::xarray<double> path::curvature(arc_length s) const {
+xvector<> path::curvature(arc_length s) const {
     return (*this)(s).curvature(s);
 }
 
@@ -696,31 +784,95 @@ bool operator==(std::default_sentinel_t, const path::cursor& c) noexcept {
     return !std::isfinite(static_cast<double>(c.position_));
 }
 
-xt::xarray<double> path::cursor::configuration() const {
+void path::cursor::configuration(std::span<double> out) const {
     if (*this == end()) [[unlikely]] {
         throw std::out_of_range{"Cannot query cursor at sentinel position"};
     }
 
     auto view = *hint_;
-    return view.configuration(position_);
+    view.configuration(position_, out);
 }
 
-xt::xarray<double> path::cursor::tangent() const {
+void path::cursor::tangent(std::span<double> out) const {
     if (*this == end()) [[unlikely]] {
         throw std::out_of_range{"Cannot query cursor at sentinel position"};
     }
 
     auto view = *hint_;
-    return view.tangent(position_);
+    view.tangent(position_, out);
 }
 
-xt::xarray<double> path::cursor::curvature() const {
+void path::cursor::curvature(std::span<double> out) const {
     if (*this == end()) [[unlikely]] {
         throw std::out_of_range{"Cannot query cursor at sentinel position"};
     }
 
     auto view = *hint_;
-    return view.curvature(position_);
+    view.curvature(position_, out);
+}
+
+xvector<> path::cursor::configuration() const {
+    auto result = xvector<>::from_shape(std::array<std::size_t, 1>{path_->dof()});
+    configuration(std::span<double>{result.data(), result.size()});
+    return result;
+}
+
+xvector<> path::cursor::tangent() const {
+    auto result = xvector<>::from_shape(std::array<std::size_t, 1>{path_->dof()});
+    tangent(std::span<double>{result.data(), result.size()});
+    return result;
+}
+
+xvector<> path::cursor::curvature() const {
+    auto result = xvector<>::from_shape(std::array<std::size_t, 1>{path_->dof()});
+    curvature(std::span<double>{result.data(), result.size()});
+    return result;
+}
+
+path::cursor::rich path::cursor::enrich() const {
+    return rich{*this};
+}
+
+path::cursor::rich::rich(cursor c) : cursor{std::move(c)} {
+    // Size all three once, here, so that no accessor ever allocates. A rich cursor built on
+    // a path whose dof is zero would still be well-formed; the accessors would fill nothing.
+    const std::array<std::size_t, 1> shape{this->path().dof()};
+
+    configuration_ = xvector<>::from_shape(shape);
+    tangent_ = xvector<>::from_shape(shape);
+    curvature_ = xvector<>::from_shape(shape);
+}
+
+path::cursor path::cursor::rich::plain() const {
+    return static_cast<const cursor&>(*this);
+}
+
+void path::cursor::rich::invalidate_() noexcept {
+    cached_bits_.reset();
+}
+
+path::cursor::rich& path::cursor::rich::seek(arc_length s) noexcept {
+    cursor::seek(s);
+    invalidate_();
+    return *this;
+}
+
+path::cursor::rich& path::cursor::rich::seek_by(arc_length delta) noexcept {
+    cursor::seek_by(delta);
+    invalidate_();
+    return *this;
+}
+
+const xvector<>& path::cursor::rich::configuration() const {
+    return cached_(configuration_, k_configuration_bit_, [this](std::span<double> out) { cursor::configuration(out); });
+}
+
+const xvector<>& path::cursor::rich::tangent() const {
+    return cached_(tangent_, k_tangent_bit_, [this](std::span<double> out) { cursor::tangent(out); });
+}
+
+const xvector<>& path::cursor::rich::curvature() const {
+    return cached_(curvature_, k_curvature_bit_, [this](std::span<double> out) { cursor::curvature(out); });
 }
 
 void path::cursor::update_hint_() noexcept {

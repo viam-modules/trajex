@@ -10,13 +10,14 @@
 #include <json/json.h>
 
 #include <viam/trajex/types/arc_length.hpp>
+#include <viam/trajex/types/xt.hpp>
 
 namespace viam::trajex::totg {
 
 namespace {
 
-// Serialize xarray to JSON array
-Json::Value xarray_to_json_array(const xt::xarray<double>& arr) {
+// Serialize a configuration-space vector to a JSON array
+Json::Value vector_to_json_array(const xvector<>& arr) {
     Json::Value result(Json::arrayValue);
     result.resize(static_cast<Json::ArrayIndex>(arr.size()));
     for (size_t i = 0; i < arr.size(); ++i) {
@@ -127,16 +128,16 @@ Json::Value serialize_integration_points(const trajectory& traj) {
         s_ddot_min_values[idx] = static_cast<double>(accel_bounds.s_ddot_min);
         s_ddot_max_values[idx] = static_cast<double>(accel_bounds.s_ddot_max);
 
-        configurations[idx] = xarray_to_json_array(q);
+        configurations[idx] = vector_to_json_array(q);
 
         // Joint velocity: q_dot = (dq/ds) * (ds/dt) = tangent * s_dot
-        velocities[idx] = xarray_to_json_array(q_dot * static_cast<double>(pt.s_dot));
+        velocities[idx] = vector_to_json_array(q_dot * static_cast<double>(pt.s_dot));
 
         // Joint acceleration: q_ddot = (d^2 q/ds^2) * (ds/dt)^2 + (dq/ds) * (d^2 s/dt^2)
         //                            = curvature * s_dot^2 + tangent * s_ddot
         const double s_dot_val = static_cast<double>(pt.s_dot);
         const double s_ddot_val = static_cast<double>(pt.s_ddot);
-        accelerations[idx] = xarray_to_json_array(q_ddot * (s_dot_val * s_dot_val) + q_dot * s_ddot_val);
+        accelerations[idx] = vector_to_json_array(q_ddot * (s_dot_val * s_dot_val) + q_dot * s_ddot_val);
     }
 
     // Phase plane
@@ -251,8 +252,8 @@ std::string serialize_trajectory_to_json(const trajectory_integration_event_coll
         metadata["path_length"] = static_cast<double>(effective->path().length());
         metadata["duration"] = effective->duration().count();
         metadata["num_integration_points"] = static_cast<Json::Int64>(effective->get_integration_points().size());
-        metadata["max_velocity"] = xarray_to_json_array(effective->get_options().max_velocity);
-        metadata["max_acceleration"] = xarray_to_json_array(effective->get_options().max_acceleration);
+        metadata["max_velocity"] = vector_to_json_array(effective->get_options().max_velocity);
+        metadata["max_acceleration"] = vector_to_json_array(effective->get_options().max_acceleration);
     }
 
     // If there was a failure, annotate metadata with the error message.

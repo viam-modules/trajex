@@ -3,6 +3,7 @@
 #include <viam/trajex/totg/trajectory.hpp>
 #include <viam/trajex/types/arc_length.hpp>
 #include <viam/trajex/types/arc_velocity.hpp>
+#include <viam/trajex/types/xt.hpp>
 
 #include <boost/test/unit_test.hpp>
 
@@ -11,6 +12,7 @@ namespace {
 using namespace viam::trajex::totg;
 using viam::trajex::arc_length;
 using viam::trajex::arc_velocity;
+using viam::trajex::xmatrix;
 
 // Test observer that counts method calls
 class counting_observer : public trajectory::integration_observer {
@@ -49,7 +51,7 @@ BOOST_AUTO_TEST_CASE(composite_observer_forwards_to_single_observer) {
     composite.add_observer(counter);
 
     // Create dummy trajectory for event context (skip integration)
-    const xt::xarray<double> waypoints = {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}};
     const path p = path::create(waypoints);
     const trajectory::options opts{.max_velocity = xt::ones<double>({3}), .max_acceleration = xt::ones<double>({3})};
     const trajectory traj = trajectory::create(p, opts, {});
@@ -76,7 +78,7 @@ BOOST_AUTO_TEST_CASE(composite_observer_forwards_to_multiple_observers) {
     composite.add_observer(counter2);
 
     // Create dummy trajectory (skip integration)
-    const xt::xarray<double> waypoints = {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}};
     const path p = path::create(waypoints);
     const trajectory::options opts{.max_velocity = xt::ones<double>({3}), .max_acceleration = xt::ones<double>({3})};
     const trajectory traj = trajectory::create(p, opts, {});
@@ -137,7 +139,7 @@ BOOST_AUTO_TEST_CASE(composite_observer_prevents_reentrancy_via_add) {
     composite.add_observer(reentrant);
 
     // Create dummy trajectory
-    const xt::xarray<double> waypoints = {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}};
     const path p = path::create(waypoints);
     const trajectory::options opts{.max_velocity = xt::ones<double>({3}), .max_acceleration = xt::ones<double>({3})};
     const trajectory traj = trajectory::create(p, opts, {});
@@ -172,7 +174,7 @@ BOOST_AUTO_TEST_CASE(composite_observer_prevents_reentrancy_via_dispatch) {
     };
 
     // Create dummy trajectory
-    const xt::xarray<double> waypoints = {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}};
     const path p = path::create(waypoints);
     const trajectory::options opts{.max_velocity = xt::ones<double>({3}), .max_acceleration = xt::ones<double>({3})};
     const trajectory traj = trajectory::create(p, opts, {});
@@ -197,7 +199,7 @@ BOOST_AUTO_TEST_CASE(event_collector_stores_events_in_order) {
     trajectory_integration_event_collector collector;
 
     // Create a simple trajectory to generate some events
-    const xt::xarray<double> waypoints = {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, {2.0, 0.0, 0.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, {2.0, 0.0, 0.0}};
     const path p = path::create(waypoints);
 
     const trajectory::options opts{
@@ -217,7 +219,7 @@ BOOST_AUTO_TEST_CASE(event_collector_range_iteration) {
     trajectory_integration_event_collector collector;
 
     // Create a simple trajectory
-    const xt::xarray<double> waypoints = {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}};
     const path p = path::create(waypoints);
 
     const trajectory::options opts{
@@ -243,7 +245,7 @@ BOOST_AUTO_TEST_CASE(event_collector_contains_expected_event_types) {
     trajectory_integration_event_collector collector;
 
     // Create trajectory with reversal to generate diverse events
-    const xt::xarray<double> waypoints = {
+    const xmatrix<> waypoints = {
         {0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, {0.5, 0.0, 0.0}  // Reversal
     };
     const path p = path::create(waypoints);

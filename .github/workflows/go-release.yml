@@ -112,6 +112,7 @@ jobs:
             -DVIAM_TRAJEX_ENABLE_TOOLS=OFF \
             -DVIAM_TRAJEX_ENABLE_SERVICE=OFF \
             -DVIAM_TRAJEX_BUILD_TESTS=OFF \
+            -DVIAM_TRAJEX_BUILD_BENCHMARKS=OFF \
             -DVIAM_TRAJEX_USE_WALL_WERROR=OFF \
             -DCMAKE_INSTALL_LIBDIR="lib/${{ matrix.plat }}" \
             -DCMAKE_INSTALL_INCLUDEDIR=include \

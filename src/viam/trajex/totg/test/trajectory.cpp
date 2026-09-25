@@ -6,6 +6,7 @@
 #include <viam/trajex/totg/path.hpp>
 #include <viam/trajex/totg/trajectory.hpp>
 #include <viam/trajex/types/arc_length.hpp>
+#include <viam/trajex/types/xt.hpp>
 
 #include <boost/test/unit_test.hpp>
 
@@ -14,6 +15,8 @@
 namespace {
 
 using namespace viam::trajex::totg;
+using viam::trajex::xmatrix;
+using viam::trajex::xvector;
 
 trajectory create_trajectory_with_integration_points(path p, std::vector<trajectory::integration_point> points) {
     const trajectory::options opts{.max_velocity = xt::ones<double>({p.dof()}), .max_acceleration = xt::ones<double>({p.dof()})};
@@ -27,11 +30,10 @@ BOOST_AUTO_TEST_SUITE(trajectory_generation_tests)
 BOOST_AUTO_TEST_CASE(generate_trajectory) {
     using namespace viam::trajex::totg;
 
-    const xt::xarray<double> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
+    const xmatrix<> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
     const path p = path::create(waypoints);
 
-    const trajectory::options options{.max_velocity = xt::xarray<double>{1.0, 1.0, 1.0},
-                                      .max_acceleration = xt::xarray<double>{1.5, 1.5, 1.5}};
+    const trajectory::options options{.max_velocity = xvector<>{1.0, 1.0, 1.0}, .max_acceleration = xvector<>{1.5, 1.5, 1.5}};
 
     BOOST_CHECK_NO_THROW(static_cast<void>(trajectory::create(p, options)));
 }
@@ -39,11 +41,11 @@ BOOST_AUTO_TEST_CASE(generate_trajectory) {
 BOOST_AUTO_TEST_CASE(validates_velocity_dof) {
     using namespace viam::trajex::totg;
 
-    const xt::xarray<double> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
+    const xmatrix<> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
     const path p = path::create(waypoints);
 
-    const trajectory::options options{.max_velocity = xt::xarray<double>{1.0, 1.0},  // Wrong DOF
-                                      .max_acceleration = xt::xarray<double>{0.5, 0.5, 0.5}};
+    const trajectory::options options{.max_velocity = xvector<>{1.0, 1.0},  // Wrong DOF
+                                      .max_acceleration = xvector<>{0.5, 0.5, 0.5}};
 
     BOOST_CHECK_THROW(static_cast<void>(trajectory::create(p, options)), std::invalid_argument);
 }
@@ -51,11 +53,11 @@ BOOST_AUTO_TEST_CASE(validates_velocity_dof) {
 BOOST_AUTO_TEST_CASE(validates_acceleration_dof) {
     using namespace viam::trajex::totg;
 
-    const xt::xarray<double> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
+    const xmatrix<> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
     const path p = path::create(waypoints);
 
     const trajectory::options options{
-        .max_velocity = xt::xarray<double>{1.0, 1.0, 1.0}, .max_acceleration = xt::xarray<double>{0.5, 0.5}  // Wrong DOF
+        .max_velocity = xvector<>{1.0, 1.0, 1.0}, .max_acceleration = xvector<>{0.5, 0.5}  // Wrong DOF
     };
 
     BOOST_CHECK_THROW(static_cast<void>(trajectory::create(p, options)), std::invalid_argument);
@@ -65,11 +67,11 @@ BOOST_AUTO_TEST_CASE(custom_integration_parameters) {
     using namespace viam::trajex;
     using namespace viam::trajex::totg;
 
-    const xt::xarray<double> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
+    const xmatrix<> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
     const path p = path::create(waypoints);
 
-    const trajectory::options options{.max_velocity = xt::xarray<double>{1.0, 1.0, 1.0},
-                                      .max_acceleration = xt::xarray<double>{1.5, 1.5, 1.5},
+    const trajectory::options options{.max_velocity = xvector<>{1.0, 1.0, 1.0},
+                                      .max_acceleration = xvector<>{1.5, 1.5, 1.5},
                                       .delta = trajectory::seconds{0.0005},
                                       .epsilon = epsilon{1e-9}};
 
@@ -79,13 +81,12 @@ BOOST_AUTO_TEST_CASE(custom_integration_parameters) {
 BOOST_AUTO_TEST_CASE(validates_delta_positive) {
     using namespace viam::trajex::totg;
 
-    const xt::xarray<double> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
+    const xmatrix<> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
     const path p = path::create(waypoints);
 
     const trajectory::options options{
-        .max_velocity = xt::xarray<double>{1.0, 1.0, 1.0},
-        .max_acceleration = xt::xarray<double>{0.5, 0.5, 0.5},
-        .delta = trajectory::seconds{0.0}  // Invalid
+        .max_velocity = xvector<>{1.0, 1.0, 1.0}, .max_acceleration = xvector<>{0.5, 0.5, 0.5}, .delta = trajectory::seconds{0.0}
+        // Invalid
     };
 
     BOOST_CHECK_THROW(static_cast<void>(trajectory::create(p, options)), std::invalid_argument);
@@ -95,12 +96,11 @@ BOOST_AUTO_TEST_CASE(validates_epsilon_positive) {
     using namespace viam::trajex;
     using namespace viam::trajex::totg;
 
-    const xt::xarray<double> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
+    const xmatrix<> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
     const path p = path::create(waypoints);
 
     const trajectory::options options{
-        .max_velocity = xt::xarray<double>{1.0, 1.0, 1.0}, .max_acceleration = xt::xarray<double>{0.5, 0.5, 0.5}, .epsilon = epsilon{-1e-6}
-        // Invalid
+        .max_velocity = xvector<>{1.0, 1.0, 1.0}, .max_acceleration = xvector<>{0.5, 0.5, 0.5}, .epsilon = epsilon{-1e-6}  // Invalid
     };
 
     BOOST_CHECK_THROW(static_cast<void>(trajectory::create(p, options)), std::invalid_argument);
@@ -113,11 +113,10 @@ BOOST_AUTO_TEST_SUITE(trajectory_tests)
 BOOST_AUTO_TEST_CASE(trajectory_has_path_reference) {
     using namespace viam::trajex::totg;
 
-    const xt::xarray<double> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
+    const xmatrix<> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
     path p = path::create(waypoints);
 
-    const trajectory::options options{.max_velocity = xt::xarray<double>{1.0, 1.0, 1.0},
-                                      .max_acceleration = xt::xarray<double>{1.5, 1.5, 1.5}};
+    const trajectory::options options{.max_velocity = xvector<>{1.0, 1.0, 1.0}, .max_acceleration = xvector<>{1.5, 1.5, 1.5}};
 
     const trajectory traj = trajectory::create(std::move(p), options);
 
@@ -128,11 +127,10 @@ BOOST_AUTO_TEST_CASE(trajectory_has_path_reference) {
 BOOST_AUTO_TEST_CASE(trajectory_dof_accessor) {
     using namespace viam::trajex::totg;
 
-    const xt::xarray<double> waypoints = {{1.0, 2.0, 3.0, 4.0}, {5.0, 6.0, 7.0, 8.0}};
+    const xmatrix<> waypoints = {{1.0, 2.0, 3.0, 4.0}, {5.0, 6.0, 7.0, 8.0}};
     path p = path::create(waypoints);
 
-    const trajectory::options options{.max_velocity = xt::xarray<double>{1.0, 1.0, 1.0, 1.0},
-                                      .max_acceleration = xt::xarray<double>{1.5, 1.5, 1.5, 1.5}};
+    const trajectory::options options{.max_velocity = xvector<>{1.0, 1.0, 1.0, 1.0}, .max_acceleration = xvector<>{1.5, 1.5, 1.5, 1.5}};
 
     const trajectory traj = trajectory::create(std::move(p), options);
 
@@ -142,11 +140,10 @@ BOOST_AUTO_TEST_CASE(trajectory_dof_accessor) {
 BOOST_AUTO_TEST_CASE(trajectory_duration_is_valid) {
     using namespace viam::trajex::totg;
 
-    const xt::xarray<double> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
+    const xmatrix<> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
     path p = path::create(waypoints);
 
-    const trajectory::options options{.max_velocity = xt::xarray<double>{1.0, 1.0, 1.0},
-                                      .max_acceleration = xt::xarray<double>{1.5, 1.5, 1.5}};
+    const trajectory::options options{.max_velocity = xvector<>{1.0, 1.0, 1.0}, .max_acceleration = xvector<>{1.5, 1.5, 1.5}};
 
     const trajectory traj = trajectory::create(std::move(p), options);
 
@@ -157,11 +154,10 @@ BOOST_AUTO_TEST_CASE(trajectory_duration_is_valid) {
 BOOST_AUTO_TEST_CASE(sample_at_throws_on_negative_time) {
     using namespace viam::trajex::totg;
 
-    const xt::xarray<double> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
+    const xmatrix<> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
     path p = path::create(waypoints);
 
-    const trajectory::options options{.max_velocity = xt::xarray<double>{1.0, 1.0, 1.0},
-                                      .max_acceleration = xt::xarray<double>{1.5, 1.5, 1.5}};
+    const trajectory::options options{.max_velocity = xvector<>{1.0, 1.0, 1.0}, .max_acceleration = xvector<>{1.5, 1.5, 1.5}};
 
     const trajectory traj = trajectory::create(std::move(p), options);
 
@@ -171,11 +167,10 @@ BOOST_AUTO_TEST_CASE(sample_at_throws_on_negative_time) {
 BOOST_AUTO_TEST_CASE(sample_at_throws_on_time_beyond_duration) {
     using namespace viam::trajex::totg;
 
-    const xt::xarray<double> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
+    const xmatrix<> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
     path p = path::create(waypoints);
 
-    const trajectory::options options{.max_velocity = xt::xarray<double>{1.0, 1.0, 1.0},
-                                      .max_acceleration = xt::xarray<double>{1.5, 1.5, 1.5}};
+    const trajectory::options options{.max_velocity = xvector<>{1.0, 1.0, 1.0}, .max_acceleration = xvector<>{1.5, 1.5, 1.5}};
 
     const trajectory traj = trajectory::create(std::move(p), options);
 
@@ -187,11 +182,10 @@ BOOST_AUTO_TEST_CASE(sample_at_throws_on_time_beyond_duration) {
 BOOST_AUTO_TEST_CASE(sample_at_returns_valid_structure) {
     using namespace viam::trajex::totg;
 
-    const xt::xarray<double> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
+    const xmatrix<> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
     path p = path::create(waypoints);
 
-    const trajectory::options options{.max_velocity = xt::xarray<double>{1.0, 1.0, 1.0},
-                                      .max_acceleration = xt::xarray<double>{1.5, 1.5, 1.5}};
+    const trajectory::options options{.max_velocity = xvector<>{1.0, 1.0, 1.0}, .max_acceleration = xvector<>{1.5, 1.5, 1.5}};
 
     const trajectory traj = trajectory::create(std::move(p), options);
 
@@ -207,11 +201,10 @@ BOOST_AUTO_TEST_CASE(sample_at_returns_valid_structure) {
 BOOST_AUTO_TEST_CASE(trajectory_dof_matches_path_dof) {
     using namespace viam::trajex::totg;
 
-    const xt::xarray<double> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
+    const xmatrix<> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
     path p = path::create(waypoints);
 
-    const trajectory::options options{.max_velocity = xt::xarray<double>{1.0, 1.0, 1.0},
-                                      .max_acceleration = xt::xarray<double>{1.5, 1.5, 1.5}};
+    const trajectory::options options{.max_velocity = xvector<>{1.0, 1.0, 1.0}, .max_acceleration = xvector<>{1.5, 1.5, 1.5}};
 
     const size_t expected_dof = p.dof();
     const trajectory traj = trajectory::create(std::move(p), options);
@@ -232,7 +225,7 @@ using namespace viam::trajex;
 
 BOOST_AUTO_TEST_CASE(sample_at_start) {
     // Create simple linear path: (0,0) -> (1,0)
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
     path p = path::create(waypoints);
 
     // Create trajectory with known integration points
@@ -256,7 +249,7 @@ BOOST_AUTO_TEST_CASE(sample_at_start) {
 
 BOOST_AUTO_TEST_CASE(sample_at_end) {
     // Create simple linear path: (0,0) -> (1,0)
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
     path p = path::create(waypoints);
 
     // Create trajectory with known integration points
@@ -276,7 +269,7 @@ BOOST_AUTO_TEST_CASE(sample_at_end) {
 }
 
 BOOST_AUTO_TEST_CASE(sample_before_start_throws) {
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
     path p = path::create(waypoints);
 
     std::vector<trajectory::integration_point> points = {
@@ -290,7 +283,7 @@ BOOST_AUTO_TEST_CASE(sample_before_start_throws) {
 }
 
 BOOST_AUTO_TEST_CASE(sample_after_end_throws) {
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
     path p = path::create(waypoints);
 
     std::vector<trajectory::integration_point> points = {
@@ -309,7 +302,7 @@ BOOST_AUTO_TEST_CASE(constant_velocity_linear_path) {
     // Linear path: (0,0) -> (2,0) with constant velocity
     // Expected: q_dot = q' * s_dot = (1,0) * 1.0 = (1,0)
     //           q_ddot = q' * s_ddot + q'' * s_dot^2 = (1,0) * 0.0 + (0,0) * 1.0 = (0,0)
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {2.0, 0.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {2.0, 0.0}};
     path p = path::create(waypoints);
 
     std::vector<trajectory::integration_point> points = {
@@ -339,7 +332,7 @@ BOOST_AUTO_TEST_CASE(constant_acceleration_linear_path) {
     // Start at rest, accelerate at s_ddot = 2.0
     // At t=0: s=0, s_dot=0, s_ddot=2
     // At t=sqrt(2): s=2 (path end), s_dot=2*sqrt(2) (using s = 0.5*a*t^2)
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {2.0, 0.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {2.0, 0.0}};
     path p = path::create(waypoints);
     const double t_end = std::sqrt(2.0);  // Time to reach s=2 with a=2
 
@@ -368,7 +361,7 @@ BOOST_AUTO_TEST_CASE(constant_acceleration_linear_path) {
 BOOST_AUTO_TEST_CASE(parabolic_interpolation_midpoint) {
     // Test parabolic interpolation between two points
     // Linear path for simplicity, focus on time interpolation
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {4.0, 0.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {4.0, 0.0}};
     path p = path::create(waypoints);
 
     // Two points: accelerate from rest to reach path end at s=4
@@ -398,7 +391,7 @@ BOOST_AUTO_TEST_CASE(parabolic_interpolation_midpoint) {
 
 BOOST_AUTO_TEST_CASE(cursor_maintains_position_across_samples) {
     // Verify cursor doesn't lose position when sampling multiple times
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
     path p = path::create(waypoints);
 
     std::vector<trajectory::integration_point> points = {
@@ -425,7 +418,7 @@ BOOST_AUTO_TEST_CASE(cursor_maintains_position_across_samples) {
 }
 
 BOOST_AUTO_TEST_CASE(cursor_seek_updates_position) {
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 0.0}};
     path p = path::create(waypoints);
 
     std::vector<trajectory::integration_point> points = {
@@ -455,7 +448,7 @@ BOOST_AUTO_TEST_CASE(cursor_seek_updates_position) {
 }
 
 BOOST_AUTO_TEST_CASE(cursor_seek_by_advances_position) {
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {2.0, 0.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {2.0, 0.0}};
     path p = path::create(waypoints);
 
     std::vector<trajectory::integration_point> points = {
@@ -489,7 +482,7 @@ BOOST_AUTO_TEST_CASE(cursor_seek_by_advances_position) {
 BOOST_AUTO_TEST_CASE(cursor_seek_within_current_integration_point) {
     // Verify fast path in seek() (lines 258-267 in trajectory.cpp)
     // When seeking within current integration point, hint should remain valid
-    xt::xarray<double> waypoints = xt::xarray<double>::from_shape({2, 1});
+    xmatrix<> waypoints = xmatrix<>::from_shape({2, 1});
     waypoints(0, 0) = 0.0;
     waypoints(1, 0) = 5.0;
     path p = path::create(waypoints);
@@ -524,7 +517,7 @@ BOOST_AUTO_TEST_CASE(cursor_seek_within_current_integration_point) {
 
 BOOST_AUTO_TEST_CASE(cursor_seek_to_adjacent_integration_points) {
     // Verify forward-by-one path (lines 269-282) and backward-by-one path (lines 284-293)
-    xt::xarray<double> waypoints = xt::xarray<double>::from_shape({2, 1});
+    xmatrix<> waypoints = xmatrix<>::from_shape({2, 1});
     waypoints(0, 0) = 0.0;
     waypoints(1, 0) = 5.0;
     path p = path::create(waypoints);
@@ -559,7 +552,7 @@ BOOST_AUTO_TEST_CASE(cursor_seek_to_adjacent_integration_points) {
 
 BOOST_AUTO_TEST_CASE(cursor_seek_large_jump) {
     // Verify binary search path (lines 295-309) for large time jumps
-    xt::xarray<double> waypoints = xt::xarray<double>::from_shape({2, 1});
+    xmatrix<> waypoints = xmatrix<>::from_shape({2, 1});
     waypoints(0, 0) = 0.0;
     waypoints(1, 0) = 6.0;
     path p = path::create(waypoints);
@@ -597,7 +590,7 @@ BOOST_AUTO_TEST_CASE(cursor_seek_large_jump) {
 BOOST_AUTO_TEST_CASE(trajectory_sampling_on_circular_blend) {
     // Create path with sharp 90-degree corner to generate circular blend
     // Path: (0,0) -> (1,0) -> (1,1)
-    const xt::xarray<double> waypoints = {
+    const xmatrix<> waypoints = {
         {0.0, 0.0},
         {1.0, 0.0},  // Right
         {1.0, 1.0}   // Up (90-degree turn)
@@ -666,7 +659,7 @@ BOOST_AUTO_TEST_CASE(trajectory_sampling_on_circular_blend) {
 
 BOOST_AUTO_TEST_CASE(cursor_seek_to_negative_time_becomes_sentinel) {
     // Verify seeking to negative time produces sentinel state
-    xt::xarray<double> waypoints = xt::xarray<double>::from_shape({2, 1});
+    xmatrix<> waypoints = xmatrix<>::from_shape({2, 1});
     waypoints(0, 0) = 0.0;
     waypoints(1, 0) = 2.0;
     path p = path::create(waypoints);
@@ -690,7 +683,7 @@ BOOST_AUTO_TEST_CASE(cursor_seek_to_negative_time_becomes_sentinel) {
 
 BOOST_AUTO_TEST_CASE(cursor_seek_beyond_duration_becomes_sentinel) {
     // Verify seeking beyond duration produces sentinel state
-    xt::xarray<double> waypoints = xt::xarray<double>::from_shape({2, 1});
+    xmatrix<> waypoints = xmatrix<>::from_shape({2, 1});
     waypoints(0, 0) = 0.0;
     waypoints(1, 0) = 2.0;
     path p = path::create(waypoints);
@@ -714,7 +707,7 @@ BOOST_AUTO_TEST_CASE(cursor_seek_beyond_duration_becomes_sentinel) {
 
 BOOST_AUTO_TEST_CASE(cursor_seek_by_from_sentinel_state) {
     // Verify seek_by doesn't change sentinel state
-    xt::xarray<double> waypoints = xt::xarray<double>::from_shape({2, 1});
+    xmatrix<> waypoints = xmatrix<>::from_shape({2, 1});
     waypoints(0, 0) = 0.0;
     waypoints(1, 0) = 2.0;
     path p = path::create(waypoints);

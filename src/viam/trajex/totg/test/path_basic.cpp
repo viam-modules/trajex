@@ -4,15 +4,18 @@
 #include <viam/trajex/totg/path.hpp>
 #include <viam/trajex/totg/waypoint_accumulator.hpp>
 #include <viam/trajex/types/arc_length.hpp>
+#include <viam/trajex/types/xt.hpp>
 
 #include <boost/test/unit_test.hpp>
+
+using viam::trajex::xmatrix;
 
 BOOST_AUTO_TEST_SUITE(path_tests)
 
 BOOST_AUTO_TEST_CASE(create_path) {
     using namespace viam::trajex::totg;
 
-    const xt::xarray<double> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
+    const xmatrix<> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
     const waypoint_accumulator acc{waypoints};
 
     BOOST_CHECK_NO_THROW(static_cast<void>(path::create(acc)));
@@ -21,7 +24,7 @@ BOOST_AUTO_TEST_CASE(create_path) {
 BOOST_AUTO_TEST_CASE(validates_max_deviation) {
     using namespace viam::trajex::totg;
 
-    const xt::xarray<double> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
+    const xmatrix<> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
     const waypoint_accumulator acc{waypoints};
 
     // Negative blend deviation should throw
@@ -35,18 +38,18 @@ BOOST_AUTO_TEST_CASE(requires_minimum_two_waypoints) {
     using namespace viam::trajex::totg;
 
     // Single waypoint should throw
-    const xt::xarray<double> single = {{1.0, 2.0, 3.0}};
+    const xmatrix<> single = {{1.0, 2.0, 3.0}};
     BOOST_CHECK_THROW(static_cast<void>(path::create(single)), std::invalid_argument);
 
     // Two waypoints should work
-    const xt::xarray<double> two = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
+    const xmatrix<> two = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
     BOOST_CHECK_NO_THROW(static_cast<void>(path::create(two)));
 }
 
 BOOST_AUTO_TEST_CASE(create_from_array_vs_accumulator) {
     using namespace viam::trajex::totg;
 
-    const xt::xarray<double> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
+    const xmatrix<> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
 
     // Create from accumulator
     const waypoint_accumulator acc{waypoints};
@@ -64,7 +67,7 @@ BOOST_AUTO_TEST_CASE(create_from_array_vs_accumulator) {
 BOOST_AUTO_TEST_CASE(path_dof_matches_waypoints) {
     using namespace viam::trajex::totg;
 
-    const xt::xarray<double> waypoints = {{1.0, 2.0, 3.0, 4.0}, {5.0, 6.0, 7.0, 8.0}};
+    const xmatrix<> waypoints = {{1.0, 2.0, 3.0, 4.0}, {5.0, 6.0, 7.0, 8.0}};
     const path p = path::create(waypoints);
 
     BOOST_CHECK_EQUAL(p.dof(), 4);
@@ -74,7 +77,7 @@ BOOST_AUTO_TEST_CASE(linear_path_length) {
     using namespace viam::trajex::totg;
 
     // Simple 3-4-5 triangle in 2D
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {3.0, 0.0}, {3.0, 4.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {3.0, 0.0}, {3.0, 4.0}};
     const path p = path::create(waypoints);
 
     // Two segments: 3.0 + 4.0 = 7.0
@@ -84,7 +87,7 @@ BOOST_AUTO_TEST_CASE(linear_path_length) {
 BOOST_AUTO_TEST_CASE(linear_path_segment_count) {
     using namespace viam::trajex::totg;
 
-    const xt::xarray<double> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}, {7.0, 8.0, 9.0}};
+    const xmatrix<> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}, {7.0, 8.0, 9.0}};
     const path p = path::create(waypoints);
 
     // 3 waypoints => 2 segments
@@ -95,7 +98,7 @@ BOOST_AUTO_TEST_CASE(segment_lookup_at_start) {
     using namespace viam::trajex::totg;
     using viam::trajex::arc_length;
 
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {3.0, 0.0}, {3.0, 4.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {3.0, 0.0}, {3.0, 4.0}};
     const path p = path::create(waypoints);
 
     // Query at start of path
@@ -111,7 +114,7 @@ BOOST_AUTO_TEST_CASE(segment_lookup_at_boundary) {
     using namespace viam::trajex::totg;
     using viam::trajex::arc_length;
 
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {3.0, 0.0}, {3.0, 4.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {3.0, 0.0}, {3.0, 4.0}};
     const path p = path::create(waypoints);
 
     // Query at boundary between segments (exactly at arc_length 3.0)
@@ -127,7 +130,7 @@ BOOST_AUTO_TEST_CASE(segment_lookup_mid_segment) {
     using namespace viam::trajex::totg;
     using viam::trajex::arc_length;
 
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {3.0, 0.0}, {3.0, 4.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {3.0, 0.0}, {3.0, 4.0}};
     const path p = path::create(waypoints);
 
     // Query in middle of first segment
@@ -142,7 +145,7 @@ BOOST_AUTO_TEST_CASE(segment_lookup_at_end) {
     using namespace viam::trajex::totg;
     using viam::trajex::arc_length;
 
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {3.0, 0.0}, {3.0, 4.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {3.0, 0.0}, {3.0, 4.0}};
     const path p = path::create(waypoints);
 
     // Query at end of path
@@ -157,7 +160,7 @@ BOOST_AUTO_TEST_CASE(segment_lookup_out_of_range) {
     using namespace viam::trajex::totg;
     using viam::trajex::arc_length;
 
-    const xt::xarray<double> waypoints = {{0.0, 0.0}, {3.0, 0.0}};
+    const xmatrix<> waypoints = {{0.0, 0.0}, {3.0, 0.0}};
     const path p = path::create(waypoints);
 
     // Query beyond path length should throw
@@ -169,7 +172,7 @@ BOOST_AUTO_TEST_CASE(multiple_segments_lookup) {
     using viam::trajex::arc_length;
 
     // Four waypoints => three segments (1D path)
-    xt::xarray<double> waypoints = xt::xarray<double>::from_shape({4, 1});
+    xmatrix<> waypoints = xmatrix<>::from_shape({4, 1});
     waypoints(0, 0) = 0.0;
     waypoints(1, 0) = 1.0;
     waypoints(2, 0) = 3.0;

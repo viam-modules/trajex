@@ -48,21 +48,28 @@ uniform_sampler uniform_sampler::quantized_for_trajectory(const trajectory& traj
     return uniform_sampler{calculate_quantized_samples(span.count(), frequency.value), start};
 }
 
-std::optional<struct trajectory::sample> uniform_sampler::next(trajectory::cursor& cursor) {
+bool uniform_sampler::advance(trajectory::cursor& cursor) {
     if (next_sample_ == num_samples_) {
-        return std::nullopt;
+        return false;
     }
 
     // Compute target time via `linspace` over [start_, duration] with a special case for
     // the exact endpoint.
     const auto when = (next_sample_ == num_samples_ - 1) ? 1.0 : static_cast<double>(next_sample_) / static_cast<double>(num_samples_ - 1);
 
-    // Seek cursor to computed time and sample
+    // Seek cursor to computed time
     cursor.seek(trajectory::seconds{std::lerp(start_.count(), cursor.trajectory().duration().count(), when)});
-    auto sample = cursor.sample();
 
     ++next_sample_;
-    return sample;
+    return true;
+}
+
+std::optional<struct trajectory::sample> uniform_sampler::next(trajectory::cursor& cursor) {
+    if (!advance(cursor)) {
+        return std::nullopt;
+    }
+
+    return cursor.sample();
 }
 
 }  // namespace viam::trajex::totg

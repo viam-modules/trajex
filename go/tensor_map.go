@@ -205,11 +205,16 @@ func (m *TensorMap) ViewInt64s(key string) (shape []uint64, data []int64, ok boo
 	return shape, unsafe.Slice((*int64)(dPtr), int(total)), true, nil
 }
 
-// validateShape checks that shape is non-empty, every dim is at least 1,
-// and the product of dims equals dataLen.
+// validateShape checks that shape has one or two dimensions, every dim is at
+// least 1, and the product of dims equals dataLen. Rank is capped to match the
+// C API, which stores tensors in a rank-aware variant; checking here means a Go
+// caller gets a Go error rather than an opaque return code from the shim.
 func validateShape(shape []uint64, dataLen int) error {
 	if len(shape) == 0 {
 		return errors.New("trajex: shape must have at least one dimension")
+	}
+	if len(shape) > 2 {
+		return errors.Errorf("trajex: shape has rank %d; only rank 1 and 2 are supported", len(shape))
 	}
 	var total uint64 = 1
 	for i, d := range shape {
