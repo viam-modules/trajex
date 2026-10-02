@@ -2550,7 +2550,21 @@ void generate_trajectory_from_replay_file(const std::string& filename,
 
     auto outcome = planner.execute([](const auto&, auto tx, const auto&) { return tx; });
 
-    BOOST_REQUIRE_MESSAGE(outcome.receiver.has_value(), "trajectory generation failed");
+    // The planner captures whatever killed the run in `outcome.error`. Reporting only that
+    // generation failed discards the one thing a reader of the failure needs.
+    if (!outcome.receiver.has_value()) {
+        std::string reason = "no exception was captured";
+        if (outcome.error) {
+            try {
+                std::rethrow_exception(outcome.error);
+            } catch (const std::exception& e) {
+                reason = e.what();
+            } catch (...) {
+                reason = "non-std exception";
+            }
+        }
+        BOOST_FAIL("trajectory generation failed: " << reason);
+    }
     BOOST_REQUIRE(outcome.receiver->traj.has_value());
 
     const trajectory& traj = *outcome.receiver->traj;
@@ -2720,6 +2734,51 @@ BOOST_AUTO_TEST_CASE(gp12_forward_truncated_step_sddot_within_bounds, *boost::un
     BOOST_CHECK_MESSAGE(worst_excess == 0.0,
                         "integration point " << worst_index << " has s_ddot=" << worst_value
                                              << " outside its feasible acceleration band by " << worst_excess);
+}
+
+BOOST_AUTO_TEST_CASE(orbsanding_3df3ece3_trajectory_generation) {
+    // TODO(RSDK-13890): Reduce these tolerances
+    constexpr auto k_local_trajectory_invariants_tolerance_override = 505.0;
+    constexpr auto k_local_joint_kinematics_tolerance_override = 16.0;
+    generate_trajectory_from_replay_file("orbsanding-3df3ece3127a07f6554713f4449cc8b2_plan001_step002_work.trajex-totg-replay.json",
+                                         k_local_trajectory_invariants_tolerance_override,
+                                         k_local_joint_kinematics_tolerance_override);
+}
+
+BOOST_AUTO_TEST_CASE(orbsanding_462bf0f9_trajectory_generation, *boost::unit_test::disabled()) {
+    generate_trajectory_from_replay_file(
+        "orbsanding-462bf0f94d9ebb7ccc71c6d8cd621533_plan002_step002_work.trajex-totg-replay.json", std::nullopt, std::nullopt);
+}
+
+BOOST_AUTO_TEST_CASE(orbsanding_9b8bc795_trajectory_generation, *boost::unit_test::disabled()) {
+    generate_trajectory_from_replay_file(
+        "orbsanding-9b8bc79585b192039f38325713fb7a12_plan001_step002_work.trajex-totg-replay.json", std::nullopt, std::nullopt);
+}
+
+BOOST_AUTO_TEST_CASE(orbsanding_a40fcf17_trajectory_generation, *boost::unit_test::disabled()) {
+    generate_trajectory_from_replay_file(
+        "orbsanding-a40fcf17e8a3bb17d6998a5cd028d736_plan001_step002_work.trajex-totg-replay.json", std::nullopt, std::nullopt);
+}
+
+BOOST_AUTO_TEST_CASE(failed_trajectory_6a16b075_533248da_trajectory_generation, *boost::unit_test::disabled()) {
+    generate_trajectory_from_replay_file(
+        "njsanding-viam_capture_tag=6a16b0754c15ae84eb949bc3bcc4932e_533248da-ea16-4af4-92d5-7b3f31dbdf8f_arm.trajex-totg-replay.json",
+        std::nullopt,
+        std::nullopt);
+}
+
+BOOST_AUTO_TEST_CASE(failed_trajectory_c89a6776_3ce29d66_trajectory_generation, *boost::unit_test::disabled()) {
+    generate_trajectory_from_replay_file(
+        "njsanding-viam_capture_tag=c89a6776-85f5-4fa2-9919-eb486bc953d8_3ce29d66-8fc6-44de-bb33-45811ad671b5_arm.trajex-totg-replay.json",
+        std::nullopt,
+        std::nullopt);
+}
+
+BOOST_AUTO_TEST_CASE(failed_trajectory_c89a6776_4c48331e_trajectory_generation, *boost::unit_test::disabled()) {
+    generate_trajectory_from_replay_file(
+        "njsanding-viam_capture_tag=c89a6776-85f5-4fa2-9919-eb486bc953d8_4c48331e-9871-4e06-bf93-01eacdb304dc_arm.trajex-totg-replay.json",
+        std::nullopt,
+        std::nullopt);
 }
 
 BOOST_AUTO_TEST_SUITE_END()  // replay_regression_tests

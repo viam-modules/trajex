@@ -4,6 +4,8 @@ Visualize trajectory generation from JSON output.
 
 Usage:
     python scripts/visualize_trajectory.py trajectory.json
+
+Double-click any plot to open it in a window of its own.
 """
 
 import json
@@ -439,6 +441,33 @@ def main():
     plot_arc_acceleration(data, ax_s_ddot)
 
     plt.tight_layout(rect=[0, 0.03, 1, 1])  # Leave space for legend at bottom
+
+    # Double-clicking a plot reopens it in a window of its own, drawn by the same function, so it
+    # gets the whole canvas and its own toolbar and zoom history while the grid stays as it was.
+    # A second double-click on the same plot raises its existing window rather than opening another.
+    plotters = {
+        ax_phase: plot_phase_plane,
+        ax_vel: plot_joint_velocities,
+        ax_accel: plot_joint_accelerations,
+        ax_pos: plot_joint_trajectories,
+        ax_arc: plot_arc_length_vs_time,
+        ax_s_ddot: plot_arc_acceleration,
+    }
+
+    def pop_out(event):
+        plot = plotters.get(event.inaxes)
+        if not event.dblclick or plot is None:
+            return
+        name = f"{title}: {event.inaxes.get_title() or plot.__name__}"
+        if plt.fignum_exists(name):
+            plt.figure(name).show()
+            return
+        popped = plt.figure(figsize=(14, 8), num=name)
+        plot(data, popped.add_subplot())
+        popped.tight_layout()
+        popped.show()
+
+    fig.canvas.mpl_connect("button_press_event", pop_out)
     plt.show()
 
 

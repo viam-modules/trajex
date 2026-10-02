@@ -576,10 +576,19 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
             // catastrophic cancellation from reconstructing two nearly-equal endpoint positions.
             // When adjacent blends fully consume a connecting segment (C-C), this should be
             // exactly zero. It can come out slightly positive due to FP rounding in the outgoing
-            // segment norm; the representability check catches that: if incoming_length is too
-            // small to change dist_to_locus in floating-point, the segment is a rounding artifact.
+            // segment norm, and such a segment is a rounding artifact rather than geometry.
+            //
+            // A segment is only worth emitting if there is somewhere to be inside it. Positions
+            // are addressed in the path's own arc length, so that means a representable value
+            // strictly between the endpoints: step one value inward from each end and require
+            // that they have not crossed. One ULP leaves nowhere to stand between the endpoints
+            // and no way to advance through the segment; two leaves exactly one position, which
+            // is the least that makes the segment a place rather than a boundary. This asks the
+            // number system rather than a tolerance, so it introduces no epsilon.
             const auto incoming_length = dist_to_locus - blend.trim_distance;
-            if (cumulative_length + arc_length{incoming_length} > cumulative_length) {
+            const auto span_start = static_cast<double>(cumulative_length);
+            const auto span_end = span_start + incoming_length;
+            if ((span_end > span_start) && (std::nextafter(span_start, span_end) <= std::nextafter(span_end, span_start))) {
                 segment::linear incoming_segment{current_position, incoming_unit, arc_length{incoming_length}};
                 segments.push_back({.seg = segment{std::move(incoming_segment)}, .start = cumulative_length});
                 cumulative_length += arc_length{incoming_length};

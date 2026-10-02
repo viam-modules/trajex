@@ -59,7 +59,8 @@ class trajectory {
     /// Sample from a trajectory.
     ///
     struct sample {
-        seconds time;             ///< Sample time
+        seconds time{};           ///< Sample time
+        arc_length s{0.0};        ///< Arc length on the path at sample time
         xvector<> configuration;  ///< Configuration at sample time
         xvector<> velocity;       ///< Velocity at sample time
         xvector<> acceleration;   ///< Acceleration at sample time

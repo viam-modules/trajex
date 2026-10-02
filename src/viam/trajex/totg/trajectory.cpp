@@ -984,17 +984,35 @@ std::optional<eq40_escape_bracket> find_eq40_escape_bracket(path::cursor search_
     bool has_previous_delta = false;
     phase_plane_slope previous_delta{0.0};
     search_cursor.seek(search_position);
-    auto previous_segment_end = (*search_cursor).end();
+    auto previous_segment = *search_cursor;
+    auto previous_segment_end = previous_segment.end();
 
     while (search_cursor.position() <= max_search_hint && search_cursor.position() < search_cursor.path().length()) {
         const auto current_position = search_cursor.position();
         const auto result = try_compute_eq40_delta(search_cursor, opt);
 
-        // If we crossed a segment boundary, reset the baseline. A delta sign change
-        // across a boundary is a geometric discontinuity, not a continuous Eq. 40 escape.
-        const auto current_segment_end = (*search_cursor).end();
+        // Crossing a segment boundary invalidates the baseline only when the boundary is
+        // discontinuous. The velocity limit is min_i(v_i / |q'_i|), a function of the tangent
+        // alone, so a tangent that survives the boundary leaves the limit curve continuous and
+        // both samples describing the same phase plane point. A sign change across such a
+        // boundary is a real escape -- the velocity curve reaching a minimum that happens to sit
+        // on the boundary -- rather than the geometric discontinuity this reset was written for.
+        // Discarding it there is why a V-shaped dip with its minimum on a C-C boundary produces
+        // no switching point at all.
+        const auto current_segment = *search_cursor;
+        const auto current_segment_end = current_segment.end();
         if (current_segment_end != previous_segment_end) {
-            has_previous_delta = false;
+            // Adjacency is required as well: a step large enough to clear a whole segment leaves
+            // nothing meaningful to compare the tangents of.
+            const bool adjacent = (current_segment.start() == previous_segment_end);
+            const bool continuous = adjacent && [&] {
+                const auto dot = xt::sum(previous_segment.tangent(previous_segment_end) * current_segment.tangent(previous_segment_end))();
+                return opt.epsilon.wrap(dot) == opt.epsilon.wrap(1.0);
+            }();
+            if (!continuous) {
+                has_previous_delta = false;
+            }
+            previous_segment = current_segment;
             previous_segment_end = current_segment_end;
         }
 
@@ -2369,6 +2387,7 @@ void trajectory::cursor::sample(struct trajectory::sample& into) const {
     // temporary first, allocating on every sample. These expressions read only the path
     // cursor's geometry, never `into`.
     into.time = time_;
+    into.s = path_cursor_.position();
     xt::noalias(into.configuration) = q;
     xt::noalias(into.velocity) = q_dot;
     xt::noalias(into.acceleration) = q_ddot;
