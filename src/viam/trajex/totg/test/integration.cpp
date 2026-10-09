@@ -2942,6 +2942,18 @@ BOOST_AUTO_TEST_CASE(random_trajectory_determinism) {
     BOOST_REQUIRE(f1.collector_ && f2.collector_);
     BOOST_CHECK(f1.collector_->events().size() == f2.collector_->events().size());
     BOOST_CHECK(f1.collector_->events() == f2.collector_->events());
+
+    // Validation inside each run can fail as well as the comparison, and either way the seed is
+    // what's needed to reproduce it.
+    if (boost::unit_test::results_collector.results(boost::unit_test::framework::current_test_case().p_id).p_assertions_failed > 0) {
+        announce_seed(seed);
+    }
+}
+
+// Found by random_trajectory_determinism: both runs agree, but the trajectory has
+// negative s_dot.
+BOOST_AUTO_TEST_CASE(random_trajectory_seed_0xc29579d4) {
+    run_random_trajectory(0xc29579d4);
 }
 
 // Disabled for now, as it currently finds issues every time it is run

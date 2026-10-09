@@ -437,8 +437,17 @@ struct eq40_result {
 // This is direction-agnostic - caller determines whether dt is positive (forward) or negative (backward).
 trajectory::phase_point euler_step(
     arc_length s, arc_velocity s_dot, arc_acceleration s_ddot, trajectory::seconds dt, class epsilon epsilon) {
-    const auto s_dot_new = s_dot + (s_ddot * dt);
-    const auto s_new = s + (s_dot * dt) + (0.5 * s_ddot * dt * dt);
+    auto s_dot_new = s_dot + (s_ddot * dt);
+    auto s_new = s + (s_dot * dt) + (0.5 * s_ddot * dt * dt);
+
+    // A step long enough to carry s_dot through zero ends where s_dot reaches zero instead. The
+    // distance covered is the mean velocity over the shortened step, so the result is still
+    // consistent with constant acceleration, which is what callers assume when they recover dt
+    // and s_ddot from the endpoints.
+    if (s_dot_new < arc_velocity{0.0}) [[unlikely]] {
+        s_new = s + (midpoint(s_dot, arc_velocity{0.0}) * (-s_dot / s_ddot));
+        s_dot_new = arc_velocity{0.0};
+    }
 
     if (epsilon.wrap(s_new) == epsilon.wrap(s)) [[unlikely]] {
         if (epsilon.wrap(s_dot_new) == epsilon.wrap(s_dot)) [[unlikely]] {
