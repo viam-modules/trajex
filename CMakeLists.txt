@@ -31,6 +31,13 @@ option(VIAM_TRAJEX_BUILD_BENCHMARKS "Build the Trajex benchmark programs" ${VIAM
 # path. Pulls in Eigen. Useful for cross-validating the new TOTG implementation.
 option(VIAM_TRAJEX_ENABLE_LEGACY "Enable the reference implementation" ON)
 
+# Enable the TOTG compatibility layer (`viam::trajex::totg::compat`): the reference
+# implementation's `Path` and `Trajectory` interface backed by trajex, so code written against
+# the original can try trajex without changes, plus a shim target that serves that interface
+# under the original header names. Pulls in Eigen. Defaults ON for standalone builds, OFF for
+# FetchContent consumers.
+option(VIAM_TRAJEX_TOTG_ENABLE_LEGACY_COMPAT "Enable the TOTG reference implementation compatibility layer" ${VIAM_TRAJEX_STANDALONE_BUILD})
+
 # Enable the planner, replay, and JSON serialization tooling layer
 # (`viam::trajex::totg::tools`). Required by the service layer and by the regression test
 # suite (the latter for opt-in trajectory dumping; see the TODO at the test target).
@@ -162,7 +169,8 @@ set(VIAM_TRAJEX_XTL_VERSION_MINIMUM 0.7.2)
 #                  below become silent no-ops. Pins match the SDK's current pins so
 #                  the no-SDK path tracks the same versions.
 #   viam-cpp-sdk   ENABLE_SERVICE; FetchContent with find_package fallback.
-#   Eigen3         ENABLE_LEGACY (reference impl + colinearization helpers).
+#   Eigen3         ENABLE_LEGACY (reference impl + colinearization helpers), and
+#                  TOTG_ENABLE_LEGACY_COMPAT (the compatibility layer's interface).
 #   Boost          BUILD_TESTS (boost.test framework, consumed in header-only mode
 #                  via `<boost/test/included/unit_test.hpp>`; we still declare the
 #                  `unit_test_framework` component to validate it is installed.
@@ -207,6 +215,10 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(xtl xtensor)
 
 if (VIAM_TRAJEX_ENABLE_LEGACY)
+  find_package(Eigen3 ${VIAM_TRAJEX_EIGEN3_VERSION_MINIMUM} CONFIG REQUIRED)
+endif()
+
+if (VIAM_TRAJEX_TOTG_ENABLE_LEGACY_COMPAT)
   find_package(Eigen3 ${VIAM_TRAJEX_EIGEN3_VERSION_MINIMUM} CONFIG REQUIRED)
 endif()
 
@@ -311,6 +323,61 @@ target_link_libraries(viam-trajex-totg
 apply_wall_werror(viam-trajex-totg)
 
 add_library(viam::trajex::totg ALIAS viam-trajex-totg)
+
+
+# Compatibility layer: the reference implementation's `Path` and `Trajectory` interface in the
+# `viam::trajex::totg::compat` namespace, backed by trajex. Its headers need only Eigen, so
+# trajex stays a private dependency. The shim target adds a directory of headers named after
+# the originals, which bring the compat classes into the global namespace. Only contains
+# meaningful content if `VIAM_TRAJEX_TOTG_ENABLE_LEGACY_COMPAT` is truthy.
+
+if (VIAM_TRAJEX_TOTG_ENABLE_LEGACY_COMPAT)
+  add_library(viam-trajex-totg-compat)
+
+  target_sources(viam-trajex-totg-compat
+    PRIVATE
+    src/viam/trajex/totg/compat/path.cpp
+    src/viam/trajex/totg/compat/trajectory.cpp
+  )
+
+  target_compile_definitions(viam-trajex-totg-compat
+    INTERFACE
+    VIAM_TRAJEX_TOTG_LEGACY_COMPAT_ENABLED=1
+  )
+
+  target_include_directories(viam-trajex-totg-compat
+    PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+    $<INSTALL_INTERFACE:include>
+  )
+
+  target_link_libraries(viam-trajex-totg-compat
+    PUBLIC
+    Eigen3::Eigen
+    PRIVATE
+    viam::trajex::totg
+  )
+
+  apply_wall_werror(viam-trajex-totg-compat)
+
+  add_library(viam-trajex-totg-compat-shim INTERFACE)
+
+  target_include_directories(viam-trajex-totg-compat-shim
+    INTERFACE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/viam/trajex/totg/compat/shim>
+  )
+
+  target_link_libraries(viam-trajex-totg-compat-shim
+    INTERFACE
+    viam::trajex::totg::compat
+  )
+else()
+  add_library(viam-trajex-totg-compat INTERFACE)
+  add_library(viam-trajex-totg-compat-shim INTERFACE)
+endif()
+
+add_library(viam::trajex::totg::compat ALIAS viam-trajex-totg-compat)
+add_library(viam::trajex::totg::compat::shim ALIAS viam-trajex-totg-compat-shim)
 
 
 # Tools-legacy library: colinearization helpers in the `viam::trajex::totg::legacy` namespace,
@@ -720,6 +787,75 @@ if (VIAM_TRAJEX_BUILD_TESTS)
     NAME viam-trajex-types-test
     COMMAND viam-trajex-types-test
   )
+
+
+  if (VIAM_TRAJEX_TOTG_ENABLE_LEGACY_COMPAT)
+    # Links the reference implementation too when it is enabled, so the suite can run the same
+    # inputs through both.
+    add_executable(viam-trajex-totg-compat-test)
+
+    target_sources(viam-trajex-totg-compat-test
+      PRIVATE
+      src/viam/trajex/totg/compat/test/main.cpp
+      src/viam/trajex/totg/compat/test/compat.cpp
+    )
+
+    target_link_libraries(viam-trajex-totg-compat-test
+      PRIVATE
+      viam::trajex::totg::compat
+      viam::trajex::totg
+      viam::trajex::totg::legacy
+      Boost::boost
+    )
+
+    apply_wall_werror(viam-trajex-totg-compat-test)
+
+    add_test(
+      NAME viam-trajex-totg-compat-test
+      COMMAND viam-trajex-totg-compat-test
+    )
+
+    # Source compatibility tripwires: the reference implementation's own programs, unmodified,
+    # built against the shim. They are copied out of their directory first, because their quoted
+    # includes would otherwise find the original headers sitting beside them. They are built
+    # but not registered with ctest: both always exit zero, and the example waits on stdin.
+    #
+    # Built at the oldest standard the compat headers claim. CMake raises it to whatever the
+    # Eigen target requires, so with Eigen 5 (C++14) this checks less than it says.
+    foreach (program Example Test)
+      string(TOLOWER ${program} program_lower)
+      set(target viam-trajex-totg-compat-shim-${program_lower})
+
+      configure_file(
+        src/third_party/trajectories/${program}.cpp
+        ${CMAKE_CURRENT_BINARY_DIR}/compat-shim/${program}.cpp
+        COPYONLY
+      )
+
+      add_executable(${target})
+
+      target_sources(${target}
+        PRIVATE
+        ${CMAKE_CURRENT_BINARY_DIR}/compat-shim/${program}.cpp
+      )
+
+      set_target_properties(${target} PROPERTIES
+        CXX_STANDARD 98
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS OFF
+      )
+
+      target_link_libraries(${target}
+        PRIVATE
+        viam::trajex::totg::compat::shim
+      )
+    endforeach()
+
+    # Test.cpp uses std::cout without including <iostream>, relying on older Eigen to provide
+    # it. It fails the same way against the original headers with current Eigen, so supply the
+    # include rather than edit the file.
+    target_compile_options(viam-trajex-totg-compat-shim-test PRIVATE "SHELL:-include iostream")
+  endif()
 
 
   if (VIAM_TRAJEX_ENABLE_SERVICE)
