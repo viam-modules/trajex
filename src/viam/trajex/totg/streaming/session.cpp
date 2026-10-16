@@ -9,7 +9,12 @@
 #include <utility>
 #include <vector>
 
+#include <viam/trajex/totg/streaming/private/waypoint_store.hpp>
+
 namespace viam::trajex::totg::streaming {
+
+// Exists only so that the header can hold waypoint stores without naming the private type.
+struct session::waypoint_store_impl : waypoint_store {};
 
 namespace {
 
@@ -48,7 +53,9 @@ session::session(path::options path_options, trajectory::options trajectory_opti
       trajectory_options_(std::move(trajectory_options)),
       sample_rate_(sample_rate),
       sample_period_(validate_sample_rate_and_compute_period(sample_rate)),
-      waypoints_(std::make_unique<waypoint_store>()) {}
+      waypoints_(std::make_unique<waypoint_store_impl>()) {}
+
+session::~session() = default;
 
 session::extend_result session::extend(const waypoint_accumulator& batch) {
     using kinds = extend_result::kinds;
@@ -183,7 +190,7 @@ trajectory::seconds session::stage_(staging_state& staging, const waypoint_accum
     // than at its sampled terminal pose, for the reason given at install_staged_. The store is
     // allocated here rather than when staging begins, so that start_staging() need not allocate.
     if (!staging.waypoints) {
-        staging.waypoints = std::make_unique<waypoint_store>();
+        staging.waypoints = std::make_unique<waypoint_store_impl>();
     }
     auto& store = *staging.waypoints;
     const auto committed_waypoints = store.size();

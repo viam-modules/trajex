@@ -2,6 +2,7 @@
 	module.tar.gz \
 	format-check \
 	test \
+	verify-headers \
 	run-clang-tidy \
 	run-clang-tidy-parallel \
 	run-clang-check \
@@ -11,7 +12,7 @@ help:
 	@echo "Please use CMake for local development."
 	@echo ""
 	@echo "Available CI targets:"
-	@echo "  make -f .github/scripts/Makefile [format-check,configure,build,install,test,module.tar.gz,run-clang-tidy[-parallel],run-clang-check]"
+	@echo "  make -f .github/scripts/Makefile [format-check,configure,build,verify-headers,install,test,module.tar.gz,run-clang-tidy[-parallel],run-clang-check]"
 
 SOURCE_FILES := $(shell find src/viam -type f \( -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \))
 CPP_FILES := $(filter %.cpp,$(SOURCE_FILES))
@@ -24,6 +25,10 @@ configure:
 
 build: configure
 	cmake --build build --target all
+
+# Compiles each public header on its own. Not part of `all`, so it must be asked for.
+verify-headers: configure
+	cmake --build build --target all_verify_interface_header_sets
 
 install: build
 	DESTDIR=build/install cmake --install build --prefix /

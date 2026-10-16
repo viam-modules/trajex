@@ -66,6 +66,8 @@ jobs:
         run: make -f .github/scripts/Makefile run-clang-tidy-parallel
       - name: Build
         run: make -f .github/scripts/Makefile build
+      - name: Verify Headers
+        run: make -f .github/scripts/Makefile verify-headers
       - name: Test
         run: make -f .github/scripts/Makefile test
 

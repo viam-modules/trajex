@@ -8,7 +8,6 @@
 #include <vector>
 
 #include <viam/trajex/totg/path.hpp>
-#include <viam/trajex/totg/streaming/private/waypoint_store.hpp>
 #include <viam/trajex/totg/trajectory.hpp>
 #include <viam/trajex/totg/uniform_sampler.hpp>
 #include <viam/trajex/totg/waypoint_accumulator.hpp>
@@ -117,6 +116,20 @@ class session {
     ///                    change if a sampler factory is added later.
     ///
     session(path::options path_options, trajectory::options trajectory_options, types::hertz sample_rate);
+
+    ///
+    /// Sessions are neither copyable nor movable: sampling state refers to the active
+    /// trajectory where it lives.
+    ///
+    session(const session&) = delete;
+    session& operator=(const session&) = delete;
+    session(session&&) = delete;
+    session& operator=(session&&) = delete;
+
+    ///
+    /// Destroys a session.
+    ///
+    ~session();
 
     ///
     /// Adds a batch of waypoints to the session.
@@ -269,12 +282,16 @@ class session {
     std::size_t trajectory_generation_count() const noexcept;
 
    private:
+    // A set of waypoints the session owns. Defined with the implementation, so that the
+    // storage behind it stays out of this header.
+    struct waypoint_store_impl;
+
     // While staging, the waypoints of the staged motion and the trajectory built from them,
     // which follows the active trajectory once it has been sampled through. The waypoints start
     // with the active trajectory's last waypoint, so the staged trajectory begins where the
     // active one ends. Both stay empty until the first batch is staged.
     struct staging_state {
-        std::unique_ptr<waypoint_store> waypoints;
+        std::unique_ptr<waypoint_store_impl> waypoints;
         std::optional<trajectory> next;
     };
 
@@ -316,10 +333,10 @@ class session {
     // callers pass to `extend` view memory the session does not control. Empty until the
     // first successful extend.
     //
-    // A store cannot be moved, because its accumulator views its own storage, so it is held by
+    // A set cannot be moved, because its accumulator views its own storage, so it is held by
     // pointer. That lets the staged waypoints take over by handing over the pointer when the
     // staged trajectory becomes active, rather than by copying them across.
-    std::unique_ptr<waypoint_store> waypoints_;
+    std::unique_ptr<waypoint_store_impl> waypoints_;
 
     // The currently active trajectory, or nullopt before the first successful extend.
     // Storage in std::optional is in-place, so `&*active_` is a stable address across

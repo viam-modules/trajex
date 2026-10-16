@@ -6,6 +6,11 @@ project(trajex VERSION 0.1.0
   LANGUAGES C CXX
 )
 
+# Defines the CMAKE_INSTALL_* directories, which the RPATH setup and the targets' install
+# include directories below read. It must come before any of them: GNUInstallDirs caches its
+# variables, so a later include only takes effect from the second configure onward.
+include(GNUInstallDirs)
+
 # Detect if we're building trajex as a standalone module
 # vs being included via FetchContent by universal-robots
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
@@ -145,6 +150,13 @@ endif()
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# Check that every public header compiles on its own, so that none depends on what happens to
+# be included before it. Standalone builds only, so that a parent project's build is not slowed
+# by checks of headers it did not write.
+if (VIAM_TRAJEX_STANDALONE_BUILD)
+  set(CMAKE_VERIFY_INTERFACE_HEADER_SETS ON)
+endif()
 
 
 #
@@ -287,7 +299,7 @@ if (VIAM_TRAJEX_ENABLE_LEGACY)
   target_include_directories(viam-trajex-totg-legacy
     INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
-    $<INSTALL_INTERFACE:include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
   )
 
   target_precompile_headers(viam-trajex-totg-legacy PRIVATE <assert.h>)
@@ -319,10 +331,32 @@ target_sources(viam-trajex-totg
     src/viam/trajex/totg/waypoint_utils.cpp
 )
 
-target_include_directories(viam-trajex-totg
+# The public headers, installed with their paths under src preserved. Headers under a
+# `private` directory are deliberately absent: they are not installed. The base directory is
+# also the include directory, for this target and for anything that links it.
+target_sources(viam-trajex-totg
   PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
-    $<INSTALL_INTERFACE:include>
+    FILE_SET HEADERS
+    BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/src
+    FILES
+    src/viam/trajex/trajex.hpp
+    src/viam/trajex/jacobian/jacobian.hpp
+    src/viam/trajex/totg/observers.hpp
+    src/viam/trajex/totg/path.hpp
+    src/viam/trajex/totg/streaming/session.hpp
+    src/viam/trajex/totg/totg.hpp
+    src/viam/trajex/totg/trajectory.hpp
+    src/viam/trajex/totg/uniform_sampler.hpp
+    src/viam/trajex/totg/waypoint_accumulator.hpp
+    src/viam/trajex/totg/waypoint_utils.hpp
+    src/viam/trajex/types/angles.hpp
+    src/viam/trajex/types/arc_acceleration.hpp
+    src/viam/trajex/types/arc_length.hpp
+    src/viam/trajex/types/arc_operations.hpp
+    src/viam/trajex/types/arc_velocity.hpp
+    src/viam/trajex/types/epsilon.hpp
+    src/viam/trajex/types/hertz.hpp
+    src/viam/trajex/types/xt.hpp
 )
 
 target_link_libraries(viam-trajex-totg
@@ -356,10 +390,13 @@ if (VIAM_TRAJEX_TOTG_ENABLE_LEGACY_COMPAT)
     VIAM_TRAJEX_TOTG_LEGACY_COMPAT_ENABLED=1
   )
 
-  target_include_directories(viam-trajex-totg-compat
+  target_sources(viam-trajex-totg-compat
     PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
-    $<INSTALL_INTERFACE:include>
+    FILE_SET HEADERS
+    BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/src
+    FILES
+    src/viam/trajex/totg/compat/path.hpp
+    src/viam/trajex/totg/compat/trajectory.hpp
   )
 
   target_link_libraries(viam-trajex-totg-compat
@@ -373,9 +410,22 @@ if (VIAM_TRAJEX_TOTG_ENABLE_LEGACY_COMPAT)
 
   add_library(viam-trajex-totg-compat-shim INTERFACE)
 
+  # Installed with their paths preserved like every other header, so that the shim's names
+  # do not land at the top of the include tree. Callers include them by bare name, so the
+  # shim directory itself is the include directory, in the build tree and once installed.
+  target_sources(viam-trajex-totg-compat-shim
+    INTERFACE
+    FILE_SET HEADERS
+    BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/src
+    FILES
+    src/viam/trajex/totg/compat/shim/Path.h
+    src/viam/trajex/totg/compat/shim/Trajectory.h
+  )
+
   target_include_directories(viam-trajex-totg-compat-shim
     INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/viam/trajex/totg/compat/shim>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/viam/trajex/totg/compat/shim>
   )
 
   target_link_libraries(viam-trajex-totg-compat-shim
@@ -403,10 +453,12 @@ if (VIAM_TRAJEX_ENABLE_MOVEIT)
     src/viam/trajex/moveit/totg/time_parameterization.cpp
   )
 
-  target_include_directories(viam-trajex-moveit-totg
+  target_sources(viam-trajex-moveit-totg
     PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
-    $<INSTALL_INTERFACE:include>
+    FILE_SET HEADERS
+    BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/src
+    FILES
+    src/viam/trajex/moveit/totg/time_parameterization.hpp
   )
 
   target_link_libraries(viam-trajex-moveit-totg
@@ -443,7 +495,7 @@ if (VIAM_TRAJEX_ENABLE_TOOLS AND VIAM_TRAJEX_ENABLE_LEGACY)
   target_include_directories(viam-trajex-totg-tools-legacy
     PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
-    $<INSTALL_INTERFACE:include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
   )
 
   target_link_libraries(viam-trajex-totg-tools-legacy
@@ -507,7 +559,7 @@ if (VIAM_TRAJEX_ENABLE_SERVICE)
   target_include_directories(viam-trajex-service
     PUBLIC
       $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
-      $<INSTALL_INTERFACE:include>
+      $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
   )
 
   # NOTE: viam::trajex::totg::tools is linked PUBLIC rather than PRIVATE so that the
@@ -552,7 +604,7 @@ if (VIAM_TRAJEX_ENABLE_CAPI)
   target_include_directories(viam-trajex-capi
     PUBLIC
       $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
-      $<INSTALL_INTERFACE:include>
+      $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
   )
   target_link_libraries(viam-trajex-capi
     PRIVATE
@@ -1013,8 +1065,6 @@ endif()
 # Installation
 #
 
-include(GNUInstallDirs)
-
 # Put every trajex install() rule below into the `trajex` component -- none of them set a
 # component individually, so this default applies to all of them. This lets
 # `cmake --install --component trajex` stage just trajex's own outputs: the FetchContent'd
@@ -1027,14 +1077,38 @@ set(CMAKE_INSTALL_DEFAULT_COMPONENT_NAME trajex)
 
 # Always install core libraries. The legacy alias is always installed; when
 # VIAM_TRAJEX_ENABLE_LEGACY is OFF it is an empty INTERFACE library and install() is a no-op.
+# Its headers are not installed.
 install(
   TARGETS
   viam-trajex-totg-legacy
-  viam-trajex-totg
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
 )
+
+# Each library's public headers are its HEADERS file set, installed with their paths under src
+# preserved, so that `#include <viam/trajex/...>` works against the install tree as it does
+# against the source tree.
+install(
+  TARGETS
+  viam-trajex-totg
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  FILE_SET HEADERS DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
+
+if (VIAM_TRAJEX_TOTG_ENABLE_LEGACY_COMPAT)
+  install(
+    TARGETS
+    viam-trajex-totg-compat
+    viam-trajex-totg-compat-shim
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    FILE_SET HEADERS DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+  )
+endif()
 
 if (VIAM_TRAJEX_ENABLE_TOOLS)
   install(
@@ -1076,6 +1150,7 @@ if (VIAM_TRAJEX_ENABLE_MOVEIT)
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    FILE_SET HEADERS DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
   )
 endif()
 

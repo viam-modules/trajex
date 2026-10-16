@@ -1,6 +1,7 @@
 #pragma once
 
 #include <numbers>
+#include <utility>
 
 namespace viam::trajex {
 
