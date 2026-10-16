@@ -49,6 +49,13 @@ option(VIAM_TRAJEX_TOTG_ENABLE_LEGACY_COMPAT "Enable the TOTG reference implemen
 # `src/viam/trajex/moveit`, which enables this option. Defaults OFF.
 option(VIAM_TRAJEX_ENABLE_MOVEIT "Enable the MoveIt 2 integration" OFF)
 
+# Install static archives in each component's runtime role rather than its dev role. For consumers
+# that take the archives as a payload rather than as something to develop against, such as the Go
+# module, which stages the C API's archives and header. Not for find_package consumers: the package
+# config will be a dev artifact that refers to the archives. No effect on a shared build. Defaults
+# OFF.
+option(VIAM_TRAJEX_INSTALL_ARCHIVES_AS_RUNTIME "Install static archives in the runtime role" OFF)
+
 # Enable the planner, replay, and JSON serialization tooling layer
 # (`viam::trajex::totg::tools`). Required by the service layer and by the regression test
 # suite (the latter for opt-in trajectory dumping; see the TODO at the test target).
@@ -1065,102 +1072,61 @@ endif()
 # Installation
 #
 
-# Put every trajex install() rule below into the `trajex` component -- none of them set a
-# component individually, so this default applies to all of them. This lets
-# `cmake --install --component trajex` stage just trajex's own outputs: the FetchContent'd
-# xtl/xtensor registered their install rules earlier (during FetchContent_MakeAvailable),
-# under the built-in "Unspecified" component, so they are excluded. A full install (no
-# --component) is unaffected -- every component installs. Finer-grained roles/components
-# (dev vs runtime, capi vs tools, ...) are future work; for now the feature flags gate
-# what exists, so one component is enough.
-set(CMAKE_INSTALL_DEFAULT_COMPONENT_NAME trajex)
-
-# Always install core libraries. The legacy alias is always installed; when
-# VIAM_TRAJEX_ENABLE_LEGACY is OFF it is an empty INTERFACE library and install() is a no-op.
-# Its headers are not installed.
-install(
-  TARGETS
-  viam-trajex-totg-legacy
-  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-)
-
+# Every install rule names its component, in two roles: `<component>-runtime` for what a program
+# needs to run (executables and shared libraries) and `<component>-dev` for what is needed to build
+# against it (headers, static archives, and shared library namelinks). Static archives go to runtime
+# instead when VIAM_TRAJEX_INSTALL_ARCHIVES_AS_RUNTIME is set.
+#
+# `cmake --install --component <name>` installs exactly one component. CMake has no notion of one
+# component depending on another, so a consumer names everything it needs: dev implies runtime, and
+# a component implies the components of the libraries it links. A full install, with no
+# --component, installs every component, as do the module package and the ament package. The
+# FetchContent'd xtl and xtensor register their own install rules under CMake's built-in
+# "Unspecified" component, so naming trajex components excludes them.
+#
 # Each library's public headers are its HEADERS file set, installed with their paths under src
-# preserved, so that `#include <viam/trajex/...>` works against the install tree as it does
-# against the source tree.
-install(
-  TARGETS
-  viam-trajex-totg
-  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  FILE_SET HEADERS DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-)
+# preserved, so that `#include <viam/trajex/...>` works against the install tree as it does against
+# the source tree. A target without one installs no headers.
+function(viam_trajex_install component)
+  if (VIAM_TRAJEX_INSTALL_ARCHIVES_AS_RUNTIME)
+    set(archive_role runtime)
+  else()
+    set(archive_role dev)
+  endif()
+  install(
+    TARGETS ${ARGN}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT ${component}-runtime
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT ${component}-runtime NAMELINK_COMPONENT ${component}-dev
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT ${component}-${archive_role}
+    FILE_SET HEADERS DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT ${component}-dev
+  )
+endfunction()
+
+# The legacy target is always installed; when VIAM_TRAJEX_ENABLE_LEGACY is OFF it is an empty
+# INTERFACE library and installs nothing. It has no public headers.
+viam_trajex_install(trajex-legacy viam-trajex-totg-legacy)
+
+viam_trajex_install(trajex-totg viam-trajex-totg)
 
 if (VIAM_TRAJEX_TOTG_ENABLE_LEGACY_COMPAT)
-  install(
-    TARGETS
-    viam-trajex-totg-compat
-    viam-trajex-totg-compat-shim
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    FILE_SET HEADERS DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-  )
+  viam_trajex_install(trajex-compat viam-trajex-totg-compat viam-trajex-totg-compat-shim)
 endif()
 
 if (VIAM_TRAJEX_ENABLE_TOOLS)
-  install(
-    TARGETS
-    viam-trajex-totg-tools-legacy
-    viam-trajex-totg-tools
-    viam-trajex-totg-replay-exe
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  )
-endif()
-
-if (VIAM_TRAJEX_ENABLE_SERVICE)
-  install(
-    TARGETS
-    viam-trajex-service
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  )
+  viam_trajex_install(trajex-tools viam-trajex-totg-tools-legacy viam-trajex-totg-tools viam-trajex-totg-replay-exe)
 endif()
 
 if (VIAM_TRAJEX_ENABLE_CAPI)
-  install(
-    TARGETS
-    viam-trajex-capi
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    FILE_SET HEADERS DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-  )
+  viam_trajex_install(trajex-capi viam-trajex-capi)
 endif()
 
 if (VIAM_TRAJEX_ENABLE_MOVEIT)
-  install(
-    TARGETS
-    viam-trajex-moveit-totg
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    FILE_SET HEADERS DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-  )
+  viam_trajex_install(trajex-moveit viam-trajex-moveit-totg)
 endif()
 
 if (VIAM_TRAJEX_ENABLE_SERVICE)
-  # Install the service executable and the module packaging artifacts (meta.json + CPack).
-  install(
-    TARGETS
-    viam-trajex-service-exe
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-  )
+  # The service library and executable, and the module packaging artifacts (meta.json + CPack).
+  viam_trajex_install(trajex-service viam-trajex-service viam-trajex-service-exe)
 
   # Configure meta.json from template
   configure_file(
@@ -1173,6 +1139,7 @@ if (VIAM_TRAJEX_ENABLE_SERVICE)
   install(
     FILES ${CMAKE_CURRENT_BINARY_DIR}/meta.json
     DESTINATION .
+    COMPONENT trajex-service-runtime
   )
 
   # Set up CPack for trajex module packaging
