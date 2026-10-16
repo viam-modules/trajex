@@ -1,0 +1,21 @@
+<library path="viam_trajex_moveit_plugins">
+
+  <class name="viam_trajex_moveit/AddTrajexTotgTimeParameterization"
+         type="viam::trajex::moveit::totg::response_adapter"
+         base_class_type="planning_interface::PlanningResponseAdapter">
+    <description>
+      Time parameterization with trajex's time-optimal trajectory generation, configured by trajex's own parameters
+      under trajex.totg.
+    </description>
+  </class>
+
+  <class name="viam_trajex_moveit/AddTrajexTotgTimeParameterizationCompat"
+         type="viam::trajex::moveit::totg::compat_response_adapter"
+         base_class_type="planning_interface::PlanningResponseAdapter">
+    <description>
+      Time parameterization with trajex's time-optimal trajectory generation, configured by the parameters of
+      MoveIt's AddTimeOptimalParameterization (totg.path_tolerance, totg.resample_dt, totg.min_angle_change).
+    </description>
+  </class>
+
+</library>

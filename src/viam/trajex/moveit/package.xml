@@ -1,0 +1,34 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>viam_trajex_moveit</name>
+  <version>0.1.0</version>
+  <description>
+    MoveIt 2 planning response adapters that time parameterize with trajex, Viam's implementation of
+    time-optimal trajectory generation. Unstable: the adapters and their parameters may change.
+  </description>
+  <maintainer email="andrew.morrow@viam.com">Andrew Morrow</maintainer>
+  <license>Apache-2.0</license>
+  <url type="repository">https://github.com/viam-modules/trajex</url>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <!-- trajex itself is built from this repository by the package's CMake. Its own dependencies (xtensor, xtl) are
+       found there and are not declared to rosdep. -->
+  <depend>moveit_core</depend>
+  <depend>moveit_msgs</depend>
+  <depend>pluginlib</depend>
+  <depend>rclcpp</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>moveit_resources_panda_description</test_depend>
+  <!-- MoveIt's planning pipeline, and its own time parameterization adapter, loaded alongside ours to check they
+       share parameters cleanly. -->
+  <test_depend>moveit_ros_planning</test_depend>
+  <!-- The planner for the end to end test through the planning pipeline. -->
+  <test_depend>moveit_planners_ompl</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

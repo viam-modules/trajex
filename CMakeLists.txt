@@ -38,6 +38,12 @@ option(VIAM_TRAJEX_ENABLE_LEGACY "Enable the reference implementation" ON)
 # FetchContent consumers.
 option(VIAM_TRAJEX_TOTG_ENABLE_LEGACY_COMPAT "Enable the TOTG reference implementation compatibility layer" ${VIAM_TRAJEX_STANDALONE_BUILD})
 
+# Enable the MoveIt 2 integration (`viam::trajex::moveit::totg`): a MoveIt time parameterization backed by trajex,
+# for calling directly from C++. Requires an installed MoveIt 2 found through the ROS environment, so source the ROS
+# setup script before configuring. The MoveIt plugins are not built here; they are built by the ament package in
+# `src/viam/trajex/moveit`, which enables this option. Defaults OFF.
+option(VIAM_TRAJEX_ENABLE_MOVEIT "Enable the MoveIt 2 integration" OFF)
+
 # Enable the planner, replay, and JSON serialization tooling layer
 # (`viam::trajex::totg::tools`). Required by the service layer and by the regression test
 # suite (the latter for opt-in trajectory dumping; see the TODO at the test target).
@@ -171,6 +177,7 @@ set(VIAM_TRAJEX_XTL_VERSION_MINIMUM 0.7.2)
 #   viam-cpp-sdk   ENABLE_SERVICE; FetchContent with find_package fallback.
 #   Eigen3         ENABLE_LEGACY (reference impl + colinearization helpers), and
 #                  TOTG_ENABLE_LEGACY_COMPAT (the compatibility layer's interface).
+#   moveit_core    ENABLE_MOVEIT; found through the ROS environment, never fetched.
 #   Boost          BUILD_TESTS (boost.test framework, consumed in header-only mode
 #                  via `<boost/test/included/unit_test.hpp>`; we still declare the
 #                  `unit_test_framework` component to validate it is installed.
@@ -220,6 +227,10 @@ endif()
 
 if (VIAM_TRAJEX_TOTG_ENABLE_LEGACY_COMPAT)
   find_package(Eigen3 ${VIAM_TRAJEX_EIGEN3_VERSION_MINIMUM} CONFIG REQUIRED)
+endif()
+
+if (VIAM_TRAJEX_ENABLE_MOVEIT)
+  find_package(moveit_core CONFIG REQUIRED)
 endif()
 
 if (VIAM_TRAJEX_BUILD_TESTS)
@@ -378,6 +389,43 @@ endif()
 
 add_library(viam::trajex::totg::compat ALIAS viam-trajex-totg-compat)
 add_library(viam::trajex::totg::compat::shim ALIAS viam-trajex-totg-compat-shim)
+
+
+# MoveIt integration: a MoveIt `TimeParameterization` backed by trajex TOTG. Its header includes both MoveIt's and
+# trajex's, so both are public dependencies. Only contains meaningful content if `VIAM_TRAJEX_ENABLE_MOVEIT` is
+# truthy.
+
+if (VIAM_TRAJEX_ENABLE_MOVEIT)
+  add_library(viam-trajex-moveit-totg)
+
+  target_sources(viam-trajex-moveit-totg
+    PRIVATE
+    src/viam/trajex/moveit/totg/time_parameterization.cpp
+  )
+
+  target_include_directories(viam-trajex-moveit-totg
+    PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+    $<INSTALL_INTERFACE:include>
+  )
+
+  target_link_libraries(viam-trajex-moveit-totg
+    PUBLIC
+    viam::trajex::totg
+    moveit_core::moveit_robot_trajectory
+    moveit_core::moveit_trajectory_processing
+    PRIVATE
+    moveit_core::moveit_robot_model
+    moveit_core::moveit_robot_state
+    moveit_core::moveit_utils
+  )
+
+  apply_wall_werror(viam-trajex-moveit-totg)
+else()
+  add_library(viam-trajex-moveit-totg INTERFACE)
+endif()
+
+add_library(viam::trajex::moveit::totg ALIAS viam-trajex-moveit-totg)
 
 
 # Tools-legacy library: colinearization helpers in the `viam::trajex::totg::legacy` namespace,
@@ -858,6 +906,33 @@ if (VIAM_TRAJEX_BUILD_TESTS)
   endif()
 
 
+  if (VIAM_TRAJEX_ENABLE_MOVEIT)
+    add_executable(viam-trajex-moveit-totg-test)
+
+    target_sources(viam-trajex-moveit-totg-test
+      PRIVATE
+      src/viam/trajex/moveit/totg/test/main.cpp
+      src/viam/trajex/moveit/totg/test/time_parameterization.cpp
+    )
+
+    target_link_libraries(viam-trajex-moveit-totg-test
+      PRIVATE
+      viam::trajex::moveit::totg
+      moveit_core::moveit_robot_model
+      moveit_core::moveit_robot_state
+      moveit_core::moveit_test_utils
+      Boost::boost
+    )
+
+    apply_wall_werror(viam-trajex-moveit-totg-test)
+
+    add_test(
+      NAME viam-trajex-moveit-totg-test
+      COMMAND viam-trajex-moveit-totg-test
+    )
+  endif()
+
+
   if (VIAM_TRAJEX_ENABLE_SERVICE)
     add_executable(viam-trajex-service-test)
 
@@ -991,6 +1066,16 @@ if (VIAM_TRAJEX_ENABLE_CAPI)
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     FILE_SET HEADERS DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+  )
+endif()
+
+if (VIAM_TRAJEX_ENABLE_MOVEIT)
+  install(
+    TARGETS
+    viam-trajex-moveit-totg
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   )
 endif()
 

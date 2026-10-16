@@ -1,0 +1,36 @@
+# Two OMPL planning pipelines for the Panda, each timed by one of the trajex response adapters. Laid out as
+# move_group sees a pipeline's configuration: everything for a pipeline is under its name, adapter parameters
+# included. Each sets an output rate unlike MoveIt's default, so the test can tell which adapter timed the plan.
+/**:
+  ros__parameters:
+    ompl_trajex:
+      planning_plugins:
+        - ompl_interface/OMPLPlanner
+      response_adapters:
+        - viam_trajex_moveit/AddTrajexTotgTimeParameterization
+      trajex:
+        totg:
+          sampling:
+            frequency: 37.0
+      planner_configs:
+        RRTConnectkConfigDefault:
+          type: geometric::RRTConnect
+          range: 0.0
+      panda_arm:
+        planner_configs:
+          - RRTConnectkConfigDefault
+
+    ompl_trajex_compat:
+      planning_plugins:
+        - ompl_interface/OMPLPlanner
+      response_adapters:
+        - viam_trajex_moveit/AddTrajexTotgTimeParameterizationCompat
+      totg:
+        resample_dt: 0.05
+      planner_configs:
+        RRTConnectkConfigDefault:
+          type: geometric::RRTConnect
+          range: 0.0
+      panda_arm:
+        planner_configs:
+          - RRTConnectkConfigDefault
