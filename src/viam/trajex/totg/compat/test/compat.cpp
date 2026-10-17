@@ -97,7 +97,7 @@ BOOST_AUTO_TEST_CASE(max_deviation_blends_without_merging) {
     BOOST_CHECK_GT(path.getConfig(path.getLength() / 2.0)[1], 1e-3);
 
     namespace totg = viam::trajex::totg;
-    viam::trajex::xmatrix<> native_points = {{0.0, 0.0}, {1.0, 5e-3}, {2.0, 0.0}};
+    const viam::trajex::xmatrix<> native_points = {{0.0, 0.0}, {1.0, 5e-3}, {2.0, 0.0}};
     const auto merged = totg::path::create(native_points, totg::path::options{}.set_max_deviation(k_deviation));
     const auto midpoint = merged.configuration(viam::trajex::arc_length{static_cast<double>(merged.length()) / 2.0});
     BOOST_CHECK_LT(std::abs(midpoint(1)), 1e-9);
@@ -136,7 +136,7 @@ BOOST_AUTO_TEST_CASE(copies_are_independent) {
     BOOST_CHECK_CLOSE(copied.getLength(), 2.0, 1e-9);
     BOOST_CHECK_CLOSE(assigned.getLength(), 2.0, 1e-9);
 
-    compat::Path& alias = assigned;
+    const compat::Path& alias = assigned;
     assigned = alias;
     BOOST_CHECK_CLOSE(assigned.getLength(), 2.0, 1e-9);
 }

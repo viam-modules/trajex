@@ -80,6 +80,7 @@ double Path::getNextSwitchingPoint(double, bool& discontinuity) const {
     return getLength();
 }
 
+// NOLINTNEXTLINE(readability-convert-member-functions-to-static): Must be a const member to match the original Path
 std::list<std::pair<double, bool>> Path::getSwitchingPoints() const {
     return {};
 }
