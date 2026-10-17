@@ -89,6 +89,15 @@ option(VIAM_TRAJEX_ENABLE_CAPI "Enable the C ABI shim" ON)
 # upstream warnings.
 option(VIAM_TRAJEX_USE_WALL_WERROR "Build with -Wall and -Werror flags" ${VIAM_TRAJEX_STANDALONE_BUILD})
 
+# Build the trajex libraries shared, as the module release does (conan's `shared` option defaults
+# on). Declared before any dependency is fetched, because viam-cpp-sdk declares its own
+# BUILD_SHARED_LIBS option, which would otherwise decide this for us whenever the SDK is fetched
+# rather than found. Standalone builds only: under FetchContent the parent project decides. The Go
+# artifact asks for static libraries explicitly.
+if (VIAM_TRAJEX_STANDALONE_BUILD)
+  option(BUILD_SHARED_LIBS "Build the trajex libraries as shared libraries" ON)
+endif()
+
 # Set minimum macOS deployment target to 14.0 (Sonoma) for mature
 # C++20 support in Xcode 15's libc++.
 if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)

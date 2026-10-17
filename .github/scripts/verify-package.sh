@@ -46,9 +46,11 @@ verify() {
 verify as-built "$build"
 
 # Fetching is forced for every dependency, so the second build enables only what the components need: compat and
-# capi are on by default, MoveIt is not. -Werror off, as warnings are gated by the main build.
+# capi are on by default, MoveIt is not. -Werror off, as warnings are gated by the main build. Static, so
+# that between them the two builds cover both library types; the main build is shared by default.
 vendored_arguments=(
     -DCMAKE_BUILD_TYPE=RelWithDebInfo
+    -DBUILD_SHARED_LIBS=OFF
     -DFETCHCONTENT_TRY_FIND_PACKAGE_MODE=NEVER
     -DVIAM_TRAJEX_ENABLE_LEGACY=OFF
     -DVIAM_TRAJEX_ENABLE_TOOLS=OFF
