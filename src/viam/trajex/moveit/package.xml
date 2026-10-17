@@ -13,8 +13,9 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
-  <!-- trajex itself is built from this repository by the package's CMake. Its own dependencies (xtensor, xtl) are
-       found there and are not declared to rosdep. -->
+  <!-- trajex itself is built from this repository by the package's CMake. Of its own dependencies, xtensor is
+       declared so that rosdep installs it; rosdep has no key for xtl, which the xtensor package depends on. -->
+  <depend>xtensor</depend>
   <depend>moveit_core</depend>
   <depend>moveit_msgs</depend>
   <depend>pluginlib</depend>

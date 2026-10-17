@@ -1,0 +1,6 @@
+# The repository root is not a colcon package. Its CMakeLists.txt, which builds all of trajex, would
+# otherwise be taken for a plain CMake package, and colcon looks no deeper than a package, so the ament
+# package in src/viam/trajex/moveit would go unfound in a workspace that clones this repository. A type
+# with no name leaves the root unidentified, and colcon looks inside instead. The cost is a warning, on
+# every colcon command, that the root package is incomplete.
+type: none

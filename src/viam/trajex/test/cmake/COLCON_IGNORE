@@ -1,0 +1,1 @@
+Not a colcon package: this project builds only against an installed trajex. Only this file's presence matters to colcon.
