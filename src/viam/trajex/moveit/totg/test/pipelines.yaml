@@ -7,7 +7,7 @@
       planning_plugins:
         - ompl_interface/OMPLPlanner
       response_adapters:
-        - viam_trajex_moveit/AddTrajexTotgTimeParameterization
+        - viam_trajex_moveit/AddTotgTimeParameterization
       trajex:
         totg:
           sampling:
@@ -24,7 +24,7 @@
       planning_plugins:
         - ompl_interface/OMPLPlanner
       response_adapters:
-        - viam_trajex_moveit/AddTrajexTotgTimeParameterizationCompat
+        - viam_trajex_moveit/AddTotgTimeParameterizationCompat
       totg:
         resample_dt: 0.05
       planner_configs:

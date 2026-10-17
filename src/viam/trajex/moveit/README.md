@@ -37,9 +37,9 @@ A MoveIt planning pipeline runs its response adapters on the planner's trajector
 MoveIt's `default_planning_response_adapters/AddTimeOptimalParameterization`. To use trajex, replace it in the
 pipeline's `response_adapters` with one of this package's adapters:
 
-- `viam_trajex_moveit/AddTrajexTotgTimeParameterizationCompat` reads the same parameters as MoveIt's adapter, so an
+- `viam_trajex_moveit/AddTotgTimeParameterizationCompat` reads the same parameters as MoveIt's adapter, so an
   existing configuration carries over unchanged.
-- `viam_trajex_moveit/AddTrajexTotgTimeParameterization` reads trajex's own parameters under `trajex.totg`, which
+- `viam_trajex_moveit/AddTotgTimeParameterization` reads trajex's own parameters under `trajex.totg`, which
   expose more of trajex's options.
 
 The parameters go under the pipeline's name, since that's where MoveIt hands them to its adapters. For an OMPL
@@ -49,7 +49,7 @@ pipeline named `ompl`, using the trajex adapter with blending turned on, that lo
       planning_plugins:
         - ompl_interface/OMPLPlanner
       response_adapters:
-        - viam_trajex_moveit/AddTrajexTotgTimeParameterization
+        - viam_trajex_moveit/AddTotgTimeParameterization
         - default_planning_response_adapters/ValidateSolution
       trajex:
         totg:

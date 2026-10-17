@@ -1,6 +1,6 @@
 <library path="viam_trajex_moveit_plugins">
 
-  <class name="viam_trajex_moveit/AddTrajexTotgTimeParameterization"
+  <class name="viam_trajex_moveit/AddTotgTimeParameterization"
          type="viam::trajex::moveit::totg::response_adapter"
          base_class_type="planning_interface::PlanningResponseAdapter">
     <description>
@@ -9,7 +9,7 @@
     </description>
   </class>
 
-  <class name="viam_trajex_moveit/AddTrajexTotgTimeParameterizationCompat"
+  <class name="viam_trajex_moveit/AddTotgTimeParameterizationCompat"
          type="viam::trajex::moveit::totg::compat_response_adapter"
          base_class_type="planning_interface::PlanningResponseAdapter">
     <description>

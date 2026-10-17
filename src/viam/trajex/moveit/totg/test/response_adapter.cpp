@@ -27,8 +27,8 @@ namespace mc = ::moveit::core;
 using adapter = planning_interface::PlanningResponseAdapter;
 using error_codes = moveit_msgs::msg::MoveItErrorCodes;
 
-constexpr auto k_rich = "viam_trajex_moveit/AddTrajexTotgTimeParameterization";
-constexpr auto k_compat = "viam_trajex_moveit/AddTrajexTotgTimeParameterizationCompat";
+constexpr auto k_rich = "viam_trajex_moveit/AddTotgTimeParameterization";
+constexpr auto k_compat = "viam_trajex_moveit/AddTotgTimeParameterizationCompat";
 constexpr auto k_moveit = "default_planning_response_adapters/AddTimeOptimalParameterization";
 constexpr auto k_namespace = "pipeline";
 
@@ -114,7 +114,7 @@ TEST_F(response_adapter_test, both_adapters_are_discoverable) {
 TEST_F(response_adapter_test, rich_adapter_declares_trajex_defaults_and_times_a_plan) {
     const auto n = node("rich_defaults");
     const auto instance = load(k_rich, n);
-    EXPECT_EQ(instance->getDescription(), "AddTrajexTotgTimeParameterization");
+    EXPECT_EQ(instance->getDescription(), "AddTotgTimeParameterization");
 
     const viam::trajex::totg::path::options defaults;
     EXPECT_EQ(n->get_parameter("pipeline.trajex.totg.path.max_blend_deviation").as_double(), defaults.max_blend_deviation());
@@ -133,7 +133,7 @@ TEST_F(response_adapter_test, rich_adapter_declares_trajex_defaults_and_times_a_
 TEST_F(response_adapter_test, compat_adapter_declares_moveit_names_and_defaults_and_times_a_plan) {
     const auto n = node("compat_defaults");
     const auto instance = load(k_compat, n);
-    EXPECT_EQ(instance->getDescription(), "AddTrajexTotgTimeParameterizationCompat");
+    EXPECT_EQ(instance->getDescription(), "AddTotgTimeParameterizationCompat");
     EXPECT_EQ(n->get_parameter("pipeline.totg.path_tolerance").as_double(), 0.1);
     EXPECT_EQ(n->get_parameter("pipeline.totg.resample_dt").as_double(), 0.1);
     EXPECT_EQ(n->get_parameter("pipeline.totg.min_angle_change").as_double(), 0.001);

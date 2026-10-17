@@ -119,7 +119,7 @@ class adapter_base : public planning_interface::PlanningResponseAdapter {
 class response_adapter final : public adapter_base {
    public:
     std::string getDescription() const override {
-        return "AddTrajexTotgTimeParameterization";
+        return "AddTotgTimeParameterization";
     }
 
    private:
@@ -195,7 +195,7 @@ class response_adapter final : public adapter_base {
 class compat_response_adapter final : public adapter_base {
    public:
     std::string getDescription() const override {
-        return "AddTrajexTotgTimeParameterizationCompat";
+        return "AddTotgTimeParameterizationCompat";
     }
 
    private:
