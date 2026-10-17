@@ -3,6 +3,7 @@
 	format-check \
 	test \
 	verify-headers \
+	verify-package \
 	run-clang-tidy \
 	run-clang-tidy-parallel \
 	run-clang-check \
@@ -12,10 +13,10 @@ help:
 	@echo "Please use CMake for local development."
 	@echo ""
 	@echo "Available CI targets:"
-	@echo "  make -f .github/scripts/Makefile [format-check,configure,build,verify-headers,install,test,module.tar.gz,run-clang-tidy[-parallel],run-clang-check]"
+	@echo "  make -f .github/scripts/Makefile [format-check,configure,build,verify-headers,verify-package,install,test,module.tar.gz,run-clang-tidy[-parallel],run-clang-check]"
 
-SOURCE_FILES := $(shell find src/viam -type f \( -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \))
-CPP_FILES := $(filter %.cpp,$(SOURCE_FILES))
+SOURCE_FILES := $(shell find src/viam -type f \( -name '*.cpp' -o -name '*.c' -o -name '*.h' -o -name '*.hpp' \))
+TRANSLATION_UNITS := $(filter %.cpp %.c,$(SOURCE_FILES))
 
 format-check:
 	clang-format-19 --style=file --dry-run --Werror $(SOURCE_FILES)
@@ -29,6 +30,11 @@ build: configure
 # Compiles each public header on its own. Not part of `all`, so it must be asked for.
 verify-headers: configure
 	cmake --build build --target all_verify_interface_header_sets
+
+# Builds a find_package consumer against an install of this build, and of a second build that vendors
+# xtl and xtensor.
+verify-package: build
+	.github/scripts/verify-package.sh build
 
 install: build
 	DESTDIR=build/install cmake --install build --prefix /
@@ -44,14 +50,14 @@ run-clang-tidy:
         -p build \
         --config-file ./.clang-tidy \
         --header-filter=".*/viam/(ur/module|trajex)/.*" \
-	$(CPP_FILES)
+	$(TRANSLATION_UNITS)
 
 run-clang-tidy-parallel:
 	run-clang-tidy-19 \
         -p build \
         -config-file ./.clang-tidy \
         -header-filter=".*/viam/(ur/module|trajex)/.*" \
-	$(CPP_FILES)
+	$(TRANSLATION_UNITS)
 
 run-clang-check:
-	clang-check-19 -p build $(CPP_FILES)
+	clang-check-19 -p build $(TRANSLATION_UNITS)

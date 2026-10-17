@@ -70,6 +70,8 @@ jobs:
         run: make -f .github/scripts/Makefile verify-headers
       - name: Test
         run: make -f .github/scripts/Makefile test
+      - name: Verify Package
+        run: make -f .github/scripts/Makefile verify-package
 
   build-release-artifacts:
     name: Build Trajex Release Artifacts

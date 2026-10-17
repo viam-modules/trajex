@@ -1,0 +1,70 @@
+# CMake package config for trajex.
+#
+#   find_package(trajex [<version>] [REQUIRED] [COMPONENTS <components>...])
+#
+# The totg component, `viam::trajex::totg`, is always present: this file is installed with it. The
+# others are `compat` (`viam::trajex::totg::compat` and `viam::trajex::totg::compat::shim`), `capi`
+# (`viam::trajex::capi`) and `moveit` (`viam::trajex::moveit::totg`). Each is present only if it
+# was built and its install component, `trajex-<component>-dev`, was installed. With no components
+# named, every one that is present and whose dependencies are found is loaded.
+
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# xtl before xtensor: xtensor's own config looks for xtl, and so finds the one found here.
+find_dependency(xtl @VIAM_TRAJEX_XTL_FIND_ARGS@)
+find_dependency(xtensor @VIAM_TRAJEX_XTENSOR_FIND_ARGS@)
+
+include("${CMAKE_CURRENT_LIST_DIR}/trajex-totg-targets.cmake")
+set(trajex_totg_FOUND TRUE)
+
+set(_trajex_optional_components compat capi moveit)
+if (trajex_FIND_COMPONENTS)
+  set(_trajex_components ${trajex_FIND_COMPONENTS})
+  list(REMOVE_ITEM _trajex_components totg)
+else()
+  set(_trajex_components ${_trajex_optional_components})
+endif()
+
+# A component that cannot be loaded is not found, which fails the package only if the component was
+# required. Its dependencies are looked for quietly, so that an optional component's missing
+# dependency does not fail the package, as find_dependency would.
+foreach(_trajex_component IN LISTS _trajex_components)
+  set(trajex_${_trajex_component}_FOUND FALSE)
+  set(_trajex_targets "${CMAKE_CURRENT_LIST_DIR}/trajex-${_trajex_component}-targets.cmake")
+  set(_trajex_missing "")
+
+  if (NOT _trajex_component IN_LIST _trajex_optional_components)
+    set(_trajex_missing "is not a trajex component")
+  elseif (NOT EXISTS "${_trajex_targets}")
+    set(_trajex_missing "is not installed (install component trajex-${_trajex_component}-dev)")
+  elseif (_trajex_component STREQUAL "compat")
+    find_package(Eigen3 @VIAM_TRAJEX_EIGEN3_VERSION_MINIMUM@ CONFIG QUIET)
+    if (NOT Eigen3_FOUND)
+      set(_trajex_missing "requires Eigen3, which was not found")
+    endif()
+  elseif (_trajex_component STREQUAL "moveit")
+    find_package(moveit_core CONFIG QUIET)
+    if (NOT moveit_core_FOUND)
+      set(_trajex_missing "requires moveit_core, which was not found (is the ROS environment sourced?)")
+    endif()
+  endif()
+
+  if (_trajex_missing)
+    if (trajex_FIND_REQUIRED_${_trajex_component})
+      string(APPEND trajex_NOT_FOUND_MESSAGE "trajex component ${_trajex_component} ${_trajex_missing}.\n")
+    endif()
+  else()
+    include("${_trajex_targets}")
+    set(trajex_${_trajex_component}_FOUND TRUE)
+  endif()
+endforeach()
+
+unset(_trajex_optional_components)
+unset(_trajex_components)
+unset(_trajex_component)
+unset(_trajex_targets)
+unset(_trajex_missing)
+
+check_required_components(trajex)

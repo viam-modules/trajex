@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25 FATAL_ERROR)
 
-project(trajex VERSION 0.1.0
+project(trajex VERSION 0.101.0
   DESCRIPTION "Viam trajectory execution library"
   HOMEPAGE_URL https://github.com/viam-modules/trajex
   LANGUAGES C CXX
@@ -52,9 +52,16 @@ option(VIAM_TRAJEX_ENABLE_MOVEIT "Enable the MoveIt 2 integration" OFF)
 # Install static archives in each component's runtime role rather than its dev role. For consumers
 # that take the archives as a payload rather than as something to develop against, such as the Go
 # module, which stages the C API's archives and header. Not for find_package consumers: the package
-# config will be a dev artifact that refers to the archives. No effect on a shared build. Defaults
+# config is a dev artifact that refers to the archives. No effect on a shared build. Defaults
 # OFF.
 option(VIAM_TRAJEX_INSTALL_ARCHIVES_AS_RUNTIME "Install static archives in the runtime role" OFF)
+
+# Install the CMake package, so that an installed trajex can be found with `find_package(trajex)`:
+# the package config, and an export of each library that installs public headers. Turn it off for
+# consumers that stage individual components as a payload, such as the Go module, where the export
+# files would refer to components that were never staged. Defaults ON for standalone builds, OFF for
+# FetchContent consumers, which can turn it on to make trajex findable in what they install.
+option(VIAM_TRAJEX_INSTALL_CMAKE_PACKAGE "Install the CMake package config and target exports" ${VIAM_TRAJEX_STANDALONE_BUILD})
 
 # Enable the planner, replay, and JSON serialization tooling layer
 # (`viam::trajex::totg::tools`). Required by the service layer and by the regression test
@@ -238,7 +245,12 @@ FetchContent_Declare(
   FIND_PACKAGE_ARGS ${VIAM_TRAJEX_XTENSOR_VERSION_MINIMUM} CONFIG
 )
 
+# When xtl and xtensor are fetched rather than found, they install themselves alongside trajex,
+# because the installed trajex headers include theirs. Neither names a component for its install
+# rules, so this default gives them one of ours, rather than CMake's "Unspecified".
+set(CMAKE_INSTALL_DEFAULT_COMPONENT_NAME trajex-vendored-dependencies-dev)
 FetchContent_MakeAvailable(xtl xtensor)
+unset(CMAKE_INSTALL_DEFAULT_COMPONENT_NAME)
 
 if (VIAM_TRAJEX_ENABLE_LEGACY)
   find_package(Eigen3 ${VIAM_TRAJEX_EIGEN3_VERSION_MINIMUM} CONFIG REQUIRED)
@@ -1066,6 +1078,38 @@ if (VIAM_TRAJEX_BUILD_TESTS)
     )
   endif()
 
+  # The find_package consumer's programs, also built here against this build's own targets. That puts
+  # their sources in the compile database for the analysers, and breaks the build as soon as they stop
+  # compiling. Only the consumer project itself, built by .github/scripts/verify-package.sh against an
+  # install, tests the package. Its directory is never added here: its project finds trajex with
+  # find_package, which must only run outside this build.
+  function(viam_trajex_add_consumer_test name source library)
+    add_executable(viam-trajex-consumer-${name})
+    target_sources(viam-trajex-consumer-${name} PRIVATE src/viam/trajex/test/cmake/${source})
+    target_link_libraries(viam-trajex-consumer-${name} PRIVATE ${library})
+    apply_wall_werror(viam-trajex-consumer-${name})
+    add_test(NAME viam-trajex-consumer-${name} COMMAND viam-trajex-consumer-${name})
+  endfunction()
+
+  viam_trajex_add_consumer_test(totg totg.cpp viam::trajex::totg)
+
+  if (VIAM_TRAJEX_TOTG_ENABLE_LEGACY_COMPAT)
+    viam_trajex_add_consumer_test(compat compat.cpp viam::trajex::totg::compat::shim)
+  endif()
+
+  if (VIAM_TRAJEX_ENABLE_CAPI)
+    viam_trajex_add_consumer_test(capi capi.c viam::trajex::capi)
+    set_target_properties(viam-trajex-consumer-capi PROPERTIES
+      C_STANDARD 99
+      C_STANDARD_REQUIRED ON
+      C_EXTENSIONS OFF
+    )
+  endif()
+
+  if (VIAM_TRAJEX_ENABLE_MOVEIT)
+    viam_trajex_add_consumer_test(moveit moveit.cpp viam::trajex::moveit::totg)
+  endif()
+
 endif()
 
 #
@@ -1080,36 +1124,66 @@ endif()
 # `cmake --install --component <name>` installs exactly one component. CMake has no notion of one
 # component depending on another, so a consumer names everything it needs: dev implies runtime, and
 # a component implies the components of the libraries it links. A full install, with no
-# --component, installs every component, as do the module package and the ament package. The
-# FetchContent'd xtl and xtensor register their own install rules under CMake's built-in
-# "Unspecified" component, so naming trajex components excludes them.
+# --component, installs every component, as do the module package and the ament package. When xtl
+# and xtensor are fetched rather than found, their own install rules are in the
+# trajex-vendored-dependencies-dev component.
 #
 # Each library's public headers are its HEADERS file set, installed with their paths under src
 # preserved, so that `#include <viam/trajex/...>` works against the install tree as it does against
 # the source tree. A target without one installs no headers.
+#
+# With EXPORT, and VIAM_TRAJEX_INSTALL_CMAKE_PACKAGE set, the targets are also exported for the
+# package config, into one export file per component, installed in the component's dev role. The
+# exported names are the alias names: `viam-trajex-totg-compat` exports as
+# `viam::trajex::totg::compat`. Only libraries with installed public headers are worth exporting.
+set(VIAM_TRAJEX_CMAKE_PACKAGE_INSTALL_DIR ${CMAKE_INSTALL_LIBDIR}/cmake/trajex)
+
 function(viam_trajex_install component)
+  cmake_parse_arguments(PARSE_ARGV 1 arg "EXPORT" "" "")
+  set(targets ${arg_UNPARSED_ARGUMENTS})
+
   if (VIAM_TRAJEX_INSTALL_ARCHIVES_AS_RUNTIME)
     set(archive_role runtime)
   else()
     set(archive_role dev)
   endif()
+
+  set(export_args)
+  if (arg_EXPORT AND VIAM_TRAJEX_INSTALL_CMAKE_PACKAGE)
+    foreach(target IN LISTS targets)
+      string(REGEX REPLACE "^viam-trajex-" "" export_name ${target})
+      string(REPLACE "-" "::" export_name ${export_name})
+      set_target_properties(${target} PROPERTIES EXPORT_NAME ${export_name})
+    endforeach()
+    set(export_args EXPORT ${component}-targets)
+  endif()
+
   install(
-    TARGETS ${ARGN}
+    TARGETS ${targets} ${export_args}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT ${component}-runtime
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT ${component}-runtime NAMELINK_COMPONENT ${component}-dev
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT ${component}-${archive_role}
     FILE_SET HEADERS DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT ${component}-dev
   )
+
+  if (export_args)
+    install(
+      EXPORT ${component}-targets
+      NAMESPACE viam::trajex::
+      DESTINATION ${VIAM_TRAJEX_CMAKE_PACKAGE_INSTALL_DIR}
+      COMPONENT ${component}-dev
+    )
+  endif()
 endfunction()
 
 # The legacy target is always installed; when VIAM_TRAJEX_ENABLE_LEGACY is OFF it is an empty
 # INTERFACE library and installs nothing. It has no public headers.
 viam_trajex_install(trajex-legacy viam-trajex-totg-legacy)
 
-viam_trajex_install(trajex-totg viam-trajex-totg)
+viam_trajex_install(trajex-totg EXPORT viam-trajex-totg)
 
 if (VIAM_TRAJEX_TOTG_ENABLE_LEGACY_COMPAT)
-  viam_trajex_install(trajex-compat viam-trajex-totg-compat viam-trajex-totg-compat-shim)
+  viam_trajex_install(trajex-compat EXPORT viam-trajex-totg-compat viam-trajex-totg-compat-shim)
 endif()
 
 if (VIAM_TRAJEX_ENABLE_TOOLS)
@@ -1117,11 +1191,62 @@ if (VIAM_TRAJEX_ENABLE_TOOLS)
 endif()
 
 if (VIAM_TRAJEX_ENABLE_CAPI)
-  viam_trajex_install(trajex-capi viam-trajex-capi)
+  viam_trajex_install(trajex-capi EXPORT viam-trajex-capi)
 endif()
 
 if (VIAM_TRAJEX_ENABLE_MOVEIT)
-  viam_trajex_install(trajex-moveit viam-trajex-moveit-totg)
+  viam_trajex_install(trajex-moveit EXPORT viam-trajex-moveit-totg)
+endif()
+
+# The package config, which sits beside the totg export in trajex-totg-dev, since every component
+# needs totg. It finds xtl and xtensor for its consumers the way this build did. Found ones are
+# found again, at the version found here or newer, or failing a reported version, at our minimum.
+# Fetched ones were installed alongside trajex, so it finds exactly those, in the same prefix.
+if (VIAM_TRAJEX_INSTALL_CMAKE_PACKAGE)
+  include(CMakePackageConfigHelpers)
+
+  foreach(dependency IN ITEMS xtl xtensor)
+    string(TOUPPER ${dependency} dependency_upper)
+    get_target_property(dependency_imported ${dependency} IMPORTED)
+    if (dependency_imported)
+      set(dependency_version ${${dependency}_VERSION})
+      if (NOT dependency_version)
+        set(dependency_version ${VIAM_TRAJEX_${dependency_upper}_VERSION_MINIMUM})
+      endif()
+      set(find_args "${dependency_version} CONFIG")
+    else()
+      get_directory_property(dependency_version DIRECTORY ${${dependency}_SOURCE_DIR} DEFINITION ${dependency}_VERSION)
+      set(dependency_config_dir ${${dependency_upper}_CMAKECONFIG_INSTALL_DIR})
+      if (NOT dependency_version OR NOT dependency_config_dir)
+        message(FATAL_ERROR "Cannot tell which version of the fetched ${dependency} is installed, or where its package config goes")
+      endif()
+      if (NOT IS_ABSOLUTE "${dependency_config_dir}")
+        set(dependency_config_dir "\${PACKAGE_PREFIX_DIR}/${dependency_config_dir}")
+      endif()
+      set(find_args "${dependency_version} EXACT CONFIG PATHS \"${dependency_config_dir}\" NO_DEFAULT_PATH")
+    endif()
+    set(VIAM_TRAJEX_${dependency_upper}_FIND_ARGS ${find_args})
+  endforeach()
+
+  configure_package_config_file(
+    cmake/trajexConfig.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/trajexConfig.cmake
+    INSTALL_DESTINATION ${VIAM_TRAJEX_CMAKE_PACKAGE_INSTALL_DIR}
+  )
+
+  # trajex is at major version 0, where a minor version may break compatibility.
+  write_basic_package_version_file(
+    ${CMAKE_CURRENT_BINARY_DIR}/trajexConfigVersion.cmake
+    COMPATIBILITY SameMinorVersion
+  )
+
+  install(
+    FILES
+      ${CMAKE_CURRENT_BINARY_DIR}/trajexConfig.cmake
+      ${CMAKE_CURRENT_BINARY_DIR}/trajexConfigVersion.cmake
+    DESTINATION ${VIAM_TRAJEX_CMAKE_PACKAGE_INSTALL_DIR}
+    COMPONENT trajex-totg-dev
+  )
 endif()
 
 if (VIAM_TRAJEX_ENABLE_SERVICE)

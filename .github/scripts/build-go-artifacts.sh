@@ -58,7 +58,8 @@ esac
 # a fresh container needs no Boost; xtl and xtensor come via FetchContent. Static and PIC, so the
 # archives link into Go's PIE. -Werror off: whatever toolchain builds this may warn where the
 # pinned development compiler doesn't, and the artifact must not fail on that. Warnings are gated
-# by main.yml's build-test-lint job, on the pinned toolchain.
+# by main.yml's build-test-lint job, on the pinned toolchain. No CMake package: its export files
+# would land in the capi dev component and refer to components that are never staged.
 configure_arguments=(
     -DCMAKE_BUILD_TYPE=RelWithDebInfo
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON
@@ -71,6 +72,7 @@ configure_arguments=(
     -DVIAM_TRAJEX_BUILD_BENCHMARKS=OFF
     -DVIAM_TRAJEX_USE_WALL_WERROR=OFF
     -DVIAM_TRAJEX_INSTALL_ARCHIVES_AS_RUNTIME=ON
+    -DVIAM_TRAJEX_INSTALL_CMAKE_PACKAGE=OFF
     -DCMAKE_INSTALL_LIBDIR="lib/$platform"
     -DCMAKE_INSTALL_INCLUDEDIR=include
 )

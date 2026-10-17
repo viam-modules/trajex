@@ -20,8 +20,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # ROS packages install shared libraries, found at run time through the workspace environment.
 set(BUILD_SHARED_LIBS ON)
 
-# trajex, with its MoveIt integration and nothing else optional. These are plain variables, which trajex's options
-# honor.
+# trajex, with its MoveIt integration and nothing else optional, and its CMake package installed into the workspace.
+# These are plain variables, which trajex's options honor.
+set(VIAM_TRAJEX_INSTALL_CMAKE_PACKAGE ON)
 set(VIAM_TRAJEX_ENABLE_MOVEIT ON)
 set(VIAM_TRAJEX_ENABLE_LEGACY OFF)
 set(VIAM_TRAJEX_TOTG_ENABLE_LEGACY_COMPAT OFF)
@@ -93,5 +94,9 @@ if (BUILD_TESTING)
     rclcpp::rclcpp
   )
 endif()
+
+# trajex installs its own CMake package into the workspace, so `find_package(viam_trajex_moveit)` finds it too, and
+# downstream packages link its targets, such as `viam::trajex::moveit::totg`, directly.
+ament_export_dependencies(trajex)
 
 ament_package()
