@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Prepares a ros:lyrical-ros-base container to build and test trajex and its MoveIt 2 integration on
-# ROS 2 Lyrical Luth (Ubuntu 26.04), by installing what the build needs from apt. CI runs it in that
-# image. For development, make a long-lived container from the same image, with the repository
-# mounted at its host path so that paths in compiler output and compile_commands.json stay valid on
-# the host, and run this in it once, from the repository root:
+# Installs what's needed from apt to build and test trajex and its MoveIt 2 integration in a
+# ros:lyrical-ros-base container (ROS 2 Lyrical Luth, Ubuntu 26.04). CI runs it in that image. For
+# development, make a long-lived container from the same image and run this in it once, from the
+# repository root. Mounting the repository at its host path keeps the paths in compiler output and
+# compile_commands.json valid on the host:
 #
 #   docker run -d --name trajex-lyrical-moveit-dev -v "$PWD:$PWD" -w "$PWD" ros:lyrical-ros-base sleep infinity
 #   docker exec trajex-lyrical-moveit-dev .github/scripts/lyrical-moveit-setup.sh --dev
@@ -13,15 +13,15 @@
 #
 #   docker exec trajex-lyrical-moveit-dev bash -c 'source /opt/ros/lyrical/setup.bash && <command>'
 #
-# The container does not restart on its own; `docker start trajex-lyrical-moveit-dev` revives it. A
-# container made anew, for instance after `docker rm -f`, needs this script run again.
+# The container doesn't restart on its own, but `docker start trajex-lyrical-moveit-dev` revives it.
+# A new container, for instance after `docker rm -f`, needs this script run again.
 #
 # Usage: lyrical-moveit-setup.sh [--dev]
 #
-#   --dev  Also upgrade the image's packages and install interactive development tools. CI takes the
-#          pinned base image as it is.
+#   --dev  Also upgrade the image's packages and install interactive development tools. CI uses the
+#          pinned image as it is.
 #
-# Runs as root, as both the container and CI do.
+# Expects to run as root, which is the default in the container and in CI.
 
 set -euxo pipefail
 

@@ -1,6 +1,6 @@
-// End to end through MoveIt's own planning pipeline: parameters come from a ROS params file laid out as a user's
-// pipeline configuration, the pipeline loads OMPL and a trajex response adapter by name, OMPL plans a motion, and
-// the adapter times it.
+// Tests the adapters end to end through MoveIt's own planning pipeline. The parameters come from a ROS params file
+// laid out like a user's pipeline configuration. The pipeline loads OMPL and a trajex response adapter by name, OMPL
+// plans a motion, and the adapter times it.
 
 #include <cstddef>
 #include <memory>
@@ -30,8 +30,8 @@ using error_codes = moveit_msgs::msg::MoveItErrorCodes;
 
 class pipeline_test : public testing::Test {
    protected:
-    // MoveIt's testing model has no acceleration limits in its URDF; a real configuration supplies them through
-    // joint_limits.yaml. Add them, as MoveIt's own TOTG tests do.
+    // MoveIt's testing model has no acceleration limits in its URDF, where a real configuration would supply them
+    // through joint_limits.yaml. We add them here, as MoveIt's own TOTG tests do.
     void SetUp() override {
         model_ = mc::loadTestingRobotModel("panda");
         ASSERT_TRUE(model_);
@@ -52,9 +52,9 @@ class pipeline_test : public testing::Test {
 
     // Plans the Panda arm from its `ready` pose to its `extended` pose through the named pipeline.
     //
-    // The pipeline is kept by the fixture, as move_group keeps its pipelines for the life of the process. Destroying
-    // it unloads the plugin libraries, and the response's trajectory was made by OMPL's, so the pipeline must outlive
-    // the response or releasing the trajectory runs code that is no longer mapped.
+    // The fixture keeps the pipeline, as move_group keeps its pipelines for the life of the process. Destroying the
+    // pipeline unloads its plugin libraries, and since OMPL's library made the response's trajectory, releasing the
+    // trajectory after that would run code that is no longer mapped.
     planning_interface::MotionPlanResponse plan(const std::string& pipeline_name) {
         pipeline_ = std::make_shared<planning_pipeline::PlanningPipeline>(model_, node_, pipeline_name);
         const auto& pipeline = *pipeline_;
@@ -80,8 +80,8 @@ class pipeline_test : public testing::Test {
         return response;
     }
 
-    // The trajex adapters write waypoints at one uniform spacing, no greater than the configured period. MoveIt's
-    // TOTG would space them at its default 0.1 s with a shorter final step, so this identifies who timed the plan.
+    // The trajex adapters space waypoints uniformly, no further apart than the configured period. MoveIt's TOTG would
+    // space them at its default 0.1 s with a shorter final step, so this tells us that trajex timed the plan.
     void expect_timed_by_trajex(const planning_interface::MotionPlanResponse& response, double period) const {
         ASSERT_EQ(response.error_code.val, error_codes::SUCCESS);
         ASSERT_TRUE(response.trajectory);

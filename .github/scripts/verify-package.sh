@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
-# Shows that an installed trajex can be found with find_package and used, built both ways: with xtl and xtensor
-# found on the system, and with them fetched and installed alongside trajex. Builds the consumer project in
-# src/viam/trajex/test/cmake against a fresh install of each, and runs its tests.
+# Checks that an installed trajex can be found with find_package and used, whether it found xtl and xtensor on the
+# system or fetched and installed its own. It installs the given build, then makes and installs a second one that
+# fetches them, and builds and tests the consumer project in src/viam/trajex/test/cmake against both.
 #
 # Usage: verify-package.sh <build-dir> [component...]
 #
-#   build-dir  A built standalone trajex build, installed as it stands, with whatever xtl and xtensor it found. In
-#              CI, those are the container's.
-#   component  Components to require and exercise besides totg: compat, capi or moveit. Defaults to compat and capi.
+#   build-dir  An existing standalone trajex build directory. It's installed as it is, with whatever xtl and xtensor
+#              it found (in CI, the container's).
+#   component  Components to test in addition to totg: any of compat, capi and moveit. Defaults to compat and capi.
 #
-# The fetched case is a second build, configured here with only the requested components' dependencies. Everything
-# goes under build/verify-package, which each run replaces.
+# Everything goes under build/verify-package, which is removed at the start of each run.
 
 set -euxo pipefail
 
@@ -45,9 +44,10 @@ verify() {
 
 verify as-built "$build"
 
-# Fetching is forced for every dependency, so the second build enables only what the components need: compat and
-# capi are on by default, MoveIt is not. -Werror off, as warnings are gated by the main build. Static, so
-# that between them the two builds cover both library types; the main build is shared by default.
+# Since this build fetches every dependency, we turn on only what the requested components need. Compat and capi are
+# on by default, and MoveIt is added below if it was asked for. -Werror is off, because the main build already
+# enforces warnings. This build is static, so that together with the shared main build, both kinds of library get
+# tested.
 vendored_arguments=(
     -DCMAKE_BUILD_TYPE=RelWithDebInfo
     -DBUILD_SHARED_LIBS=OFF

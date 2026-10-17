@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
-# Builds the trajex archives and C API header that the Go module links, and stages them into
-# go/artifacts as the Go release workflow does. The artifact is defined here and nowhere else.
-# The toolchain, and the platform floor a release pins, belong to the caller.
+# Builds the trajex archives and C API headers that the Go module links, and stages them into
+# go/artifacts as the Go release workflow does. Keeping this in a script rather than in the
+# workflow means a developer can reproduce a release build locally. The caller chooses the
+# toolchain and the oldest platform to support.
 #
 # Usage: build-go-artifacts.sh [platform] [-- cmake-configure-arguments...]
 #
 #   platform  darwin_arm64, linux_amd64 or linux_arm64, defaulting to the host's. Naming another
 #             platform is only meaningful with cross-compiling arguments after `--`.
-#   --        Everything after it is passed to the cmake configure. The release passes these:
+#   --        Everything after it is passed to the cmake configure, as the release workflow does:
 #               build-go-artifacts.sh linux_amd64 -- -DCMAKE_C_COMPILER=gcc-10 -DCMAKE_CXX_COMPILER=g++-10
 #               build-go-artifacts.sh darwin_arm64 -- -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0
 #
 # Builds in build/go and stages into go/artifacts, both under the repository root and ignored by
-# git. Nothing already in go/artifacts is removed: release commits keep files there.
+# git. Nothing already in go/artifacts is removed, since release commits keep files there.
 
 set -euxo pipefail
 
@@ -53,13 +54,15 @@ case "$platform" in
         ;;
 esac
 
-# The distribution profile, all on the command line, so CMakeLists.txt stays unaware of it.
-# Minimal dependencies (legacy, compat, tools, service off) leave just capi and totg. Tests off, so
-# a fresh container needs no Boost; xtl and xtensor come via FetchContent. Static and PIC, so the
-# archives link into Go's PIE. -Werror off: whatever toolchain builds this may warn where the
-# pinned development compiler doesn't, and the artifact must not fail on that. Warnings are gated
-# by main.yml's build-test-lint job, on the pinned toolchain. No CMake package: its export files
-# would land in the capi dev component and refer to components that are never staged.
+# Everything that sets this build apart from a development build is here on the command line, so
+# CMakeLists.txt doesn't need to know about it. Turning off legacy, compat, tools and the service
+# leaves just capi and totg. With the tests off a fresh container doesn't need Boost, and xtl and
+# xtensor come through FetchContent. The libraries are static and position independent, so that
+# they can link into Go's position independent executables. -Werror is off, because the release
+# toolchain may warn where ours doesn't, and we'd rather not fail a release over a warning. The
+# build-test-lint job in CI enforces warnings with our toolchain. The CMake package isn't installed,
+# because its exports would land in the capi dev component and refer to components that never get
+# staged.
 configure_arguments=(
     -DCMAKE_BUILD_TYPE=RelWithDebInfo
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON
@@ -79,21 +82,21 @@ configure_arguments=(
 
 cmake -S . -B build/go -G Ninja "${configure_arguments[@]}" "$@"
 
-# `all`, not a hand-picked target list: the minimal configuration makes `all` just capi and totg
-# anyway, and building everything keeps what is built from drifting away from what is staged.
+# Build `all` rather than a list of targets, so that what gets built can't fall out of step with
+# what gets staged. With the configuration above, `all` is only capi and totg anyway.
 cmake --build build/go --target all
 
-# Stage, rather than install to a prefix. These are relocatable archives and a header packaged for
-# shipping, whose real home is an unknowable module-cache path, so this is a DESTDIR install, not a
-# CMAKE_INSTALL_PREFIX: a prefix would bake this machine's absolute path into any generated config,
-# .pc or rpath (none today, but a landmine). `--prefix /` gives a neutral root, so the staged tree is
-# flat: go/artifacts/{lib/<platform>,include}.
+# We stage with DESTDIR rather than installing to a real prefix. These files end up somewhere in
+# Go's module cache that we can't know in advance, and an install prefix would write this machine's
+# absolute path into any generated config, .pc file or rpath. Nothing generates one today, but
+# something might. Using `--prefix /` also keeps the staged tree flat, as
+# go/artifacts/{lib/<platform>,include}.
 #
-# Exactly what cgo links and includes, one component each, since a component install takes one
-# component and CMake follows no dependencies between them: the capi and totg archives (runtime,
-# because of VIAM_TRAJEX_INSTALL_ARCHIVES_AS_RUNTIME) and the capi headers (capi dev, which with that
-# option holds only capi.h and the export.h it includes). The C++ headers, and the FetchContent'd xtl
-# and xtensor, are in other components and excluded, so they don't bloat the shipped module.
+# We install just the three components cgo needs, one at a time, since CMake won't follow
+# dependencies between components for us. VIAM_TRAJEX_INSTALL_ARCHIVES_AS_RUNTIME moved the capi and
+# totg archives into the runtime components, which leaves only capi.h, and the export.h it
+# includes, in the capi dev component. The C++ headers and any fetched xtl and xtensor stay out of
+# the shipped module.
 for component in trajex-capi-runtime trajex-totg-runtime trajex-capi-dev; do
     DESTDIR="$PWD/go/artifacts" cmake --install build/go --prefix / --component "$component"
 done

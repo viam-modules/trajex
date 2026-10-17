@@ -119,8 +119,8 @@ class VIAM_TRAJEX_TOTG_API session {
     session(path::options path_options, trajectory::options trajectory_options, types::hertz sample_rate);
 
     ///
-    /// Sessions are neither copyable nor movable: sampling state refers to the active
-    /// trajectory where it lives.
+    /// Sessions are neither copyable nor movable, because the sampling state points into the
+    /// active trajectory, which lives inside the session.
     ///
     session(const session&) = delete;
     session& operator=(const session&) = delete;
@@ -283,8 +283,8 @@ class VIAM_TRAJEX_TOTG_API session {
     std::size_t trajectory_generation_count() const noexcept;
 
    private:
-    // A set of waypoints the session owns. Defined with the implementation, so that the
-    // storage behind it stays out of this header.
+    // Waypoints the session owns. It's defined in the source file, so that the private
+    // waypoint store type stays out of this public header.
     struct VIAM_TRAJEX_TOTG_HIDDEN waypoint_store_impl;
 
     // While staging, the waypoints of the staged motion and the trajectory built from them,
@@ -334,7 +334,7 @@ class VIAM_TRAJEX_TOTG_API session {
     // callers pass to `extend` view memory the session does not control. Empty until the
     // first successful extend.
     //
-    // A set cannot be moved, because its accumulator views its own storage, so it is held by
+    // A store cannot be moved, because its accumulator views its own storage, so it is held by
     // pointer. That lets the staged waypoints take over by handing over the pointer when the
     // staged trajectory becomes active, rather than by copying them across.
     std::unique_ptr<waypoint_store_impl> waypoints_;

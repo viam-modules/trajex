@@ -18,32 +18,34 @@ namespace viam::trajex::moveit::totg {
 ///
 /// MoveIt time parameterization backed by trajex's TOTG.
 ///
-/// A replacement for MoveIt's own `trajectory_processing::TimeOptimalTrajectoryGeneration`. The results are
-/// trajex's, not MoveIt's. Around the algorithm it does what MoveIt's does: limits come from the robot model or
-/// from the call, scaling factors outside (0, 1] fall back to 1.0 with a warning, continuous joints are unwound,
-/// near-duplicate waypoints are removed while keeping the final one, a trajectory that does not move becomes a single
-/// stationary waypoint, and the result is written back as waypoints with positions, velocities, accelerations and
-/// durations. Failures are logged and reported by returning false, never by throwing.
+/// A replacement for MoveIt's own `trajectory_processing::TimeOptimalTrajectoryGeneration`. The algorithm is
+/// trajex's, so the results won't match MoveIt's, but everything around the algorithm behaves the same way. Limits
+/// come from the robot model or from the call, and scaling factors outside (0, 1] fall back to 1.0 with a warning.
+/// Continuous joints are unwound, and near-duplicate waypoints are removed, always keeping the final one. A
+/// trajectory that doesn't move becomes a single waypoint at rest. The result is written back as waypoints with
+/// positions, velocities, accelerations and durations. Failures are logged and reported by returning false, never by
+/// throwing.
 ///
-/// Waypoints are written at uniform spacing with the last exactly at the end of the trajectory, so the spacing is
-/// the largest interval no greater than one period of the sampling frequency that divides the duration evenly.
+/// Waypoints are written at a uniform spacing that divides the duration evenly, so that the last one lands at the
+/// very end of the trajectory. The spacing is the largest such interval that is no longer than one period of the
+/// sampling frequency.
 ///
-/// The trajectory options are a prototype, copied for each call with the velocity and acceleration limits replaced
-/// by those of the call. Anything else set in them, such as an observer or TCP limits, applies to every call. An
-/// observer is shared by every request this object serves.
+/// The trajectory options are copied for each call, with the velocity and acceleration limits replaced by those of
+/// the call. Anything else set in them, such as an observer or TCP limits, applies to every call, so an observer will
+/// see every request this object serves.
 ///
-/// Only the active joints of the trajectory's group are timed. Their variables are the degrees of freedom handed
-/// to trajex, in the order of the group's active joints.
+/// Only the active joints of the trajectory's group are timed. Their variables become trajex's degrees of freedom,
+/// in the order of the group's active joints.
 ///
 class VIAM_TRAJEX_MOVEIT_TOTG_API time_parameterization final : public trajectory_processing::TimeParameterization {
    public:
     ///
-    /// Default sampling frequency, MoveIt's default of one waypoint every 0.1 s.
+    /// Default sampling frequency, matching MoveIt's default of one waypoint every 0.1 s.
     ///
     static constexpr double k_default_sampling_frequency_hz = 10.0;
 
     ///
-    /// Default waypoint deduplication tolerance, MoveIt's default `min_angle_change`.
+    /// Default waypoint deduplication tolerance, matching MoveIt's default `min_angle_change`.
     ///
     static constexpr double k_default_deduplication_tolerance = 1e-3;
 
@@ -53,7 +55,7 @@ class VIAM_TRAJEX_MOVEIT_TOTG_API time_parameterization final : public trajector
     /// @param path_options Options for building the path through the waypoints
     /// @param deduplication_tolerance Waypoints within this distance of the previous kept waypoint in every joint
     ///        are dropped, in configuration space units
-    /// @param trajectory_options Prototype trajectory options; see the class documentation
+    /// @param trajectory_options Trajectory options to copy for each call, as described in the class documentation
     /// @param sampling_frequency Minimum rate at which waypoints are written back
     /// @throws std::invalid_argument if the deduplication tolerance is negative or not finite, or the sampling
     ///         frequency is not positive and finite

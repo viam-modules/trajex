@@ -1,5 +1,5 @@
-// MoveIt planning response adapters that time parameterize with trajex TOTG. They are found by pluginlib through
-// plugins.xml in the ament package, and nothing includes them, so they have no header.
+// MoveIt planning response adapters that time parameterize with trajex TOTG. pluginlib finds them through
+// plugins.xml in the ament package, and nothing else refers to them, so there's no header.
 
 #include <exception>
 #include <limits>
@@ -24,10 +24,10 @@ rclcpp::Logger logger() {
     return ::moveit::getLogger("viam.trajex.moveit.totg.response_adapter");
 }
 
-// A double parameter that exists once its adapter is initialized. If the hosting node has not already declared it,
-// for instance from a YAML override in a node that declares overrides automatically, it is declared here with its
-// default, description, and a non-negative range. Values that must be strictly positive are checked when the time
-// parameterization is built.
+// Declares and reads one of an adapter's double parameters. The hosting node may already have declared it, for
+// instance from a YAML override in a node that declares overrides automatically, in which case we leave it alone.
+// Otherwise we declare it with its default, its description, and a non-negative range. Values that must be strictly
+// positive are checked later, when the time parameterization is built.
 class double_parameter {
    public:
     double_parameter(std::string name, double default_value, std::string description)
@@ -47,7 +47,7 @@ class double_parameter {
         node.declare_parameter(full_name_, default_, descriptor);
     }
 
-    // YAML writes `1` as an integer, and a parameter declared from it keeps that type, so accept either.
+    // A `1` in YAML is an integer, and a parameter declared from it stays an integer, so we accept either type.
     double read(rclcpp::Node& node) const {
         const auto parameter = node.get_parameter(full_name_);
         if (parameter.get_type() == rclcpp::ParameterType::PARAMETER_INTEGER) {
@@ -67,8 +67,9 @@ std::string join(const std::string& parameter_namespace, const std::string& grou
     return parameter_namespace.empty() ? group + "." : parameter_namespace + "." + group + ".";
 }
 
-// Everything the two adapters share. They differ only in their parameters and in how those become a time
-// parameterization. The node is held weakly: the node owns the planning pipeline that owns the adapter.
+// The two adapters differ only in their parameters and in how those become a time parameterization, so everything
+// else lives here. We hold the node weakly, since the node owns the planning pipeline, which owns the adapter, and a
+// strong reference would make a cycle.
 class adapter_base : public planning_interface::PlanningResponseAdapter {
    public:
     void initialize(const rclcpp::Node::SharedPtr& node, const std::string& parameter_namespace) override {
@@ -91,7 +92,8 @@ class adapter_base : public planning_interface::PlanningResponseAdapter {
             if (!node) {
                 throw std::logic_error{"adapter used without initialization, or after its node was destroyed"};
             }
-            // Built for each request from the parameters' current values, so changes made while running apply.
+            // We build a new time parameterization for each request, from the parameters' current values, so that
+            // changes made while the node runs take effect.
             succeeded = make_(*node).computeTimeStamps(
                 *response.trajectory, request.max_velocity_scaling_factor, request.max_acceleration_scaling_factor);
         } catch (const std::exception& e) {
@@ -113,7 +115,7 @@ class adapter_base : public planning_interface::PlanningResponseAdapter {
 
 }  // namespace
 
-// Configured by trajex's own settings, under `trajex.totg`, each defaulting to trajex's default.
+// Configured by trajex's own options, under `trajex.totg`, with trajex's defaults.
 class response_adapter final : public adapter_base {
    public:
     std::string getDescription() const override {
@@ -152,7 +154,7 @@ class response_adapter final : public adapter_base {
                                      types::hertz{sampling_frequency_.read(node)}};
     }
 
-    // Defaults come from trajex's own defaults, so they are stated in exactly one place.
+    // We take the defaults from trajex, so that they're only stated in one place.
     inline static const trajex::totg::path::options k_path_defaults{};
 
     double_parameter max_blend_deviation_{
@@ -188,8 +190,8 @@ class response_adapter final : public adapter_base {
                                          "Must be positive."};
 };
 
-// Configured by the parameters of MoveIt's own AddTimeOptimalParameterization, unchanged, so that switching to it
-// needs no change to an existing `totg` configuration.
+// Configured by the same parameters as MoveIt's own AddTimeOptimalParameterization, so that an existing `totg`
+// configuration works unchanged.
 class compat_response_adapter final : public adapter_base {
    public:
     std::string getDescription() const override {
@@ -204,8 +206,8 @@ class compat_response_adapter final : public adapter_base {
         }
     }
 
-    // MoveIt's `path_tolerance` is the blend deviation. MoveIt does not merge collinear waypoints, so neither does
-    // this. Its `min_angle_change` is the deduplication tolerance, and its `resample_dt` the sampling period.
+    // MoveIt's `path_tolerance` maps to the blend deviation, `min_angle_change` to the deduplication tolerance, and
+    // `resample_dt` to the sampling period. MoveIt doesn't merge collinear waypoints, so we turn that off.
     time_parameterization make_(rclcpp::Node& node) const override {
         trajex::totg::path::options path_options;
         path_options.set_max_blend_deviation(path_tolerance_.read(node)).set_max_linear_deviation(0.0);

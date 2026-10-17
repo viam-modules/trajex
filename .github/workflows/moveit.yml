@@ -1,9 +1,9 @@
 name: MoveIt Integration
 
-# The MoveIt 2 integration is for outside users, not something Viam runs, so it is not tested on every push. It
-# runs daily, whether or not anything was committed, since Lyrical's apt packages move on their own; on pull
-# requests that touch the integration itself; and on demand. Changes elsewhere that break it are caught by the
-# daily run.
+# The MoveIt 2 integration is for outside users rather than something Viam depends on, so we don't test it on every
+# push. Instead it runs on pull requests that touch it, on demand, and once a day whether or not anything was
+# committed, since Lyrical's apt packages change underneath us. The daily run also catches anything elsewhere in
+# trajex that breaks it.
 on:
   workflow_dispatch:
   pull_request:
@@ -19,8 +19,8 @@ jobs:
   moveit:
     name: MoveIt Integration (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
-    # The stock image, set up by .github/scripts/lyrical-moveit-setup.sh, as the development container is. The
-    # digest is the multi-arch index, so it serves both runners.
+    # We use the stock image and set it up with .github/scripts/lyrical-moveit-setup.sh, the same way as the
+    # development container. The digest is of the multi-arch index, so it works on both runners.
     container: ros:lyrical-ros-base@sha256:d9078270abaeae65497036085f1654c75ec0a95e2aca5ecf7ddc0846a6cd69e1
     strategy:
       fail-fast: false
@@ -36,8 +36,8 @@ jobs:
     env:
       COLCON_LOG_PATH: build/ros/log
     steps:
-      # Submodules for the reference implementation, which the facet builds. The image's git makes this a real
-      # clone.
+      # The submodule holds the reference implementation, which the top-level build includes. The image has git,
+      # so checkout makes a real clone, which the submodule needs, instead of downloading a tarball.
       - name: Checkout
         uses: actions/checkout@v7
         with:
@@ -45,8 +45,9 @@ jobs:
       - name: Set Up
         run: .github/scripts/lyrical-moveit-setup.sh
 
-      # Steps run through `docker exec`, which skips the image's entrypoint, so each sources ROS itself. -Werror is
-      # off: GCC 15 warns inside libstdc++ and xtensor.
+      # Steps run through `docker exec`, which skips the image's entrypoint, so each step sources ROS itself.
+      # We turn -Werror off, since a standalone build would otherwise enable it, and GCC 15 warns inside libstdc++
+      # and xtensor.
       - name: Configure
         run: |
           source /opt/ros/lyrical/setup.bash
@@ -69,7 +70,7 @@ jobs:
           source /opt/ros/lyrical/setup.bash
           .github/scripts/verify-package.sh build/ros-facet compat capi moveit
 
-      # The ament package, which builds trajex again under its own settings.
+      # Now build and test the ament package, which builds trajex again with its own settings.
       - name: Colcon Build
         run: |
           source /opt/ros/lyrical/setup.bash

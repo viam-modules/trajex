@@ -1,6 +1,7 @@
-# The repository root is not a colcon package. Its CMakeLists.txt, which builds all of trajex, would
-# otherwise be taken for a plain CMake package, and colcon looks no deeper than a package, so the ament
-# package in src/viam/trajex/moveit would go unfound in a workspace that clones this repository. A type
-# with no name leaves the root unidentified, and colcon looks inside instead. The cost is a warning, on
-# every colcon command, that the root package is incomplete.
+# The repository root isn't a colcon package. Without this file, colcon would take the top-level
+# CMakeLists.txt for a plain CMake package, and since colcon doesn't look inside packages, it would
+# never find the ament package in src/viam/trajex/moveit. Giving the root a type but no name keeps
+# colcon from identifying it, so it keeps looking. Every colcon command will then warn that the root
+# package is incomplete. The warning is harmless, and on balance that seems an acceptable trade-off
+# for keeping the MoveIt specific parts in their own subtree.
 type: none

@@ -24,7 +24,7 @@ using viam::trajex::moveit::totg::time_parameterization;
 // Allowance for the integration step's overshoot of the velocity limit.
 constexpr double k_limit_tolerance = 1e-3;
 
-// MoveIt's testing model has no acceleration limits in its URDF, so its own TOTG tests add them. So do we.
+// MoveIt's testing model has no acceleration limits in its URDF, so we add them, as MoveIt's own TOTG tests do.
 mc::RobotModelPtr panda(bool with_acceleration_limits = true) {
     auto model = mc::loadTestingRobotModel("panda");
     BOOST_REQUIRE(model);
@@ -62,8 +62,9 @@ struct fixture {
         return values;
     }
 
-    // Checks what holds for any successful result: starts at rest at time zero where the input started, ends at
-    // rest where it ended, time never runs backwards, and no joint exceeds its velocity limit times the scaling.
+    // Checks what should hold for any successful result. It starts at rest, at time zero, where the input started,
+    // and ends at rest where the input ended. Time never runs backwards, and no joint exceeds its scaled velocity
+    // limit.
     void check_valid(const robot_trajectory::RobotTrajectory& result,
                      const Eigen::VectorXd& start,
                      const Eigen::VectorXd& end,
@@ -92,7 +93,7 @@ struct fixture {
 const std::vector<double> k_start{-0.5, -1.5, 1.35, -2.51, -0.88, 0.63, 0.0};
 const std::vector<double> k_end{-0.45, -1.2, 1.2, -2.4, -0.8, 0.6, 0.0};
 
-// Several corners, from MoveIt's own TOTG tests, kept within the testing model's joint bounds.
+// A path with several corners, from MoveIt's own TOTG tests, kept within the testing model's joint bounds.
 const std::vector<std::vector<double>> k_cornered{
     {-0.5, -1.5, 1.35, -2.51, -0.88, 0.63, 0.0},
     {0.0, -1.5, 1.4, -1.2, -1.0, -0.2, 0.0},
@@ -131,8 +132,8 @@ BOOST_AUTO_TEST_CASE(trajectory_without_group_fails) {
     BOOST_CHECK(!time_parameterization{}.computeTimeStamps(trajectory));
 }
 
-// A straight line has no blends, so the motion is pure accelerate, cruise or not, decelerate, and acceleration
-// stays within its limits too.
+// A straight line has no blends, so the motion only accelerates, perhaps cruises, and decelerates, and we can check
+// acceleration against its limits too.
 BOOST_AUTO_TEST_CASE(straight_line) {
     auto trajectory = make({k_start, k_end});
     BOOST_REQUIRE(time_parameterization{}.computeTimeStamps(trajectory));
@@ -161,8 +162,8 @@ BOOST_AUTO_TEST_CASE(cornered_path) {
     check_valid(trajectory, vec(k_cornered.front()), vec(k_cornered.back()));
 }
 
-// With unit acceleration limits this path never gets near the Panda's velocity limits, so velocity scaling only
-// binds once it is severe. Scale each limit enough that it must be the binding one.
+// With unit acceleration limits, this path never gets near the Panda's velocity limits, so velocity scaling only has
+// an effect once it's severe. We scale each limit by enough that it must be the one that binds.
 BOOST_AUTO_TEST_CASE(scaling_slows_the_trajectory) {
     auto unscaled = make(k_cornered);
     auto slow_velocity = make(k_cornered);
@@ -223,8 +224,8 @@ BOOST_AUTO_TEST_CASE(no_motion_is_a_single_waypoint_at_rest) {
     }
 }
 
-// The last waypoint is within the deduplication tolerance of the one before it. It is the goal, so it is the one
-// kept.
+// The last waypoint is within the deduplication tolerance of the one before it. Since the last waypoint is the goal,
+// it's the one we should keep.
 BOOST_AUTO_TEST_CASE(deduplication_keeps_the_final_waypoint) {
     auto near_end = k_end;
     near_end[0] -= 5e-4;
@@ -233,7 +234,7 @@ BOOST_AUTO_TEST_CASE(deduplication_keeps_the_final_waypoint) {
     check_valid(trajectory, vec(k_start), vec(k_end));
 }
 
-// The prototype's limits are replaced on every call, whatever they were.
+// Limits set in the constructor's trajectory options are replaced by those of each call.
 BOOST_AUTO_TEST_CASE(prototype_limits_are_replaced) {
     viam::trajex::totg::trajectory::options prototype;
     prototype.max_velocity = viam::trajex::xvector<>{1.0};
@@ -243,7 +244,7 @@ BOOST_AUTO_TEST_CASE(prototype_limits_are_replaced) {
     check_valid(trajectory, vec(k_cornered.front()), vec(k_cornered.back()));
 }
 
-// Options trajex rejects surface as a failed call, not an exception.
+// Options that trajex rejects make the call fail, rather than throw.
 BOOST_AUTO_TEST_CASE(trajex_failures_are_reported_not_thrown) {
     auto trajectory = make(k_cornered);
     const time_parameterization parameterization(viam::trajex::totg::path::options{}.set_max_blend_deviation(-1.0));

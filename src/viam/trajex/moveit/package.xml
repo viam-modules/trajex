@@ -5,7 +5,7 @@
   <version>0.1.0</version>
   <description>
     MoveIt 2 planning response adapters that time parameterize with trajex, Viam's implementation of
-    time-optimal trajectory generation. Unstable: the adapters and their parameters may change.
+    time-optimal trajectory generation. The adapters and their parameters may still change.
   </description>
   <maintainer email="andrew.morrow@viam.com">Andrew Morrow</maintainer>
   <license>Apache-2.0</license>
@@ -13,8 +13,8 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
-  <!-- trajex itself is built from this repository by the package's CMake. Of its own dependencies, xtensor is
-       declared so that rosdep installs it; rosdep has no key for xtl, which the xtensor package depends on. -->
+  <!-- The package's CMake builds trajex from this repository. We declare trajex's xtensor dependency so that rosdep
+       installs it. rosdep has no key for xtl, but the xtensor package depends on it, so it gets installed too. -->
   <depend>xtensor</depend>
   <depend>moveit_core</depend>
   <depend>moveit_msgs</depend>
@@ -23,8 +23,8 @@
 
   <test_depend>ament_cmake_gtest</test_depend>
   <test_depend>moveit_resources_panda_description</test_depend>
-  <!-- MoveIt's planning pipeline, and its own time parameterization adapter, loaded alongside ours to check they
-       share parameters cleanly. -->
+  <!-- MoveIt's planning pipeline, and its own time parameterization adapter, which a test loads alongside ours to
+       check that they share parameters cleanly. -->
   <test_depend>moveit_ros_planning</test_depend>
   <!-- The planner for the end to end test through the planning pipeline. -->
   <test_depend>moveit_planners_ompl</test_depend>

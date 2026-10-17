@@ -21,7 +21,8 @@ namespace {
 
 // The time queries share their handling of failed trajectories and out of range arguments, and
 // differ only in which part of the sample they return. The selected part may be a reference
-// into the sample: the sample is a temporary that lives until the conversion is done.
+// into the sample. That's safe, because the sample is a temporary that lives until the end of
+// the full expression, after the conversion.
 template <typename Select>
 Eigen::VectorXd evaluate(const std::optional<totg::trajectory>& trajectory, double time, Select select) {
     if (!trajectory || std::isnan(time)) {

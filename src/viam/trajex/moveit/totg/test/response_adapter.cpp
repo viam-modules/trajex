@@ -34,7 +34,7 @@ constexpr auto k_namespace = "pipeline";
 
 class response_adapter_test : public testing::Test {
    protected:
-    // MoveIt's testing model has no acceleration limits in its URDF, so its own TOTG tests add them. So do we.
+    // MoveIt's testing model has no acceleration limits in its URDF, so we add them, as MoveIt's own TOTG tests do.
     void SetUp() override {
         model_ = mc::loadTestingRobotModel("panda");
         ASSERT_TRUE(model_);
@@ -49,7 +49,7 @@ class response_adapter_test : public testing::Test {
     }
 
     static rclcpp::Node::SharedPtr node(const std::string& name, std::vector<rclcpp::Parameter> overrides = {}) {
-        // move_group's own node options, so overrides behave as values from YAML do there.
+        // These are the node options move_group uses, so overrides behave the way values from YAML do there.
         return std::make_shared<rclcpp::Node>(name,
                                               rclcpp::NodeOptions()
                                                   .allow_undeclared_parameters(true)
@@ -86,7 +86,7 @@ class response_adapter_test : public testing::Test {
         return request;
     }
 
-    // Runs an adapter over a fresh plan, and returns the response.
+    // Runs an adapter over a fresh plan and returns the response.
     planning_interface::MotionPlanResponse run(const adapter& instance) const {
         auto response = plan();
         instance.adapt(nullptr, request(), response);
@@ -143,7 +143,7 @@ TEST_F(response_adapter_test, compat_adapter_declares_moveit_names_and_defaults_
     EXPECT_LE(max_spacing(response), 0.1 + 1e-9);
 }
 
-// Values arrive the way move_group receives them from YAML, already declared, including as integers.
+// Overrides arrive already declared, the way move_group receives values from YAML, and may be integers.
 TEST_F(response_adapter_test, overrides_are_honored) {
     const auto compat_node = node("compat_overrides", {rclcpp::Parameter("pipeline.totg.resample_dt", 0.02)});
     const auto compat = load(k_compat, compat_node);
@@ -187,7 +187,7 @@ TEST_F(response_adapter_test, invalid_parameters_fail_the_plan_without_throwing)
 }
 
 // The adapter holds its node weakly, since the node owns the pipeline that owns the adapter. Once the node is gone,
-// the adapter reports failure rather than reaching for it.
+// the adapter should report failure rather than try to use it.
 TEST_F(response_adapter_test, an_adapter_whose_node_is_gone_fails_cleanly) {
     auto n = node("rich_orphaned");
     const auto instance = load(k_rich, n);
@@ -197,7 +197,8 @@ TEST_F(response_adapter_test, an_adapter_whose_node_is_gone_fails_cleanly) {
     EXPECT_EQ(response.error_code.val, error_codes::FAILURE);
 }
 
-// MoveIt's own adapter and the compat adapter use the same parameters. Either may be initialized first on one node.
+// MoveIt's own adapter and the compat adapter declare the same parameters, so either should be able to initialize
+// first on a shared node.
 TEST_F(response_adapter_test, compat_adapter_coexists_with_moveits_own) {
     {
         const auto n = node("moveit_first");

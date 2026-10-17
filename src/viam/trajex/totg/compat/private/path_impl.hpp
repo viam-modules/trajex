@@ -27,8 +27,8 @@ inline Eigen::VectorXd to_eigen(const xvector<>& v) {
 }
 
 inline xvector<> to_xvector(const Eigen::VectorXd& v) {
-    // Shape type spelled out: a braced size alone would select the initializer list
-    // constructor and build a one-element vector holding the size.
+    // We spell out the shape type, because a braced size alone would select the initializer
+    // list constructor and build a one-element vector holding the size.
     xvector<> result(xvector<>::shape_type{static_cast<std::size_t>(v.size())});
     std::copy_n(v.data(), v.size(), result.data());
     return result;

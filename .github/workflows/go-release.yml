@@ -91,10 +91,10 @@ jobs:
       - name: Configure, build, and install archives into go/artifacts
         run: |
           set -euo pipefail
-          # The artifact is defined by the script, which a developer can run to recreate this
-          # build. Only the platform floor the release ships is chosen here: on linux the trajex
-          # C++ is built with gcc-10, for C++20 and the Focal ABI floor; on macOS the deployment
-          # target is pinned, rather than left to the project's default.
+          # The script decides what goes into the artifacts, so that a developer can recreate this
+          # build by running it. All this step chooses is the oldest platform we support. On Linux
+          # that means building with gcc-10, which handles C++20 and produces binaries that run on
+          # Focal, and on macOS it means pinning the deployment target.
           if [ "${{ runner.os }}" = "Linux" ]; then
             .github/scripts/build-go-artifacts.sh "${{ matrix.plat }}" -- \
               -DCMAKE_C_COMPILER=gcc-10 -DCMAKE_CXX_COMPILER=g++-10

@@ -6,9 +6,9 @@ project(trajex VERSION 0.101.0
   LANGUAGES C CXX
 )
 
-# Defines the CMAKE_INSTALL_* directories, which the RPATH setup and the targets' install
-# include directories below read. It must come before any of them: GNUInstallDirs caches its
-# variables, so a later include only takes effect from the second configure onward.
+# Defines the CMAKE_INSTALL_* variables. This has to happen before the RPATH setup and the
+# install include directories below read them, because GNUInstallDirs caches its variables,
+# and a later include would only take effect on the second configure.
 include(GNUInstallDirs)
 
 # Detect if we're building trajex as a standalone module
@@ -36,31 +36,30 @@ option(VIAM_TRAJEX_BUILD_BENCHMARKS "Build the Trajex benchmark programs" ${VIAM
 # path. Pulls in Eigen. Useful for cross-validating the new TOTG implementation.
 option(VIAM_TRAJEX_ENABLE_LEGACY "Enable the reference implementation" ON)
 
-# Enable the TOTG compatibility layer (`viam::trajex::totg::compat`): the reference
-# implementation's `Path` and `Trajectory` interface backed by trajex, so code written against
-# the original can try trajex without changes, plus a shim target that serves that interface
-# under the original header names. Pulls in Eigen. Defaults ON for standalone builds, OFF for
-# FetchContent consumers.
+# Enable the TOTG compatibility layer (`viam::trajex::totg::compat`), which implements the
+# reference implementation's `Path` and `Trajectory` interface on top of trajex, so that code
+# written against the original can try trajex without changes. There's also a shim target that
+# makes it available under the original header names. Pulls in Eigen. Defaults ON for standalone
+# builds, OFF for FetchContent consumers.
 option(VIAM_TRAJEX_TOTG_ENABLE_LEGACY_COMPAT "Enable the TOTG reference implementation compatibility layer" ${VIAM_TRAJEX_STANDALONE_BUILD})
 
-# Enable the MoveIt 2 integration (`viam::trajex::moveit::totg`): a MoveIt time parameterization backed by trajex,
-# for calling directly from C++. Requires an installed MoveIt 2 found through the ROS environment, so source the ROS
-# setup script before configuring. The MoveIt plugins are not built here; they are built by the ament package in
-# `src/viam/trajex/moveit`, which enables this option. Defaults OFF.
+# Enable the MoveIt 2 integration (`viam::trajex::moveit::totg`), a MoveIt time parameterization
+# backed by trajex, for calling directly from C++. It needs MoveIt 2 from the ROS environment, so
+# source the ROS setup script before configuring. The ament package in `src/viam/trajex/moveit`
+# turns this on and builds the MoveIt plugins. Defaults OFF.
 option(VIAM_TRAJEX_ENABLE_MOVEIT "Enable the MoveIt 2 integration" OFF)
 
-# Install static archives in each component's runtime role rather than its dev role. For consumers
-# that take the archives as a payload rather than as something to develop against, such as the Go
-# module, which stages the C API's archives and header. Not for find_package consumers: the package
-# config is a dev artifact that refers to the archives. No effect on a shared build. Defaults
-# OFF.
-option(VIAM_TRAJEX_INSTALL_ARCHIVES_AS_RUNTIME "Install static archives in the runtime role" OFF)
+# Install static archives in the `-runtime` install components instead of `-dev`. This is for
+# consumers that ship the archives as they are, like the Go module, and not for find_package
+# consumers, since the package config that refers to the archives lives in `-dev`. It has no
+# effect on shared builds. Defaults OFF.
+option(VIAM_TRAJEX_INSTALL_ARCHIVES_AS_RUNTIME "Install static archives in the runtime components" OFF)
 
-# Install the CMake package, so that an installed trajex can be found with `find_package(trajex)`:
-# the package config, and an export of each library that installs public headers. Turn it off for
-# consumers that stage individual components as a payload, such as the Go module, where the export
-# files would refer to components that were never staged. Defaults ON for standalone builds, OFF for
-# FetchContent consumers, which can turn it on to make trajex findable in what they install.
+# Install the package config and library exports that let `find_package(trajex)` find an installed
+# trajex. Consumers that stage individual install components, such as the Go module, should turn
+# this off, since the exports would refer to components they never stage. Defaults ON for
+# standalone builds, OFF for FetchContent consumers, which can turn it on to make trajex findable in
+# what they install.
 option(VIAM_TRAJEX_INSTALL_CMAKE_PACKAGE "Install the CMake package config and target exports" ${VIAM_TRAJEX_STANDALONE_BUILD})
 
 # Enable the planner, replay, and JSON serialization tooling layer
@@ -89,11 +88,11 @@ option(VIAM_TRAJEX_ENABLE_CAPI "Enable the C ABI shim" ON)
 # upstream warnings.
 option(VIAM_TRAJEX_USE_WALL_WERROR "Build with -Wall and -Werror flags" ${VIAM_TRAJEX_STANDALONE_BUILD})
 
-# Build the trajex libraries shared, as the module release does (conan's `shared` option defaults
-# on). Declared before any dependency is fetched, because viam-cpp-sdk declares its own
-# BUILD_SHARED_LIBS option, which would otherwise decide this for us whenever the SDK is fetched
-# rather than found. Standalone builds only: under FetchContent the parent project decides. The Go
-# artifact asks for static libraries explicitly.
+# Build shared libraries, as the module release does (conan's `shared` option defaults on). This
+# has to be declared before any dependency is fetched, because viam-cpp-sdk declares its own
+# BUILD_SHARED_LIBS option, which would otherwise decide this whenever the SDK is fetched rather
+# than found. When trajex is included with FetchContent, the parent project decides. The Go
+# artifact build asks for static libraries explicitly.
 if (VIAM_TRAJEX_STANDALONE_BUILD)
   option(BUILD_SHARED_LIBS "Build the trajex libraries as shared libraries" ON)
 endif()
@@ -159,17 +158,17 @@ function(apply_wall_werror target_name)
   endif()
 endfunction()
 
-# Hides every symbol of a library that its headers do not mark with VIAM_TRAJEX_<NAME>_API, and
-# generates the export header defining that macro and VIAM_TRAJEX_<NAME>_HIDDEN, at `header` under
-# a build-tree base directory of the library's public header set, so it installs with them. On ELF
-# and Mach-O one macro could serve every library, but Windows' dllexport and dllimport need one per
-# library, so each has its own.
+# Hides every symbol of a library that its headers don't mark with VIAM_TRAJEX_<NAME>_API, and
+# generates the export header defining that macro and VIAM_TRAJEX_<NAME>_HIDDEN. The header is
+# generated in the build tree, in a directory we add to the library's public header set as a second
+# base directory, so that it installs with the rest. On ELF and Mach-O one macro could serve every
+# library, but Windows' dllexport and dllimport need one per library.
 #
-# The macros only take effect in a shared library. For a static library GenerateExportHeader
-# defines them empty, so with the presets still applied every symbol in the archive is hidden,
-# the API included. That is deliberate: an archive linked into someone's shared library stays
-# private to it rather than exporting trajex from it, and linking an executable is unaffected,
-# since hidden only limits what is exported dynamically.
+# The macros only matter in a shared library. For a static library GenerateExportHeader defines
+# them as empty, and since the presets still apply, every symbol in the archive is hidden, including
+# the API. We want that, because it keeps trajex private to any shared library that someone links
+# our archives into. Executables don't care, since hidden visibility only limits what is exported
+# dynamically.
 include(GenerateExportHeader)
 function(viam_trajex_hide_symbols target name header)
   set_target_properties(${target} PROPERTIES
@@ -209,9 +208,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Check that every public header compiles on its own, so that none depends on what happens to
-# be included before it. Standalone builds only, so that a parent project's build is not slowed
-# by checks of headers it did not write.
+# Check that every public header compiles on its own, so none depends on what happens to be
+# included before it. We only do this for standalone builds, so a parent project isn't slowed
+# down checking headers it didn't write.
 if (VIAM_TRAJEX_STANDALONE_BUILD)
   set(CMAKE_VERIFY_INTERFACE_HEADER_SETS ON)
 endif()
@@ -289,9 +288,9 @@ FetchContent_Declare(
   FIND_PACKAGE_ARGS ${VIAM_TRAJEX_XTENSOR_VERSION_MINIMUM} CONFIG
 )
 
-# When xtl and xtensor are fetched rather than found, they install themselves alongside trajex,
-# because the installed trajex headers include theirs. Neither names a component for its install
-# rules, so this default gives them one of ours, rather than CMake's "Unspecified".
+# When xtl and xtensor are fetched rather than found, they get installed alongside trajex, which
+# our installed headers need. Neither project assigns its install rules to a component, so this
+# default puts them in one of ours instead of CMake's "Unspecified".
 set(CMAKE_INSTALL_DEFAULT_COMPONENT_NAME trajex-vendored-dependencies-dev)
 FetchContent_MakeAvailable(xtl xtensor)
 unset(CMAKE_INSTALL_DEFAULT_COMPONENT_NAME)
@@ -394,9 +393,9 @@ target_sources(viam-trajex-totg
     src/viam/trajex/totg/waypoint_utils.cpp
 )
 
-# The public headers, installed with their paths under src preserved. Headers under a
-# `private` directory are deliberately absent: they are not installed. The base directory is
-# also the include directory, for this target and for anything that links it.
+# List the public headers, so that they install with their paths under src preserved. Headers
+# under `private` directories are left off the list so they don't get installed. The base directory
+# also becomes the include directory for this target and anything that links it.
 target_sources(viam-trajex-totg
   PUBLIC
     FILE_SET HEADERS
@@ -475,9 +474,10 @@ if (VIAM_TRAJEX_TOTG_ENABLE_LEGACY_COMPAT)
 
   add_library(viam-trajex-totg-compat-shim INTERFACE)
 
-  # Installed with their paths preserved like every other header, so that the shim's names
-  # do not land at the top of the include tree. Callers include them by bare name, so the
-  # shim directory itself is the include directory, in the build tree and once installed.
+  # These install with their paths preserved, like every other header, so that names like
+  # `Path.h` don't land at the top of the include tree. Callers include them by bare name, so we
+  # make the shim directory itself the include directory, both in the build tree and once
+  # installed.
   target_sources(viam-trajex-totg-compat-shim
     INTERFACE
     FILE_SET HEADERS
@@ -506,9 +506,9 @@ add_library(viam::trajex::totg::compat ALIAS viam-trajex-totg-compat)
 add_library(viam::trajex::totg::compat::shim ALIAS viam-trajex-totg-compat-shim)
 
 
-# MoveIt integration: a MoveIt `TimeParameterization` backed by trajex TOTG. Its header includes both MoveIt's and
-# trajex's, so both are public dependencies. Only contains meaningful content if `VIAM_TRAJEX_ENABLE_MOVEIT` is
-# truthy.
+# MoveIt integration: a MoveIt `TimeParameterization` backed by trajex TOTG. Its header includes
+# both MoveIt's headers and trajex's, so both are public dependencies. Only contains meaningful
+# content if `VIAM_TRAJEX_ENABLE_MOVEIT` is truthy.
 
 if (VIAM_TRAJEX_ENABLE_MOVEIT)
   add_library(viam-trajex-moveit-totg)
@@ -982,13 +982,15 @@ if (VIAM_TRAJEX_BUILD_TESTS)
       COMMAND viam-trajex-totg-compat-test
     )
 
-    # Source compatibility tripwires: the reference implementation's own programs, unmodified,
-    # built against the shim. They are copied out of their directory first, because their quoted
-    # includes would otherwise find the original headers sitting beside them. They are built
-    # but not registered with ctest: both always exit zero, and the example waits on stdin.
+    # We also build the reference implementation's own example and test programs, unmodified,
+    # against the shim, so that we notice if it stops being source compatible with the original.
+    # They're copied out of their directory first, since their quoted includes would otherwise
+    # find the original headers beside them. They aren't registered with ctest, because both
+    # always exit zero and the example waits on stdin.
     #
-    # Built at the oldest standard the compat headers claim. CMake raises it to whatever the
-    # Eigen target requires, so with Eigen 5 (C++14) this checks less than it says.
+    # We build them as C++98, the oldest standard the compat headers claim to support. However,
+    # CMake raises that to whatever the Eigen target requires, so with Eigen 5 the check is
+    # really against C++14.
     foreach (program Example Test)
       string(TOLOWER ${program} program_lower)
       set(target viam-trajex-totg-compat-shim-${program_lower})
@@ -1126,11 +1128,11 @@ if (VIAM_TRAJEX_BUILD_TESTS)
     )
   endif()
 
-  # The find_package consumer's programs, also built here against this build's own targets. That puts
-  # their sources in the compile database for the analysers, and breaks the build as soon as they stop
-  # compiling. Only the consumer project itself, built by .github/scripts/verify-package.sh against an
-  # install, tests the package. Its directory is never added here: its project finds trajex with
-  # find_package, which must only run outside this build.
+  # We also build the find_package consumer's programs here, against this build's own targets, so
+  # that they're in the compile database for the analysers and the build breaks as soon as they stop
+  # compiling. They only test the package when .github/scripts/verify-package.sh builds the consumer
+  # project against an install. That project's directory is never added here, since its find_package
+  # should only run outside this build.
   function(viam_trajex_add_consumer_test name source library)
     add_executable(viam-trajex-consumer-${name})
     target_sources(viam-trajex-consumer-${name} PRIVATE src/viam/trajex/test/cmake/${source})
@@ -1164,26 +1166,27 @@ endif()
 # Installation
 #
 
-# Every install rule names its component, in two roles: `<component>-runtime` for what a program
-# needs to run (executables and shared libraries) and `<component>-dev` for what is needed to build
-# against it (headers, static archives, and shared library namelinks). Static archives go to runtime
-# instead when VIAM_TRAJEX_INSTALL_ARCHIVES_AS_RUNTIME is set.
+# Every install rule names an install component, and each part of trajex has two of them.
+# `<component>-runtime` holds what a program needs to run (executables and shared libraries), and
+# `<component>-dev` holds what is needed to build against it (headers, static archives and shared
+# library namelinks). Static archives go in `-runtime` instead when
+# VIAM_TRAJEX_INSTALL_ARCHIVES_AS_RUNTIME is set.
 #
-# `cmake --install --component <name>` installs exactly one component. CMake has no notion of one
-# component depending on another, so a consumer names everything it needs: dev implies runtime, and
-# a component implies the components of the libraries it links. A full install, with no
-# --component, installs every component, as do the module package and the ament package. When xtl
-# and xtensor are fetched rather than found, their own install rules are in the
-# trajex-vendored-dependencies-dev component.
+# Installing with `--component` installs only the named component, and CMake has no notion of
+# dependencies between components, so a consumer that installs this way has to name everything it
+# needs. That means `-runtime` as well as `-dev`, for every library it links. A full install, with
+# no `--component`, installs everything, and that's what the module package and the ament package
+# do. Fetched xtl and xtensor go in trajex-vendored-dependencies-dev.
 #
 # Each library's public headers are its HEADERS file set, installed with their paths under src
-# preserved, so that `#include <viam/trajex/...>` works against the install tree as it does against
-# the source tree. A target without one installs no headers.
+# preserved, so `#include <viam/trajex/...>` works against the install tree as it does against the
+# source tree.
 #
-# With EXPORT, and VIAM_TRAJEX_INSTALL_CMAKE_PACKAGE set, the targets are also exported for the
-# package config, into one export file per component, installed in the component's dev role. The
-# exported names are the alias names: `viam-trajex-totg-compat` exports as
-# `viam::trajex::totg::compat`. Only libraries with installed public headers are worth exporting.
+# When EXPORT is given and VIAM_TRAJEX_INSTALL_CMAKE_PACKAGE is set, the targets are also exported
+# for the package config, with one export file per component, installed in its `-dev` component.
+# Targets are exported under their alias names, so `viam-trajex-totg-compat` exports as
+# `viam::trajex::totg::compat`. We only export libraries that install public headers, since a
+# find_package consumer can't use the others.
 set(VIAM_TRAJEX_CMAKE_PACKAGE_INSTALL_DIR ${CMAKE_INSTALL_LIBDIR}/cmake/trajex)
 
 function(viam_trajex_install component)
@@ -1224,8 +1227,8 @@ function(viam_trajex_install component)
   endif()
 endfunction()
 
-# The legacy target is always installed; when VIAM_TRAJEX_ENABLE_LEGACY is OFF it is an empty
-# INTERFACE library and installs nothing. It has no public headers.
+# The legacy target is always installed. When VIAM_TRAJEX_ENABLE_LEGACY is OFF it's an empty
+# INTERFACE library and installs nothing. It has no public headers, so it isn't exported.
 viam_trajex_install(trajex-legacy viam-trajex-totg-legacy)
 
 viam_trajex_install(trajex-totg EXPORT viam-trajex-totg)
@@ -1246,10 +1249,11 @@ if (VIAM_TRAJEX_ENABLE_MOVEIT)
   viam_trajex_install(trajex-moveit EXPORT viam-trajex-moveit-totg)
 endif()
 
-# The package config, which sits beside the totg export in trajex-totg-dev, since every component
-# needs totg. It finds xtl and xtensor for its consumers the way this build did. Found ones are
-# found again, at the version found here or newer, or failing a reported version, at our minimum.
-# Fetched ones were installed alongside trajex, so it finds exactly those, in the same prefix.
+# The package config goes in trajex-totg-dev, next to the totg export, since every component needs
+# totg. It looks for xtl and xtensor the same way this build got them. If they were found, it finds
+# them again, at the version found here or newer, or at our minimum if no version was reported. If
+# they were fetched, we installed them alongside trajex, so it looks only for those copies, in the
+# same prefix.
 if (VIAM_TRAJEX_INSTALL_CMAKE_PACKAGE)
   include(CMakePackageConfigHelpers)
 

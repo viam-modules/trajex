@@ -13,7 +13,8 @@
 
 namespace viam::trajex::totg::streaming {
 
-// Exists only so that the header can hold waypoint stores without naming the private type.
+// This exists only so that the public header can hold waypoint stores without naming the
+// private type, whose header isn't installed.
 struct session::waypoint_store_impl : waypoint_store {};
 
 namespace {

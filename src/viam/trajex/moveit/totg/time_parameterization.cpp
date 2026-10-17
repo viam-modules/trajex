@@ -24,14 +24,14 @@ namespace viam::trajex::moveit::totg {
 
 namespace {
 
-// This namespace is `viam::trajex::moveit`, so MoveIt's own `moveit` namespace must be spelled from the root.
+// Since we're inside `viam::trajex::moveit`, MoveIt's own `moveit` namespace has to be named from the root.
 namespace mc = ::moveit::core;
 
 rclcpp::Logger logger() {
     return ::moveit::getLogger("viam.trajex.moveit.totg");
 }
 
-// One degree of freedom handed to trajex: a variable of one of the group's active joints.
+// A variable of one of the group's active joints, which is one degree of freedom for trajex.
 struct active_variable {
     std::size_t state_index;
     const std::string* name;
@@ -56,8 +56,8 @@ double verified_scaling_factor(double requested, const char* kind) {
     return 1.0;
 }
 
-// Resolves one limit for one variable: the value given for it by name if there is one, otherwise the robot model's
-// bound. Returns nothing, after logging why, if there is no usable limit.
+// Uses the limit given for the variable by name if there is one, and otherwise the robot model's bound. If there's
+// no usable limit, logs why and returns nothing.
 std::optional<double> resolve_limit(const active_variable& variable,
                                     const std::unordered_map<std::string, double>& given,
                                     bool model_bounded,
@@ -148,8 +148,8 @@ bool time_parameterization::compute_(robot_trajectory::RobotTrajectory& trajecto
         return false;
     }
 
-    // Resolve the limits for every degree of freedom before touching the trajectory. A failure here leaves it as it
-    // was handed to us. Any later failure leaves it unwound, which describes the same motion.
+    // We resolve all the limits before touching the trajectory, so that a failure here leaves it as it was handed to
+    // us. A later failure leaves it unwound, but an unwound trajectory still describes the same motion.
     const double velocity_scaling = verified_scaling_factor(max_velocity_scaling_factor, "velocity");
     const double acceleration_scaling = verified_scaling_factor(max_acceleration_scaling_factor, "acceleration");
 
@@ -189,7 +189,8 @@ bool time_parameterization::compute_(robot_trajectory::RobotTrajectory& trajecto
                     "configuration space and will not mean the same thing for both.");
     }
 
-    // The path is built in configuration space, where a joint that wraps around would jump by a full turn.
+    // We build the path in configuration space, where a continuous joint that wraps around would appear to jump by a
+    // full turn.
     trajectory.unwind();
 
     const std::size_t waypoint_count = trajectory.getWayPointCount();
@@ -201,14 +202,14 @@ bool time_parameterization::compute_(robot_trajectory::RobotTrajectory& trajecto
         }
     }
 
-    // The template carries everything outside the group unchanged into every written waypoint.
+    // We write every waypoint from this state, so that variables outside the group carry through unchanged.
     mc::RobotState state(trajectory.getWayPoint(0));
     state.zeroVelocities();
     state.zeroAccelerations();
 
     const auto unique = trajex::totg::deduplicate_waypoints(trajex::totg::waypoint_accumulator{waypoints}, deduplication_tolerance_);
 
-    // A trajectory that never moves has no path to follow. MoveIt's answer is the starting state, at rest.
+    // A trajectory that never moves has no path to follow. MoveIt returns the starting state, at rest, so we do too.
     if (unique.size() < 2) {
         trajectory.clear();
         trajectory.addSuffixWayPoint(state, 0.0);

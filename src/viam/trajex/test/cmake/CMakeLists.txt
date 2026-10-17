@@ -20,8 +20,8 @@ message(STATUS "trajex ${trajex_VERSION} from ${trajex_DIR}")
 message(STATUS "xtl ${xtl_VERSION} from ${xtl_DIR}")
 message(STATUS "xtensor ${xtensor_VERSION} from ${xtensor_DIR}")
 
-# A vendored install must hand its consumers the xtl and xtensor installed with it, even when others are on the
-# default search path.
+# An install that vendored xtl and xtensor must hand its consumers the copies installed with it, even when others are
+# on the default search path.
 if (TRAJEX_VENDORED_PREFIX)
   foreach(dependency IN ITEMS xtl xtensor)
     cmake_path(IS_PREFIX TRAJEX_VENDORED_PREFIX "${${dependency}_DIR}" NORMALIZE dependency_is_vendored)
@@ -43,8 +43,8 @@ if ("compat" IN_LIST TRAJEX_COMPONENTS)
   add_test(NAME compat COMMAND compat)
 endif()
 
-# In C, to show that the C API's header and archives serve a C program. The archives' C++ dependencies come through
-# the export, which also selects the C++ linker.
+# This one is written in C, to show that the C API works from a C program. The export carries the C++ dependencies
+# of the capi library, which also makes CMake link with the C++ linker.
 if ("capi" IN_LIST TRAJEX_COMPONENTS)
   add_executable(capi capi.c)
   target_link_libraries(capi PRIVATE viam::trajex::capi)

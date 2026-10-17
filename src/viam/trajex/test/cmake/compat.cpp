@@ -1,5 +1,5 @@
-// Times the same unit straight move as totg.cpp, through the reference implementation's interface, included by the
-// original header names that the compatibility layer's shim serves.
+// Times the same unit straight move as totg.cpp, but through the reference implementation's interface, using the
+// original header names that the compatibility layer's shim provides.
 
 #include <cmath>
 #include <cstdlib>

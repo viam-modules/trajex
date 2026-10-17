@@ -36,7 +36,7 @@ class Trajectory;
 ///   near-collinear waypoints is not applied.
 /// - Arc length arguments are clamped to `[0, getLength()]`. The original extrapolates past the
 ///   end and reads out of bounds before the start.
-/// - Switching points are not reported: `getSwitchingPoints` returns an empty list and
+/// - Switching points are not reported, so `getSwitchingPoints` returns an empty list and
 ///   `getNextSwitchingPoint` reports the end of the path.
 /// - `PathSegment` is not provided. The original never hands one out.
 /// - Copy assignment is a deep copy. The original's generated assignment shares segments
@@ -104,14 +104,14 @@ class VIAM_TRAJEX_TOTG_COMPAT_API Path {
     ///
     /// @param s Arc length
     /// @param discontinuity Always set to true
-    /// @return Always `getLength()`; switching points are not reported
+    /// @return Always `getLength()`, since switching points are not reported
     ///
     double getNextSwitchingPoint(double s, bool& discontinuity) const;
 
     ///
     /// Gets the switching points of the path.
     ///
-    /// @return Always an empty list; switching points are not reported
+    /// @return Always an empty list, since switching points are not reported
     ///
     // C++03 needs the space between the closing brackets, which the formatter would remove.
     // clang-format off

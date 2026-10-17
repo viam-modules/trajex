@@ -1,6 +1,6 @@
-# Two OMPL planning pipelines for the Panda, each timed by one of the trajex response adapters. Laid out as
-# move_group sees a pipeline's configuration: everything for a pipeline is under its name, adapter parameters
-# included. Each sets an output rate unlike MoveIt's default, so the test can tell which adapter timed the plan.
+# Two OMPL planning pipelines for the Panda, each timed by one of the trajex response adapters. They're laid out the
+# way move_group expects, with everything for a pipeline, adapter parameters included, under the pipeline's name.
+# Each sets an output rate different from MoveIt's default, so the test can tell which adapter timed the plan.
 /**:
   ros__parameters:
     ompl_trajex:

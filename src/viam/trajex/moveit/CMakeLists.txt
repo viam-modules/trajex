@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.25 FATAL_ERROR)
 
-# The ament package for trajex's MoveIt integration. colcon and ament want to own the build they run, so the ROS
-# shaped part of the repository lives here and pulls in trajex from the repository root, rather than trajex
-# becoming a ROS project. Build with colcon, pointing it at this directory.
+# The ament package for trajex's MoveIt integration. Build it with colcon, pointed at this directory. colcon and
+# ament expect to own the build, so rather than turning trajex into a ROS project, we keep the ROS specific parts
+# here and pull in trajex from the repository root.
 
 project(viam_trajex_moveit VERSION 0.1.0 LANGUAGES C CXX)
 
@@ -11,17 +11,17 @@ find_package(moveit_core REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(rclcpp REQUIRED)
 
-# trajex is C++20. Set it here: trajex only chooses a standard when its parent has not, and a ROS parent typically
-# chooses C++17.
+# trajex only picks a C++ standard when its parent hasn't, and ROS packages usually pick C++17, so we ask for C++20
+# here.
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# ROS packages install shared libraries, found at run time through the workspace environment.
+# ROS packages install shared libraries, which are found at run time through the workspace environment.
 set(BUILD_SHARED_LIBS ON)
 
-# trajex, with its MoveIt integration and nothing else optional, and its CMake package installed into the workspace.
-# These are plain variables, which trajex's options honor.
+# Build trajex with its MoveIt integration and nothing else optional, and install its CMake package into the
+# workspace. Plain variables are enough, since trajex's options honor them.
 set(VIAM_TRAJEX_INSTALL_CMAKE_PACKAGE ON)
 set(VIAM_TRAJEX_ENABLE_MOVEIT ON)
 set(VIAM_TRAJEX_ENABLE_LEGACY OFF)
@@ -53,10 +53,11 @@ install(
 
 pluginlib_export_plugin_description_file(moveit_core plugins.xml)
 
-# Loads the adapters by name, as MoveIt does, so it runs against the installed package and its ament index entry.
 if (BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
 
+  # This test loads the adapters by name, as MoveIt does, so it runs against the installed package and its ament
+  # index entry.
   ament_add_gtest(viam_trajex_moveit_response_adapter_test
     totg/test/response_adapter.cpp
   )
@@ -72,7 +73,8 @@ if (BUILD_TESTING)
     rclcpp::rclcpp
   )
 
-  # End to end through MoveIt's planning pipeline, with OMPL as the planner, configured from a params file.
+  # This test runs end to end through MoveIt's planning pipeline, with OMPL as the planner, configured from a params
+  # file.
   find_package(moveit_ros_planning REQUIRED)
 
   ament_add_gtest(viam_trajex_moveit_pipeline_test
@@ -95,8 +97,9 @@ if (BUILD_TESTING)
   )
 endif()
 
-# trajex installs its own CMake package into the workspace, so `find_package(viam_trajex_moveit)` finds it too, and
-# downstream packages link its targets, such as `viam::trajex::moveit::totg`, directly.
+# trajex installs its own CMake package into the workspace. Exporting it as a dependency lets
+# `find_package(viam_trajex_moveit)` find it too, so downstream packages can link targets like
+# `viam::trajex::moveit::totg` directly.
 ament_export_dependencies(trajex)
 
 ament_package()

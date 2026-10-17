@@ -1,5 +1,5 @@
 // Constructs the MoveIt time parameterization with trajex's defaults. Timing a plan needs a robot model, which the
-// ament package's tests provide; this only shows the installed library and its MoveIt dependencies resolve.
+// ament package's tests provide, so this only shows that the installed library and its MoveIt dependencies resolve.
 
 #include <cstdlib>
 #include <iostream>

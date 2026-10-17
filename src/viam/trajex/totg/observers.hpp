@@ -91,8 +91,8 @@ class VIAM_TRAJEX_TOTG_API composite_integration_observer final : public traject
     void on_failed(std::exception_ptr error, std::shared_ptr<const trajectory> invalid) noexcept override;
 
    private:
-    // Not hidden: `add_observer` is a template, instantiated in the caller's translation unit,
-    // and calls this from there.
+    // This can't be hidden, because it's called from `add_observer`, which is a template and so
+    // is instantiated in the caller's translation unit.
     void add_observer_(std::shared_ptr<integration_observer> observer);
 
     std::vector<std::shared_ptr<integration_observer>> observers_;

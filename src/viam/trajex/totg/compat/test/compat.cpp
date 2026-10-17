@@ -22,8 +22,9 @@
 #include <third_party/trajectories/Trajectory.h>
 #endif
 
-// Qualified throughout rather than brought in with using-declarations: the reference headers
-// above define global `Path` and `Trajectory`, which would make unqualified names ambiguous.
+// We qualify names throughout rather than bringing them in with using-declarations, because the
+// reference headers above define global `Path` and `Trajectory`, which would make unqualified
+// names ambiguous.
 namespace compat = viam::trajex::totg::compat;
 
 namespace {
@@ -85,8 +86,8 @@ BOOST_AUTO_TEST_CASE(arc_length_is_clamped) {
 
 // The middle waypoint is within the deviation of the line through its neighbours, so trajex's
 // collinear merging would drop it and straighten the path. Through compat, maxDeviation only
-// blends, so the path still bends toward the middle waypoint. The native path shows the test
-// can tell the two apart.
+// blends, so the path still bends toward the middle waypoint. Building the same path natively,
+// with merging, checks that the test can tell the two apart.
 BOOST_AUTO_TEST_CASE(max_deviation_blends_without_merging) {
     const auto points = waypoints({{0.0, 0.0}, {1.0, 5e-3}, {2.0, 0.0}});
     constexpr double k_deviation = 0.01;
@@ -144,8 +145,8 @@ BOOST_AUTO_TEST_SUITE_END()
 
 BOOST_AUTO_TEST_SUITE(compat_trajectory)
 
-// Rest to rest over unit distance at unit acceleration, never reaching the velocity limit: a
-// triangular profile peaking at unit velocity halfway, two seconds long.
+// A rest to rest move over unit distance at unit acceleration never reaches the velocity limit,
+// so the velocity profile is a triangle that peaks at unit velocity halfway and lasts two seconds.
 BOOST_AUTO_TEST_CASE(triangular_profile) {
     const compat::Trajectory trajectory(compat::Path(waypoints({{0.0}, {1.0}})), vec({10.0}), vec({1.0}));
     BOOST_REQUIRE(trajectory.isValid());
@@ -201,10 +202,9 @@ BOOST_AUTO_TEST_SUITE_END()
 
 #if defined(VIAM_TRAJEX_LEGACY_ENABLED)
 
-// The reference implementation and compat in one program, run on the same inputs through the
-// same interface. This is the side by side use the namespaced classes exist for. It makes no
-// claim that the two agree: compat is a different implementation and is free to behave
-// differently.
+// Runs the reference implementation and compat in one program, on the same inputs, through the
+// same interface, which is the side by side use the namespaced classes exist for. We don't check
+// that the two agree, since compat is a different implementation and may behave differently.
 BOOST_AUTO_TEST_SUITE(compat_alongside_legacy)
 
 namespace {
@@ -225,7 +225,7 @@ void run_both(const std::list<Eigen::VectorXd>& points,
 
 }  // namespace
 
-// The example program shipped with the reference implementation.
+// The waypoints from the example program that ships with the reference implementation.
 BOOST_AUTO_TEST_CASE(reference_example) {
     run_both(
         waypoints({{0.0, 0.0, 0.0}, {0.0, 0.2, 1.0}, {0.0, 3.0, 0.5}, {1.1, 2.0, 0.0}, {1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0}}),

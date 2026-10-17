@@ -27,11 +27,11 @@ configure:
 build: configure
 	cmake --build build --target all
 
-# Compiles each public header on its own. Not part of `all`, so it must be asked for.
+# Compiles each public header on its own, which `all` doesn't do.
 verify-headers: configure
 	cmake --build build --target all_verify_interface_header_sets
 
-# Builds a find_package consumer against an install of this build, and of a second build that vendors
+# Builds a find_package consumer against installs of this build and of a second build that fetches
 # xtl and xtensor.
 verify-package: build
 	.github/scripts/verify-package.sh build

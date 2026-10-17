@@ -1,1 +1,1 @@
-Not a colcon package: this project builds only against an installed trajex. Only this file's presence matters to colcon.
+This isn't a colcon package. It only builds against an installed trajex. colcon only checks that this file exists.
