@@ -1,0 +1,85 @@
+name: MoveIt Integration
+
+# The MoveIt 2 integration is for outside users, not something Viam runs, so it is not tested on every push. It
+# runs daily, whether or not anything was committed, since Lyrical's apt packages move on their own; on pull
+# requests that touch the integration itself; and on demand. Changes elsewhere that break it are caught by the
+# daily run.
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: ['main']
+    paths:
+      - 'src/viam/trajex/moveit/**'
+      - '.github/scripts/lyrical-moveit-setup.sh'
+      - '.github/workflows/moveit.yml'
+  schedule:
+    - cron: '0 10 * * *'  # 10 AM UTC daily
+
+jobs:
+  moveit:
+    name: MoveIt Integration (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    # The stock image, set up by .github/scripts/lyrical-moveit-setup.sh, as the development container is. The
+    # digest is the multi-arch index, so it serves both runners.
+    container: ros:lyrical-ros-base@sha256:d9078270abaeae65497036085f1654c75ec0a95e2aca5ecf7ddc0846a6cd69e1
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - arch: amd64
+          runner: ubuntu-latest
+        - arch: arm64
+          runner: ubuntu-4cpu-arm
+    defaults:
+      run:
+        shell: bash
+    env:
+      COLCON_LOG_PATH: build/ros/log
+    steps:
+      # Submodules for the reference implementation, which the facet builds. The image's git makes this a real
+      # clone.
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+      - name: Set Up
+        run: .github/scripts/lyrical-moveit-setup.sh
+
+      # Steps run through `docker exec`, which skips the image's entrypoint, so each sources ROS itself. -Werror is
+      # off: GCC 15 warns inside libstdc++ and xtensor.
+      - name: Configure
+        run: |
+          source /opt/ros/lyrical/setup.bash
+          cmake -S . -B build/ros-facet -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DVIAM_TRAJEX_ENABLE_MOVEIT=ON \
+            -DVIAM_TRAJEX_ENABLE_SERVICE=OFF -DVIAM_TRAJEX_BUILD_BENCHMARKS=OFF -DVIAM_TRAJEX_USE_WALL_WERROR=OFF
+      - name: Build
+        run: |
+          source /opt/ros/lyrical/setup.bash
+          cmake --build build/ros-facet
+      - name: Verify Headers
+        run: |
+          source /opt/ros/lyrical/setup.bash
+          cmake --build build/ros-facet --target all_verify_interface_header_sets
+      - name: Test
+        run: |
+          source /opt/ros/lyrical/setup.bash
+          CTEST_OUTPUT_ON_FAILURE=1 ctest --test-dir build/ros-facet --timeout 600
+      - name: Verify Package
+        run: |
+          source /opt/ros/lyrical/setup.bash
+          .github/scripts/verify-package.sh build/ros-facet compat capi moveit
+
+      # The ament package, which builds trajex again under its own settings.
+      - name: Colcon Build
+        run: |
+          source /opt/ros/lyrical/setup.bash
+          colcon build --base-paths src/viam/trajex/moveit --build-base build/ros/build \
+            --install-base build/ros/install --event-handlers console_direct+ \
+            --cmake-args -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+      - name: Colcon Test
+        run: |
+          source /opt/ros/lyrical/setup.bash
+          colcon test --base-paths src/viam/trajex/moveit --build-base build/ros/build \
+            --install-base build/ros/install --event-handlers console_direct+ --return-code-on-test-failure \
+            --ctest-args --timeout 600 --output-on-failure
+          colcon test-result --test-result-base build/ros/build --verbose
