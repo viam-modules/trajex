@@ -9,6 +9,7 @@
 #include <variant>
 #include <vector>
 
+#include <viam/trajex/totg/export.hpp>
 #include <viam/trajex/types/xt.hpp>
 
 namespace viam::trajex::kinematics {
@@ -21,7 +22,7 @@ namespace viam::trajex::kinematics {
 /// fixed joints consume none. A rotating joint's element is an angle in radians, and a translating
 /// joint's is a displacement in the length unit of the chain's translations.
 ///
-class chain {
+class VIAM_TRAJEX_TOTG_API chain {
    public:
     ///
     /// The rigid transform from a joint's parent frame to the joint's own frame.
@@ -287,7 +288,7 @@ class chain {
     using joint_ = std::variant<fixed_joint_, rotating_joint_, translating_joint_>;
 
     // Takes joints the builder has already validated and derived, and counts the moving ones.
-    explicit chain(std::vector<joint_> joints);
+    VIAM_TRAJEX_TOTG_HIDDEN explicit chain(std::vector<joint_> joints);
 
     // Defined here, not in the source file: the deduced overloads above instantiate in the
     // caller's translation unit, so a definition there would have to be exported.
@@ -301,7 +302,7 @@ class chain {
     // Evaluates the forward kinematics at joint positions q through joint last_joint, recording in
     // storage what the Jacobian and forward_kinematics need about each moving joint. Throws
     // std::invalid_argument if q has the wrong size.
-    void update_chain_state_(const xvector<>& q, std::size_t last_joint, workspace& storage) const;
+    VIAM_TRAJEX_TOTG_HIDDEN void update_chain_state_(const xvector<>& q, std::size_t last_joint, workspace& storage) const;
 
     std::vector<joint_> joints_;
     std::size_t actuated_count_ = 0;
@@ -383,7 +384,7 @@ class chain::workspace {
 /// origin of the last joint's frame, so a chain should end at whatever point the caller wants
 /// limited, with a fixed joint if need be.
 ///
-class chain::builder {
+class VIAM_TRAJEX_TOTG_API chain::builder {
    public:
     ///
     /// Appends a fixed joint.

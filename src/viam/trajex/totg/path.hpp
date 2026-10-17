@@ -9,6 +9,7 @@
 #include <variant>
 #include <vector>
 
+#include <viam/trajex/totg/export.hpp>
 #include <viam/trajex/totg/waypoint_accumulator.hpp>
 #include <viam/trajex/types/arc_length.hpp>
 #include <viam/trajex/types/xt.hpp>
@@ -44,7 +45,7 @@ namespace viam::trajex::totg {
 ///   }
 /// @endcode
 ///
-class path {
+class VIAM_TRAJEX_TOTG_API path {
    public:
     ///
     /// Geometric segment in configuration space.
@@ -238,7 +239,7 @@ class path {
            private:
             // Recovered from the segment's stored vectors. Only the value-returning accessors
             // need it; the filling ones take the size from the caller's span.
-            std::size_t dof_() const;
+            VIAM_TRAJEX_TOTG_HIDDEN std::size_t dof_() const;
 
             // Reference to the segment
             std::reference_wrapper<const class segment> seg_;
@@ -532,7 +533,7 @@ class path {
         arc_length start;
     };
 
-    path(std::vector<positioned_segment> segments, size_t dof, arc_length length);
+    VIAM_TRAJEX_TOTG_HIDDEN path(std::vector<positioned_segment> segments, size_t dof, arc_length length);
 
     std::vector<positioned_segment> segments_;
     size_t dof_{0};
@@ -809,7 +810,7 @@ class path::cursor {
     /// @param c Cursor to compare
     /// @return True if cursor is at sentinel position (past end or invalid)
     ///
-    friend bool operator==(const cursor& c, std::default_sentinel_t) noexcept;
+    friend VIAM_TRAJEX_TOTG_API bool operator==(const cursor& c, std::default_sentinel_t) noexcept;
 
     ///
     /// Compares end sentinel with cursor (reversed order).
@@ -817,7 +818,7 @@ class path::cursor {
     /// @param c Cursor to compare
     /// @return True if cursor is at sentinel position (past end or invalid)
     ///
-    friend bool operator==(std::default_sentinel_t, const cursor& c) noexcept;
+    friend VIAM_TRAJEX_TOTG_API bool operator==(std::default_sentinel_t, const cursor& c) noexcept;
 
    private:
     friend class path;
@@ -825,11 +826,11 @@ class path::cursor {
     // Construct cursor at given position
     // @param p Path to traverse (must outlive cursor)
     // @param s Initial position
-    explicit cursor(const class path* p, arc_length s);
+    VIAM_TRAJEX_TOTG_HIDDEN explicit cursor(const class path* p, arc_length s);
 
     // Update hint to match current position
     // Called after position changes to maintain O(1) amortized access
-    void update_hint_() noexcept;
+    VIAM_TRAJEX_TOTG_HIDDEN void update_hint_() noexcept;
 
     // Path being traversed
     const class path* path_;
@@ -1017,7 +1018,7 @@ class path::cursor::rich : private path::cursor {
     static constexpr std::size_t k_cached_bit_count_ = 3;
 
     // Called on any move: all three components belong to the position the cursor just left.
-    void invalidate_() noexcept;
+    VIAM_TRAJEX_TOTG_HIDDEN void invalidate_() noexcept;
 
     // A throwing fill leaves the bit clear, so a query that failed is not later mistaken for
     // one that succeeded.

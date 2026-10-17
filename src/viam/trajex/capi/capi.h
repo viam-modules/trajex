@@ -39,6 +39,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <viam/trajex/capi/export.h>
+
 // Portable spelling for the C99 `restrict` qualifier. In C99+ it is a keyword; in C++ it is not standard, and we
 // deliberately decline the non-standard `__restrict` extension here -- the C++ expansion is empty, so C++ callers honor
 // distinctness by documentation alone. The macro is wrapped in #pragma push_macro / pop_macro so an inclusion does not
@@ -96,14 +98,14 @@ typedef struct viam_trajex_tensor_map viam_trajex_tensor_map_t;
 ///
 /// @return Newly-allocated tensor map handle, or NULL on allocation failure.
 ///
-viam_trajex_tensor_map_t* viam_trajex_tensor_map_create(void);
+VIAM_TRAJEX_CAPI_API viam_trajex_tensor_map_t* viam_trajex_tensor_map_create(void);
 
 ///
 /// Destroy a tensor map and release all owned tensor storage.
 ///
 /// @param tensor_map Map to destroy. NULL is a no-op.
 ///
-void viam_trajex_tensor_map_destroy(viam_trajex_tensor_map_t* tensor_map);
+VIAM_TRAJEX_CAPI_API void viam_trajex_tensor_map_destroy(viam_trajex_tensor_map_t* tensor_map);
 
 ///
 /// Insert a tensor into the map, copying the caller's buffer.
@@ -126,7 +128,7 @@ void viam_trajex_tensor_map_destroy(viam_trajex_tensor_map_t* tensor_map);
 /// @return 0 on success. -1 on bad arguments or allocation failure (no
 ///         diagnostic).
 ///
-int viam_trajex_tensor_map_insert(
+VIAM_TRAJEX_CAPI_API int viam_trajex_tensor_map_insert(
     viam_trajex_tensor_map_t* tensor_map, const char* key, viam_trajex_dtype_t dtype, size_t rank, const size_t* dims, const void* data);
 
 ///
@@ -148,7 +150,7 @@ int viam_trajex_tensor_map_insert(
 ///
 /// @return 0 on success. -1 on bad arguments or allocation failure (no diagnostic).
 ///
-int viam_trajex_tensor_map_insert_f64(
+VIAM_TRAJEX_CAPI_API int viam_trajex_tensor_map_insert_f64(
     viam_trajex_tensor_map_t* tensor_map, const char* key, size_t rank, const size_t* dims, const double* data);
 
 ///
@@ -171,7 +173,7 @@ int viam_trajex_tensor_map_insert_f64(
 /// @return 0 on success. -1 on bad arguments or allocation failure (no
 ///         diagnostic).
 ///
-int viam_trajex_tensor_map_insert_i64(
+VIAM_TRAJEX_CAPI_API int viam_trajex_tensor_map_insert_i64(
     viam_trajex_tensor_map_t* tensor_map, const char* key, size_t rank, const size_t* dims, const int64_t* data);
 
 ///
@@ -189,7 +191,7 @@ int viam_trajex_tensor_map_insert_i64(
 ///
 /// @return 0 on success. -1 on bad arguments or allocation failure (no diagnostic).
 ///
-int viam_trajex_tensor_map_insert_scalar_f64(viam_trajex_tensor_map_t* tensor_map, const char* key, double value);
+VIAM_TRAJEX_CAPI_API int viam_trajex_tensor_map_insert_scalar_f64(viam_trajex_tensor_map_t* tensor_map, const char* key, double value);
 
 ///
 /// Insert a signed 64-bit integer scalar (shape `[1]`).
@@ -206,7 +208,7 @@ int viam_trajex_tensor_map_insert_scalar_f64(viam_trajex_tensor_map_t* tensor_ma
 ///
 /// @return 0 on success. -1 on bad arguments or allocation failure (no diagnostic).
 ///
-int viam_trajex_tensor_map_insert_scalar_i64(viam_trajex_tensor_map_t* tensor_map, const char* key, int64_t value);
+VIAM_TRAJEX_CAPI_API int viam_trajex_tensor_map_insert_scalar_i64(viam_trajex_tensor_map_t* tensor_map, const char* key, int64_t value);
 
 ///
 /// View a tensor by key, returning pointers into the map's owned storage.
@@ -233,12 +235,12 @@ int viam_trajex_tensor_map_insert_scalar_i64(viam_trajex_tensor_map_t* tensor_ma
 ///
 /// @return 0 on success. 1 if no tensor with the given key is present.  -1 on internal error or bad arguments.
 ///
-int viam_trajex_tensor_map_view(const viam_trajex_tensor_map_t* tensor_map,
-                                const char* key,
-                                viam_trajex_dtype_t* dtype_out,
-                                size_t* rank_out,
-                                const size_t** dims_out,
-                                const void** data_out);
+VIAM_TRAJEX_CAPI_API int viam_trajex_tensor_map_view(const viam_trajex_tensor_map_t* tensor_map,
+                                                     const char* key,
+                                                     viam_trajex_dtype_t* dtype_out,
+                                                     size_t* rank_out,
+                                                     const size_t** dims_out,
+                                                     const void** data_out);
 
 /// @}
 
@@ -252,7 +254,7 @@ int viam_trajex_tensor_map_view(const viam_trajex_tensor_map_t* tensor_map,
 ///
 /// @param string String to release. NULL is a no-op.
 ///
-void viam_trajex_string_destroy(const char* string);
+VIAM_TRAJEX_CAPI_API void viam_trajex_string_destroy(const char* string);
 
 /// @}
 
@@ -294,14 +296,14 @@ typedef struct viam_trajex_kinematics_chain viam_trajex_kinematics_chain_t;
 ///
 /// @return Newly-allocated builder handle, or NULL on allocation failure.
 ///
-viam_trajex_kinematics_chain_builder_t* viam_trajex_kinematics_chain_builder_create(void);
+VIAM_TRAJEX_CAPI_API viam_trajex_kinematics_chain_builder_t* viam_trajex_kinematics_chain_builder_create(void);
 
 ///
 /// Destroy a builder, whether or not it has been built.
 ///
 /// @param builder Builder to destroy. NULL is a no-op.
 ///
-void viam_trajex_kinematics_chain_builder_destroy(viam_trajex_kinematics_chain_builder_t* builder);
+VIAM_TRAJEX_CAPI_API void viam_trajex_kinematics_chain_builder_destroy(viam_trajex_kinematics_chain_builder_t* builder);
 
 ///
 /// Append a fixed joint.
@@ -316,9 +318,9 @@ void viam_trajex_kinematics_chain_builder_destroy(viam_trajex_kinematics_chain_b
 ///         diagnostic). Invalid values are reported by `viam_trajex_kinematics_chain_builder_build`, which knows the
 ///         joint's index.
 ///
-int viam_trajex_kinematics_chain_builder_extend_fixed(viam_trajex_kinematics_chain_builder_t* builder,
-                                                      const double xyz[3],
-                                                      const double wxyz[4]);
+VIAM_TRAJEX_CAPI_API int viam_trajex_kinematics_chain_builder_extend_fixed(viam_trajex_kinematics_chain_builder_t* builder,
+                                                                           const double xyz[3],
+                                                                           const double wxyz[4]);
 
 ///
 /// Append a revolute or continuous joint.
@@ -333,10 +335,10 @@ int viam_trajex_kinematics_chain_builder_extend_fixed(viam_trajex_kinematics_cha
 ///
 /// @return As for `viam_trajex_kinematics_chain_builder_extend_fixed`.
 ///
-int viam_trajex_kinematics_chain_builder_extend_rotational(viam_trajex_kinematics_chain_builder_t* builder,
-                                                           const double xyz[3],
-                                                           const double wxyz[4],
-                                                           const double axis[3]);
+VIAM_TRAJEX_CAPI_API int viam_trajex_kinematics_chain_builder_extend_rotational(viam_trajex_kinematics_chain_builder_t* builder,
+                                                                                const double xyz[3],
+                                                                                const double wxyz[4],
+                                                                                const double axis[3]);
 
 ///
 /// Append a prismatic joint.
@@ -351,10 +353,10 @@ int viam_trajex_kinematics_chain_builder_extend_rotational(viam_trajex_kinematic
 ///
 /// @return As for `viam_trajex_kinematics_chain_builder_extend_fixed`.
 ///
-int viam_trajex_kinematics_chain_builder_extend_translational(viam_trajex_kinematics_chain_builder_t* builder,
-                                                              const double xyz[3],
-                                                              const double wxyz[4],
-                                                              const double axis[3]);
+VIAM_TRAJEX_CAPI_API int viam_trajex_kinematics_chain_builder_extend_translational(viam_trajex_kinematics_chain_builder_t* builder,
+                                                                                   const double xyz[3],
+                                                                                   const double wxyz[4],
+                                                                                   const double axis[3]);
 
 ///
 /// Validate the appended joints and build the chain.
@@ -372,15 +374,15 @@ int viam_trajex_kinematics_chain_builder_extend_translational(viam_trajex_kinema
 ///         a joint has a non-finite translation, a zero or non-finite quaternion, or a zero or non-finite axis, or on
 ///         allocation failure.
 ///
-viam_trajex_kinematics_chain_t* viam_trajex_kinematics_chain_builder_build(viam_trajex_kinematics_chain_builder_t* builder,
-                                                                           const char** error_out);
+VIAM_TRAJEX_CAPI_API viam_trajex_kinematics_chain_t* viam_trajex_kinematics_chain_builder_build(
+    viam_trajex_kinematics_chain_builder_t* builder, const char** error_out);
 
 ///
 /// Destroy a chain.
 ///
 /// @param chain Chain to destroy. NULL is a no-op.
 ///
-void viam_trajex_kinematics_chain_destroy(viam_trajex_kinematics_chain_t* chain);
+VIAM_TRAJEX_CAPI_API void viam_trajex_kinematics_chain_destroy(viam_trajex_kinematics_chain_t* chain);
 
 ///
 /// Compute the position of the chain's last frame at joint positions q.
@@ -401,7 +403,7 @@ void viam_trajex_kinematics_chain_destroy(viam_trajex_kinematics_chain_t* chain)
 ///
 /// @return 0 on success, -1 on a NULL argument, a wrong `n_q`, or a caught exception.
 ///
-int viam_trajex_kinematics_chain_end_position(
+VIAM_TRAJEX_CAPI_API int viam_trajex_kinematics_chain_end_position(
     const viam_trajex_kinematics_chain_t* chain, const double* q, size_t n_q, double out[3], const char** error_out);
 
 /// @}
@@ -425,18 +427,18 @@ int viam_trajex_kinematics_chain_end_position(
 /// @{
 ///
 
-extern const char viam_trajex_totg_key_acceleration_limits_rads_per_sec2[];
-extern const char viam_trajex_totg_key_accelerations_rads_per_sec2[];
-extern const char viam_trajex_totg_key_configurations_rads[];
-extern const char viam_trajex_totg_key_path_colinearization_ratio[];
-extern const char viam_trajex_totg_key_path_tolerance_delta_rads[];
-extern const char viam_trajex_totg_key_sample_times_sec[];
-extern const char viam_trajex_totg_key_tcp_max_linear_speed[];
-extern const char viam_trajex_totg_key_trajectory_sampling_freq_hz[];
-extern const char viam_trajex_totg_key_velocities_rads_per_sec[];
-extern const char viam_trajex_totg_key_velocity_limits_rads_per_sec[];
-extern const char viam_trajex_totg_key_waypoint_deduplication_tolerance_rads[];
-extern const char viam_trajex_totg_key_waypoints_rads[];
+VIAM_TRAJEX_CAPI_API extern const char viam_trajex_totg_key_acceleration_limits_rads_per_sec2[];
+VIAM_TRAJEX_CAPI_API extern const char viam_trajex_totg_key_accelerations_rads_per_sec2[];
+VIAM_TRAJEX_CAPI_API extern const char viam_trajex_totg_key_configurations_rads[];
+VIAM_TRAJEX_CAPI_API extern const char viam_trajex_totg_key_path_colinearization_ratio[];
+VIAM_TRAJEX_CAPI_API extern const char viam_trajex_totg_key_path_tolerance_delta_rads[];
+VIAM_TRAJEX_CAPI_API extern const char viam_trajex_totg_key_sample_times_sec[];
+VIAM_TRAJEX_CAPI_API extern const char viam_trajex_totg_key_tcp_max_linear_speed[];
+VIAM_TRAJEX_CAPI_API extern const char viam_trajex_totg_key_trajectory_sampling_freq_hz[];
+VIAM_TRAJEX_CAPI_API extern const char viam_trajex_totg_key_velocities_rads_per_sec[];
+VIAM_TRAJEX_CAPI_API extern const char viam_trajex_totg_key_velocity_limits_rads_per_sec[];
+VIAM_TRAJEX_CAPI_API extern const char viam_trajex_totg_key_waypoint_deduplication_tolerance_rads[];
+VIAM_TRAJEX_CAPI_API extern const char viam_trajex_totg_key_waypoints_rads[];
 
 /// @}
 
@@ -507,10 +509,10 @@ extern const char viam_trajex_totg_key_waypoints_rads[];
 ///
 /// @return 0 on success, -1 on failure.
 ///
-int viam_trajex_totg_generate(const viam_trajex_kinematics_chain_t* chain,
-                              const viam_trajex_tensor_map_t* VIAM_TRAJEX_RESTRICT inputs,
-                              viam_trajex_tensor_map_t* VIAM_TRAJEX_RESTRICT outputs,
-                              const char** error_out);
+VIAM_TRAJEX_CAPI_API int viam_trajex_totg_generate(const viam_trajex_kinematics_chain_t* chain,
+                                                   const viam_trajex_tensor_map_t* VIAM_TRAJEX_RESTRICT inputs,
+                                                   viam_trajex_tensor_map_t* VIAM_TRAJEX_RESTRICT outputs,
+                                                   const char** error_out);
 
 /// @}
 
@@ -581,16 +583,15 @@ typedef struct viam_trajex_totg_streaming_session viam_trajex_totg_streaming_ses
 /// @return Newly-allocated session handle, or NULL on bad arguments, allocation failure,
 ///         or a caught exception during construction.
 ///
-viam_trajex_totg_streaming_session_t* viam_trajex_totg_streaming_session_create(const viam_trajex_kinematics_chain_t* chain,
-                                                                                const viam_trajex_tensor_map_t* options,
-                                                                                const char** error_out);
+VIAM_TRAJEX_CAPI_API viam_trajex_totg_streaming_session_t* viam_trajex_totg_streaming_session_create(
+    const viam_trajex_kinematics_chain_t* chain, const viam_trajex_tensor_map_t* options, const char** error_out);
 
 ///
 /// Destroy a streaming session and release all owned resources.
 ///
 /// @param session Session to destroy. NULL is a no-op.
 ///
-void viam_trajex_totg_streaming_session_destroy(viam_trajex_totg_streaming_session_t* session);
+VIAM_TRAJEX_CAPI_API void viam_trajex_totg_streaming_session_destroy(viam_trajex_totg_streaming_session_t* session);
 
 ///
 /// How `viam_trajex_totg_streaming_session_extend` handled a batch.
@@ -679,12 +680,12 @@ typedef enum {                                                            // NOL
 ///         DOF mismatch, a batch that cannot be built into the active trajectory or the
 ///         staged motion, etc.). The session is unchanged by a call that fails.
 ///
-int viam_trajex_totg_streaming_session_extend(viam_trajex_totg_streaming_session_t* session,
-                                              const viam_trajex_tensor_map_t* batch,
-                                              viam_trajex_totg_streaming_session_extend_kind_t* kind_out,
-                                              double* branch_slack_sec_out,
-                                              double* delta_total_duration_sec_out,
-                                              const char** error_out);
+VIAM_TRAJEX_CAPI_API int viam_trajex_totg_streaming_session_extend(viam_trajex_totg_streaming_session_t* session,
+                                                                   const viam_trajex_tensor_map_t* batch,
+                                                                   viam_trajex_totg_streaming_session_extend_kind_t* kind_out,
+                                                                   double* branch_slack_sec_out,
+                                                                   double* delta_total_duration_sec_out,
+                                                                   const char** error_out);
 
 ///
 /// Stop the session pivoting, so that every later `extend` stages its batch and reports
@@ -700,7 +701,7 @@ int viam_trajex_totg_streaming_session_extend(viam_trajex_totg_streaming_session
 ///
 /// @param session Session handle. Must not be NULL.
 ///
-void viam_trajex_totg_streaming_session_start_staging(viam_trajex_totg_streaming_session_t* session);
+VIAM_TRAJEX_CAPI_API void viam_trajex_totg_streaming_session_start_staging(viam_trajex_totg_streaming_session_t* session);
 
 ///
 /// Pull up to `n` samples from the session, writing them into `outputs`. Any prior
@@ -734,10 +735,10 @@ void viam_trajex_totg_streaming_session_start_staging(viam_trajex_totg_streaming
 ///
 /// @return 0 on success, -1 on bad arguments or caught exception.
 ///
-int viam_trajex_totg_streaming_session_sample_next(viam_trajex_totg_streaming_session_t* session,
-                                                   size_t n,
-                                                   viam_trajex_tensor_map_t* outputs,
-                                                   const char** error_out);
+VIAM_TRAJEX_CAPI_API int viam_trajex_totg_streaming_session_sample_next(viam_trajex_totg_streaming_session_t* session,
+                                                                        size_t n,
+                                                                        viam_trajex_tensor_map_t* outputs,
+                                                                        const char** error_out);
 
 ///
 /// Pull samples until the most recent sample's time is at least
@@ -755,10 +756,10 @@ int viam_trajex_totg_streaming_session_sample_next(viam_trajex_totg_streaming_se
 ///
 /// @return 0 on success, -1 on bad arguments or caught exception.
 ///
-int viam_trajex_totg_streaming_session_sample_at_least(viam_trajex_totg_streaming_session_t* session,
-                                                       double horizon_sec,
-                                                       viam_trajex_tensor_map_t* outputs,
-                                                       const char** error_out);
+VIAM_TRAJEX_CAPI_API int viam_trajex_totg_streaming_session_sample_at_least(viam_trajex_totg_streaming_session_t* session,
+                                                                            double horizon_sec,
+                                                                            viam_trajex_tensor_map_t* outputs,
+                                                                            const char** error_out);
 
 ///
 /// @name Session status accessors
@@ -775,19 +776,22 @@ int viam_trajex_totg_streaming_session_sample_at_least(viam_trajex_totg_streamin
 /// Global time of the most recently emitted sample, or zero if no samples have been
 /// emitted yet.
 ///
-void viam_trajex_totg_streaming_session_current_time_sec(const viam_trajex_totg_streaming_session_t* session, double* out);
+VIAM_TRAJEX_CAPI_API void viam_trajex_totg_streaming_session_current_time_sec(const viam_trajex_totg_streaming_session_t* session,
+                                                                              double* out);
 
 ///
 /// Cumulative count of trajectories the session has installed as active (first build +
 /// each pivot + each rebase). Zero for a fresh session before the first `extend`.
 ///
-void viam_trajex_totg_streaming_session_generation_count(const viam_trajex_totg_streaming_session_t* session, int64_t* out);
+VIAM_TRAJEX_CAPI_API void viam_trajex_totg_streaming_session_generation_count(const viam_trajex_totg_streaming_session_t* session,
+                                                                              int64_t* out);
 
 ///
 /// Nonzero iff the session has an active trajectory (any successful `extend` has
 /// occurred). Zero iff fresh.
 ///
-void viam_trajex_totg_streaming_session_has_active_trajectory(const viam_trajex_totg_streaming_session_t* session, int* out);
+VIAM_TRAJEX_CAPI_API void viam_trajex_totg_streaming_session_has_active_trajectory(const viam_trajex_totg_streaming_session_t* session,
+                                                                                   int* out);
 
 ///
 /// Duration of the active trajectory in seconds. Returns zero if no active trajectory.
@@ -798,7 +802,8 @@ void viam_trajex_totg_streaming_session_has_active_trajectory(const viam_trajex_
 /// two are then expressed in different frames. Callers wanting the unsampled remainder
 /// should use `viam_trajex_totg_streaming_session_remaining_active_duration_sec`.
 ///
-void viam_trajex_totg_streaming_session_active_duration_sec(const viam_trajex_totg_streaming_session_t* session, double* out);
+VIAM_TRAJEX_CAPI_API void viam_trajex_totg_streaming_session_active_duration_sec(const viam_trajex_totg_streaming_session_t* session,
+                                                                                 double* out);
 
 ///
 /// Unsampled time left in the active trajectory, in seconds, or zero if there is none.
@@ -809,7 +814,8 @@ void viam_trajex_totg_streaming_session_active_duration_sec(const viam_trajex_to
 /// number needs to know that. `viam_trajex_totg_streaming_session_remaining_total_duration_sec`
 /// counts the staged motion too.
 ///
-void viam_trajex_totg_streaming_session_remaining_active_duration_sec(const viam_trajex_totg_streaming_session_t* session, double* out);
+VIAM_TRAJEX_CAPI_API void viam_trajex_totg_streaming_session_remaining_active_duration_sec(
+    const viam_trajex_totg_streaming_session_t* session, double* out);
 
 ///
 /// Motion the session has yet to sample, in seconds, staged motion included, or zero if there
@@ -818,7 +824,8 @@ void viam_trajex_totg_streaming_session_remaining_active_duration_sec(const viam
 /// This is the end of the staged motion in global time, or of the active trajectory if
 /// nothing is staged, less the time of the most recently emitted sample.
 ///
-void viam_trajex_totg_streaming_session_remaining_total_duration_sec(const viam_trajex_totg_streaming_session_t* session, double* out);
+VIAM_TRAJEX_CAPI_API void viam_trajex_totg_streaming_session_remaining_total_duration_sec(
+    const viam_trajex_totg_streaming_session_t* session, double* out);
 
 /// @}
 

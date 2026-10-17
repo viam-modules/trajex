@@ -2,6 +2,7 @@
 
 #include <Eigen/Core>
 
+#include <viam/trajex/totg/compat/export.hpp>
 #include <viam/trajex/totg/compat/path.hpp>
 
 namespace viam {
@@ -22,7 +23,7 @@ namespace compat {
 ///   and reads out of bounds before the start.
 /// - `outputPhasePlaneTrajectory` does nothing.
 ///
-class Trajectory {
+class VIAM_TRAJEX_TOTG_COMPAT_API Trajectory {
    public:
     ///
     /// Generates a time-optimal trajectory along a path.
@@ -95,7 +96,7 @@ class Trajectory {
 #endif
 
    private:
-    struct impl;
+    struct VIAM_TRAJEX_TOTG_COMPAT_HIDDEN impl;
     impl* impl_;
 };
 

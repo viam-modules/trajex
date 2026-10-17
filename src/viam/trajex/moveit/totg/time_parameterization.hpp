@@ -8,6 +8,7 @@
 #include <moveit/trajectory_processing/time_parameterization.hpp>
 #include <moveit_msgs/msg/joint_limits.hpp>
 
+#include <viam/trajex/moveit/totg/export.hpp>
 #include <viam/trajex/totg/path.hpp>
 #include <viam/trajex/totg/trajectory.hpp>
 #include <viam/trajex/types/hertz.hpp>
@@ -34,7 +35,7 @@ namespace viam::trajex::moveit::totg {
 /// Only the active joints of the trajectory's group are timed. Their variables are the degrees of freedom handed
 /// to trajex, in the order of the group's active joints.
 ///
-class time_parameterization final : public trajectory_processing::TimeParameterization {
+class VIAM_TRAJEX_MOVEIT_TOTG_API time_parameterization final : public trajectory_processing::TimeParameterization {
    public:
     ///
     /// Default sampling frequency, MoveIt's default of one waypoint every 0.1 s.
@@ -105,11 +106,11 @@ class time_parameterization final : public trajectory_processing::TimeParameteri
                            double max_acceleration_scaling_factor = 1.0) const override;
 
    private:
-    bool compute_(robot_trajectory::RobotTrajectory& trajectory,
-                  const std::unordered_map<std::string, double>& velocity_limits,
-                  const std::unordered_map<std::string, double>& acceleration_limits,
-                  double max_velocity_scaling_factor,
-                  double max_acceleration_scaling_factor) const;
+    VIAM_TRAJEX_MOVEIT_TOTG_HIDDEN bool compute_(robot_trajectory::RobotTrajectory& trajectory,
+                                                 const std::unordered_map<std::string, double>& velocity_limits,
+                                                 const std::unordered_map<std::string, double>& acceleration_limits,
+                                                 double max_velocity_scaling_factor,
+                                                 double max_acceleration_scaling_factor) const;
 
     trajex::totg::path::options path_options_;
     double deduplication_tolerance_;

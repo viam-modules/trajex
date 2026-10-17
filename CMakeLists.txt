@@ -150,6 +150,41 @@ function(apply_wall_werror target_name)
   endif()
 endfunction()
 
+# Hides every symbol of a library that its headers do not mark with VIAM_TRAJEX_<NAME>_API, and
+# generates the export header defining that macro and VIAM_TRAJEX_<NAME>_HIDDEN, at `header` under
+# a build-tree base directory of the library's public header set, so it installs with them. On ELF
+# and Mach-O one macro could serve every library, but Windows' dllexport and dllimport need one per
+# library, so each has its own.
+#
+# The macros only take effect in a shared library. For a static library GenerateExportHeader
+# defines them empty, so with the presets still applied every symbol in the archive is hidden,
+# the API included. That is deliberate: an archive linked into someone's shared library stays
+# private to it rather than exporting trajex from it, and linking an executable is unaffected,
+# since hidden only limits what is exported dynamically.
+include(GenerateExportHeader)
+function(viam_trajex_hide_symbols target name header)
+  set_target_properties(${target} PROPERTIES
+    C_VISIBILITY_PRESET hidden
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+    DEFINE_SYMBOL VIAM_TRAJEX_${name}_EXPORTS
+  )
+  set(base_dir ${CMAKE_CURRENT_BINARY_DIR}/generated/include)
+  generate_export_header(${target}
+    BASE_NAME VIAM_TRAJEX_${name}
+    EXPORT_MACRO_NAME VIAM_TRAJEX_${name}_API
+    NO_EXPORT_MACRO_NAME VIAM_TRAJEX_${name}_HIDDEN
+    INCLUDE_GUARD_NAME VIAM_TRAJEX_${name}_EXPORT_H
+    EXPORT_FILE_NAME ${base_dir}/${header}
+  )
+  target_sources(${target}
+    PUBLIC
+    FILE_SET HEADERS
+    BASE_DIRS ${base_dir}
+    FILES ${base_dir}/${header}
+  )
+endfunction()
+
 if (NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE "RelWithDebInfo")
 endif()
@@ -359,7 +394,7 @@ target_sources(viam-trajex-totg
     BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/src
     FILES
     src/viam/trajex/trajex.hpp
-    src/viam/trajex/jacobian/jacobian.hpp
+    src/viam/trajex/kinematics/chain.hpp
     src/viam/trajex/totg/observers.hpp
     src/viam/trajex/totg/path.hpp
     src/viam/trajex/totg/streaming/session.hpp
@@ -384,6 +419,7 @@ target_link_libraries(viam-trajex-totg
     xtl
 )
 
+viam_trajex_hide_symbols(viam-trajex-totg TOTG viam/trajex/totg/export.hpp)
 apply_wall_werror(viam-trajex-totg)
 
 add_library(viam::trajex::totg ALIAS viam-trajex-totg)
@@ -425,6 +461,7 @@ if (VIAM_TRAJEX_TOTG_ENABLE_LEGACY_COMPAT)
     viam::trajex::totg
   )
 
+  viam_trajex_hide_symbols(viam-trajex-totg-compat TOTG_COMPAT viam/trajex/totg/compat/export.hpp)
   apply_wall_werror(viam-trajex-totg-compat)
 
   add_library(viam-trajex-totg-compat-shim INTERFACE)
@@ -491,6 +528,7 @@ if (VIAM_TRAJEX_ENABLE_MOVEIT)
     moveit_core::moveit_utils
   )
 
+  viam_trajex_hide_symbols(viam-trajex-moveit-totg MOVEIT_TOTG viam/trajex/moveit/totg/export.hpp)
   apply_wall_werror(viam-trajex-moveit-totg)
 else()
   add_library(viam-trajex-moveit-totg INTERFACE)
@@ -629,6 +667,7 @@ if (VIAM_TRAJEX_ENABLE_CAPI)
     PRIVATE
       viam::trajex::totg
   )
+  viam_trajex_hide_symbols(viam-trajex-capi CAPI viam/trajex/capi/export.h)
   apply_wall_werror(viam-trajex-capi)
 else()
   add_library(viam-trajex-capi INTERFACE)

@@ -17,6 +17,7 @@
 #include <xtensor/xview.hpp>
 #endif
 
+#include <viam/trajex/totg/export.hpp>
 #include <viam/trajex/types/xt.hpp>
 
 namespace viam::trajex::totg {
@@ -62,7 +63,7 @@ concept waypoints_like = xrank_same_as_or_dynamic<T, xmatrix<>> && rows_adaptabl
 ///   waypoints.add_waypoints(more_waypoints);
 /// @endcode
 ///
-class waypoint_accumulator {
+class VIAM_TRAJEX_TOTG_API waypoint_accumulator {
    public:
     ///
     /// View type for individual waypoints.

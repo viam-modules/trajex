@@ -4,6 +4,7 @@
 #include <memory>
 #include <vector>
 
+#include <viam/trajex/totg/export.hpp>
 #include <viam/trajex/totg/trajectory.hpp>
 
 namespace viam::trajex::totg {
@@ -22,7 +23,7 @@ namespace viam::trajex::totg {
 /// options.observer = &composite;
 /// @endcode
 ///
-class composite_integration_observer final : public trajectory::integration_observer {
+class VIAM_TRAJEX_TOTG_API composite_integration_observer final : public trajectory::integration_observer {
    public:
     ///
     /// Constructs an empty composite observer.
@@ -90,6 +91,8 @@ class composite_integration_observer final : public trajectory::integration_obse
     void on_failed(std::exception_ptr error, std::shared_ptr<const trajectory> invalid) noexcept override;
 
    private:
+    // Not hidden: `add_observer` is a template, instantiated in the caller's translation unit,
+    // and calls this from there.
     void add_observer_(std::shared_ptr<integration_observer> observer);
 
     std::vector<std::shared_ptr<integration_observer>> observers_;
@@ -111,7 +114,7 @@ class composite_integration_observer final : public trajectory::integration_obse
 /// }
 /// @endcode
 ///
-class trajectory_integration_event_collector final : public trajectory::integration_event_observer {
+class VIAM_TRAJEX_TOTG_API trajectory_integration_event_collector final : public trajectory::integration_event_observer {
    public:
     ///
     /// Constructs an empty event collector.

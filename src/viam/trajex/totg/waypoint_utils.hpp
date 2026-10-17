@@ -2,6 +2,7 @@
 
 #include <vector>
 
+#include <viam/trajex/totg/export.hpp>
 #include <viam/trajex/totg/waypoint_accumulator.hpp>
 
 namespace viam::trajex::totg {
@@ -17,7 +18,7 @@ namespace viam::trajex::totg {
 /// @param tolerance Maximum L-infinity distance for waypoints to be considered duplicates
 /// @return New waypoint_accumulator with duplicates removed
 ///
-waypoint_accumulator deduplicate_waypoints(const waypoint_accumulator& waypoints, double tolerance);
+VIAM_TRAJEX_TOTG_API waypoint_accumulator deduplicate_waypoints(const waypoint_accumulator& waypoints, double tolerance);
 
 ///
 /// Segments waypoints at direction reversals.
@@ -34,6 +35,6 @@ waypoint_accumulator deduplicate_waypoints(const waypoint_accumulator& waypoints
 /// @param threshold Tolerance for detecting reversals: |dot + 1.0| < threshold (default: 1e-3)
 /// @return Vector of waypoint_accumulators, one per segment
 ///
-std::vector<waypoint_accumulator> segment_at_reversals(waypoint_accumulator waypoints, double threshold = 1e-3);
+VIAM_TRAJEX_TOTG_API std::vector<waypoint_accumulator> segment_at_reversals(waypoint_accumulator waypoints, double threshold = 1e-3);
 
 }  // namespace viam::trajex::totg

@@ -9,6 +9,8 @@
 
 #include <Eigen/Core>
 
+#include <viam/trajex/totg/compat/export.hpp>
+
 // There is no feature-test macro for std::exception_ptr, which predates them. MSVC reports a
 // C++98 __cplusplus unless built with /Zc:__cplusplus, so it is checked separately.
 #if __cplusplus >= 201103L || (defined(_MSVC_LANG) && _MSVC_LANG >= 201103L)
@@ -40,7 +42,7 @@ class Trajectory;
 /// - Copy assignment is a deep copy. The original's generated assignment shares segments
 ///   between the two paths and deletes them twice.
 ///
-class Path {
+class VIAM_TRAJEX_TOTG_COMPAT_API Path {
    public:
     ///
     /// Builds a path through waypoints, blending corners with circular arcs.
@@ -128,7 +130,7 @@ class Path {
    private:
     friend class Trajectory;
 
-    struct impl;
+    struct VIAM_TRAJEX_TOTG_COMPAT_HIDDEN impl;
     impl* impl_;
 };
 

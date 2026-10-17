@@ -91,9 +91,9 @@ cmake --build build/go --target all
 #
 # Exactly what cgo links and includes, one component each, since a component install takes one
 # component and CMake follows no dependencies between them: the capi and totg archives (runtime,
-# because of VIAM_TRAJEX_INSTALL_ARCHIVES_AS_RUNTIME) and the capi header (capi dev, which with that
-# option holds only the header). The C++ headers, and the FetchContent'd xtl and xtensor, are in
-# other components and excluded, so they don't bloat the shipped module.
+# because of VIAM_TRAJEX_INSTALL_ARCHIVES_AS_RUNTIME) and the capi headers (capi dev, which with that
+# option holds only capi.h and the export.h it includes). The C++ headers, and the FetchContent'd xtl
+# and xtensor, are in other components and excluded, so they don't bloat the shipped module.
 for component in trajex-capi-runtime trajex-totg-runtime trajex-capi-dev; do
     DESTDIR="$PWD/go/artifacts" cmake --install build/go --prefix / --component "$component"
 done
