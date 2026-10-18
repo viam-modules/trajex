@@ -115,7 +115,7 @@ class pipeline_test : public testing::Test {
     planning_pipeline::PlanningPipelinePtr pipeline_;
 };
 
-TEST_F(pipeline_test, rich_adapter_times_an_ompl_plan_with_parameters_from_yaml) {
+TEST_F(pipeline_test, trajex_adapter_times_an_ompl_plan_with_parameters_from_yaml) {
     const auto response = plan("ompl_trajex");
     expect_timed_by_trajex(response, 1.0 / 37.0);
     EXPECT_EQ(node_->get_parameter("ompl_trajex.trajex.totg.sampling.frequency").as_double(), 37.0);

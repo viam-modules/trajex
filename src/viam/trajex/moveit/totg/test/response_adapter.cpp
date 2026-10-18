@@ -27,7 +27,7 @@ namespace mc = ::moveit::core;
 using adapter = planning_interface::PlanningResponseAdapter;
 using error_codes = moveit_msgs::msg::MoveItErrorCodes;
 
-constexpr auto k_rich = "viam_trajex_moveit/AddTotgTimeParameterization";
+constexpr auto k_trajex = "viam_trajex_moveit/AddTotgTimeParameterization";
 constexpr auto k_compat = "viam_trajex_moveit/AddTotgTimeParameterizationCompat";
 constexpr auto k_moveit = "default_planning_response_adapters/AddTimeOptimalParameterization";
 constexpr auto k_namespace = "pipeline";
@@ -107,13 +107,13 @@ class response_adapter_test : public testing::Test {
 
 TEST_F(response_adapter_test, both_adapters_are_discoverable) {
     const auto classes = loader_.getDeclaredClasses();
-    EXPECT_NE(std::find(classes.begin(), classes.end(), k_rich), classes.end());
+    EXPECT_NE(std::find(classes.begin(), classes.end(), k_trajex), classes.end());
     EXPECT_NE(std::find(classes.begin(), classes.end(), k_compat), classes.end());
 }
 
-TEST_F(response_adapter_test, rich_adapter_declares_trajex_defaults_and_times_a_plan) {
-    const auto n = node("rich_defaults");
-    const auto instance = load(k_rich, n);
+TEST_F(response_adapter_test, trajex_adapter_declares_trajex_defaults_and_times_a_plan) {
+    const auto n = node("trajex_defaults");
+    const auto instance = load(k_trajex, n);
     EXPECT_EQ(instance->getDescription(), "AddTotgTimeParameterization");
 
     const viam::trajex::totg::path::options defaults;
@@ -151,25 +151,25 @@ TEST_F(response_adapter_test, overrides_are_honored) {
     ASSERT_EQ(compat_response.error_code.val, error_codes::SUCCESS);
     EXPECT_LE(max_spacing(compat_response), 0.02 + 1e-9);
 
-    const auto rich_node = node("rich_overrides", {rclcpp::Parameter("pipeline.trajex.totg.sampling.frequency", 100)});
-    const auto rich = load(k_rich, rich_node);
-    const auto rich_response = run(*rich);
-    ASSERT_EQ(rich_response.error_code.val, error_codes::SUCCESS);
-    EXPECT_LE(max_spacing(rich_response), 0.01 + 1e-9);
+    const auto trajex_node = node("trajex_overrides", {rclcpp::Parameter("pipeline.trajex.totg.sampling.frequency", 100)});
+    const auto trajex_adapter = load(k_trajex, trajex_node);
+    const auto trajex_response = run(*trajex_adapter);
+    ASSERT_EQ(trajex_response.error_code.val, error_codes::SUCCESS);
+    EXPECT_LE(max_spacing(trajex_response), 0.01 + 1e-9);
 }
 
 // Changes made after initialization apply to the next plan.
 TEST_F(response_adapter_test, parameter_changes_apply_to_later_plans) {
-    const auto n = node("rich_runtime");
-    const auto instance = load(k_rich, n);
+    const auto n = node("trajex_runtime");
+    const auto instance = load(k_trajex, n);
     EXPECT_LE(max_spacing(run(*instance)), 0.1 + 1e-9);
     n->set_parameter(rclcpp::Parameter("pipeline.trajex.totg.sampling.frequency", 50.0));
     EXPECT_LE(max_spacing(run(*instance)), 0.02 + 1e-9);
 }
 
 TEST_F(response_adapter_test, a_response_without_a_path_is_an_invalid_plan) {
-    const auto n = node("rich_no_path");
-    const auto instance = load(k_rich, n);
+    const auto n = node("trajex_no_path");
+    const auto instance = load(k_trajex, n);
     planning_interface::MotionPlanResponse response;
     instance->adapt(nullptr, request(), response);
     EXPECT_EQ(response.error_code.val, error_codes::INVALID_MOTION_PLAN);
@@ -189,8 +189,8 @@ TEST_F(response_adapter_test, invalid_parameters_fail_the_plan_without_throwing)
 // The adapter holds its node weakly, since the node owns the pipeline that owns the adapter. Once the node is gone,
 // the adapter should report failure rather than try to use it.
 TEST_F(response_adapter_test, an_adapter_whose_node_is_gone_fails_cleanly) {
-    auto n = node("rich_orphaned");
-    const auto instance = load(k_rich, n);
+    auto n = node("trajex_orphaned");
+    const auto instance = load(k_trajex, n);
     n.reset();
     auto response = plan();
     EXPECT_NO_THROW(instance->adapt(nullptr, request(), response));

@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.25 FATAL_ERROR)
 # ament expect to own the build, so rather than turning trajex into a ROS project, we keep the ROS specific parts
 # here and pull in trajex from the repository root.
 
-project(viam_trajex_moveit VERSION 0.1.0 LANGUAGES C CXX)
+project(viam_trajex_moveit VERSION 0.101.0 LANGUAGES C CXX)
 
 find_package(ament_cmake REQUIRED)
 find_package(moveit_core REQUIRED)
