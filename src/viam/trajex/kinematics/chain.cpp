@@ -98,39 +98,23 @@ vec3 linear_column(const auto& joint, const vec3& p_e) {
 
 }  // namespace
 
-// The world-frame axis and origin of each moving joint the forward kinematics passed through, and
-// the position p_e of the frame where it stopped. With these, a rotating joint's Jacobian column
-// is the linear part J_v_i = axis x (p_e - position) over the angular part J_w_i = axis, and a
-// translating joint's is J_v_i = axis over zero.
-//
-// The joints are a std::vector of small structs, not (N, 3) xtensor arrays: they are filled one
-// joint at a time during the walk and read back one joint at a time by the per-joint column
-// assembly, so a joint is the natural unit. A vectorized xtensor assembly is deferred to the
-// linear-algebra cleanup.
-struct chain::chain_state_ {
-    struct moving_joint {
-        vec3 axis;
-        vec3 position;
-        bool translates;
-    };
-    std::vector<moving_joint> joints;
-    vec3 p_e;
-};
-
 // Evaluate the forward kinematics joint by joint from the base through last_joint, accumulating
 // the running transform. For each moving joint we capture its world-frame axis and origin before
 // applying its motion, which is safe because a joint neither rotates nor translates its own axis.
 // The origin transforms and unit axes do not depend on q, so they were computed once at
 // construction. Joints after last_joint cannot move anything before them, so we stop there, but q
 // is still checked against the whole chain, because callers always hand us a full joint vector.
-chain::chain_state_ chain::compute_chain_state_(const xvector<>& q, std::size_t last_joint) const {
+//
+// Clearing keeps the capacity, so a reused workspace allocates only on the first call, or when a
+// longer chain than before is given it.
+void chain::update_chain_state_(const xvector<>& q, std::size_t last_joint, workspace& storage) const {
     if (q.size() != actuated_count_) {
         throw std::invalid_argument("viam::trajex::kinematics: q size mismatch: expected " + std::to_string(actuated_count_) +
                                     " (actuated joints), got " + std::to_string(q.size()));
     }
 
-    chain_state_ state;
-    state.joints.reserve(actuated_count_);
+    storage.joints_.clear();
+    storage.joints_.reserve(actuated_count_);
 
     rigid_transform running;
     std::size_t qi = 0;
@@ -141,7 +125,7 @@ chain::chain_state_ chain::compute_chain_state_(const xvector<>& q, std::size_t 
                 if constexpr (!std::is_same_v<Joint, fixed_joint_>) {
                     constexpr bool translates = std::is_same_v<Joint, translating_joint_>;
                     const vec3 axis = rotate(running.rotation, j.unit_axis);
-                    state.joints.push_back({axis, running.translation, translates});
+                    storage.joints_.push_back({axis, running.translation, translates});
 
                     // A translation along the joint's own axis moves the frame along that axis as
                     // it lies in the world, which we have just computed.
@@ -158,8 +142,7 @@ chain::chain_state_ chain::compute_chain_state_(const xvector<>& q, std::size_t 
             },
             joints_[index]);
     }
-    state.p_e = running.translation;
-    return state;
+    storage.p_e_ = running.translation;
 }
 
 chain::chain(std::vector<joint_> joints) : joints_(std::move(joints)) {
@@ -168,12 +151,13 @@ chain::chain(std::vector<joint_> joints) : joints_(std::move(joints)) {
 }
 
 xmatrix<> chain::jacobian(const xvector<>& q) const {
-    const chain_state_ state = compute_chain_state_(q, joints_.size() - 1);
+    workspace storage;
+    update_chain_state_(q, joints_.size() - 1, storage);
 
     xmatrix<> J = xt::zeros<double>({std::size_t{6}, actuated_count_});
     for (std::size_t i = 0; i < actuated_count_; ++i) {
-        const auto& joint = state.joints[i];
-        const vec3 jv = linear_column(joint, state.p_e);
+        const auto& joint = storage.joints_[i];
+        const vec3 jv = linear_column(joint, storage.p_e_);
         J(0, i) = jv[0];
         J(1, i) = jv[1];
         J(2, i) = jv[2];
@@ -187,11 +171,12 @@ xmatrix<> chain::jacobian(const xvector<>& q) const {
 }
 
 xmatrix<> chain::linear_jacobian(const xvector<>& q) const {
-    const chain_state_ state = compute_chain_state_(q, joints_.size() - 1);
+    workspace storage;
+    update_chain_state_(q, joints_.size() - 1, storage);
 
     xmatrix<> J = xt::zeros<double>({std::size_t{3}, actuated_count_});
     for (std::size_t i = 0; i < actuated_count_; ++i) {
-        const vec3 jv = linear_column(state.joints[i], state.p_e);
+        const vec3 jv = linear_column(storage.joints_[i], storage.p_e_);
         J(0, i) = jv[0];
         J(1, i) = jv[1];
         J(2, i) = jv[2];
@@ -203,6 +188,12 @@ chain::frame_kinematics chain::forward_kinematics(std::size_t joint,
                                                   const xvector<>& q,
                                                   const xvector<>& q_dot,
                                                   const xvector<>& q_ddot) const {
+    workspace storage;
+    return forward_kinematics(joint, q, q_dot, q_ddot, storage);
+}
+
+chain::frame_kinematics chain::forward_kinematics(
+    std::size_t joint, const xvector<>& q, const xvector<>& q_dot, const xvector<>& q_ddot, workspace& storage) const {
     if (joint >= joints_.size()) {
         throw std::out_of_range("viam::trajex::kinematics: joint " + std::to_string(joint) + " is past the end of a chain of " +
                                 std::to_string(joints_.size()) + " joints");
@@ -218,12 +209,14 @@ chain::frame_kinematics chain::forward_kinematics(std::size_t joint,
 
     // Only the moving joints up to and including `joint` move its frame. They come first in q, so
     // the leading entries of q_dot and q_ddot are the ones that apply to them.
-    const chain_state_ state = compute_chain_state_(q, joint);
-    const std::size_t moving = state.joints.size();
+    update_chain_state_(q, joint, storage);
+    const auto& joints = storage.joints_;
+    const vec3& p_e = storage.p_e_;
+    const std::size_t moving = joints.size();
 
     vec3 v{0.0, 0.0, 0.0};
     for (std::size_t i = 0; i < moving; ++i) {
-        const vec3 col = linear_column(state.joints[i], state.p_e);
+        const vec3 col = linear_column(joints[i], p_e);
         v = {v[0] + (col[0] * q_dot(i)), v[1] + (col[1] * q_dot(i)), v[2] + (col[2] * q_dot(i))};
     }
 
@@ -238,7 +231,7 @@ chain::frame_kinematics chain::forward_kinematics(std::size_t joint,
     vec3 c{0.0, 0.0, 0.0};
     vec3 t{0.0, 0.0, 0.0};
     for (std::size_t i = 0; i < moving; ++i) {
-        const auto& captured = state.joints[i];
+        const auto& captured = joints[i];
         const vec3& w = captured.axis;
         const vec3& p = captured.position;
         const vec3 dw = cross(omega, w);
@@ -246,7 +239,7 @@ chain::frame_kinematics chain::forward_kinematics(std::size_t joint,
         vec3 col = w;
         vec3 d_col = dw;
         if (!captured.translates) {
-            const vec3 r = {state.p_e[0] - p[0], state.p_e[1] - p[1], state.p_e[2] - p[2]};
+            const vec3 r = {p_e[0] - p[0], p_e[1] - p[1], p_e[2] - p[2]};
             col = cross(w, r);
             const vec3 cp = cross(omega, p);
             const vec3 v_point = {cp[0] - c[0] + t[0], cp[1] - c[1] + t[1], cp[2] - c[2] + t[2]};
@@ -269,7 +262,7 @@ chain::frame_kinematics chain::forward_kinematics(std::size_t joint,
         }
     }
 
-    return {.position = state.p_e, .linear_velocity = v, .linear_acceleration = dv};
+    return {.position = p_e, .linear_velocity = v, .linear_acceleration = dv};
 }
 
 chain::builder& chain::builder::extend(const joint_origin& origin) & {

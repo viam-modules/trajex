@@ -1299,10 +1299,14 @@ void trajectory::integration_event_observer::on_trajectory_extended(const trajec
 trajectory::tcp_limits trajectory::tcp_limits::from(kinematics::chain chain, double max_linear_speed) {
     return tcp_limits{
         .max_linear_speed = max_linear_speed,
-        .evaluator = [chain = std::move(chain)](const xvector<>& q,
-                                                const xvector<>& q_prime,
-                                                const xvector<>& q_double_prime) -> std::optional<linear_speed_per_arc_velocity> {
-            const auto fk = chain.forward_kinematics(q, q_prime, q_double_prime);
+        // The evaluator runs once or twice per integration step, so it keeps one workspace for all
+        // of them rather than allocating on each call. That makes it stateful, which is why one
+        // evaluator must not be called concurrently, but trajex never promised that it could be.
+        .evaluator = [chain = std::move(chain), storage = kinematics::chain::workspace{}](
+                         const xvector<>& q,
+                         const xvector<>& q_prime,
+                         const xvector<>& q_double_prime) mutable -> std::optional<linear_speed_per_arc_velocity> {
+            const auto fk = chain.forward_kinematics(chain.size() - 1, q, q_prime, q_double_prime, storage);
             const auto& v = fk.linear_velocity;
             const auto& a = fk.linear_acceleration;
 

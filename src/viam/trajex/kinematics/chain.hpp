@@ -59,6 +59,20 @@ class chain {
     };
 
     ///
+    /// Storage that forward_kinematics can reuse from one call to the next.
+    ///
+    /// On its way along the chain, forward_kinematics records the world-frame axis and origin of
+    /// each moving joint it passes. A caller evaluating repeatedly, as trajectory generation does,
+    /// can hand the same workspace to every call so that this storage is allocated once rather than
+    /// on each call. A workspace carries nothing from one call to the next that affects the result,
+    /// and it may be used with any chain.
+    ///
+    /// A workspace is modified by every call it is given to, so two calls must not share one at
+    /// the same time.
+    ///
+    class workspace;
+
+    ///
     /// Gets the number of elements in the joint vector q: one per rotating or translating joint.
     ///
     /// @return The chain's degrees of freedom
@@ -181,6 +195,21 @@ class chain {
                                                       const xvector<>& q_ddot) const;
 
     ///
+    /// As above, using storage the caller provides rather than allocating it.
+    ///
+    /// @param joint Index of the joint, counting fixed joints, which must be less than size()
+    /// @param q (N_actuated,) joint positions, in chain order
+    /// @param q_dot (N_actuated,) joint velocities
+    /// @param q_ddot (N_actuated,) joint accelerations
+    /// @param storage Workspace to reuse
+    /// @return The frame's position, linear velocity and linear acceleration
+    /// @throws std::out_of_range if joint is not less than size()
+    /// @throws std::invalid_argument on a size mismatch
+    ///
+    [[nodiscard]] frame_kinematics forward_kinematics(
+        std::size_t joint, const xvector<>& q, const xvector<>& q_dot, const xvector<>& q_ddot, workspace& storage) const;
+
+    ///
     /// As above, for arguments the caller holds in something other than an xvector.
     ///
     /// All three deduce independently, so a caller may mix. Three xvectors bind to the overload
@@ -258,10 +287,6 @@ class chain {
     using translating_joint_ = moving_joint_<translation_axis>;
     using joint_ = std::variant<fixed_joint_, rotating_joint_, translating_joint_>;
 
-    // The world-frame axis and origin of each moving joint, and the position of the frame where the
-    // forward kinematics stopped.
-    struct chain_state_;
-
     // Takes joints the builder has already validated and derived, and counts the moving ones.
     explicit chain(std::vector<joint_> joints);
 
@@ -274,10 +299,10 @@ class chain {
         }
     }
 
-    // Evaluates the forward kinematics at joint positions q through joint last_joint, capturing what
-    // the Jacobian and forward_kinematics need about each moving joint. Throws std::invalid_argument
-    // if q has the wrong size.
-    chain_state_ compute_chain_state_(const xvector<>& q, std::size_t last_joint) const;
+    // Evaluates the forward kinematics at joint positions q through joint last_joint, recording in
+    // storage what the Jacobian and forward_kinematics need about each moving joint. Throws
+    // std::invalid_argument if q has the wrong size.
+    void update_chain_state_(const xvector<>& q, std::size_t last_joint, workspace& storage) const;
 
     std::vector<joint_> joints_;
     std::size_t actuated_count_ = 0;
@@ -326,6 +351,27 @@ template <typename Axis>
 struct chain::moving_joint_ : joint_base_ {
     Axis axis;
     std::array<double, 3> unit_axis;
+};
+
+class chain::workspace {
+    friend class chain;
+
+    // The world-frame axis and origin of each moving joint the forward kinematics passed through,
+    // and the position p_e of the frame where it stopped. With these, a rotating joint's Jacobian
+    // column is the linear part J_v_i = axis x (p_e - position) over the angular part
+    // J_w_i = axis, and a translating joint's is J_v_i = axis over zero.
+    //
+    // The joints are a std::vector of small structs, not (N, 3) xtensor arrays: they are filled
+    // one joint at a time during the walk and read back one joint at a time by the per-joint
+    // column assembly, so a joint is the natural unit. A vectorized xtensor assembly is deferred
+    // to the linear-algebra cleanup.
+    struct moving_joint {
+        std::array<double, 3> axis;
+        std::array<double, 3> position;
+        bool translates;
+    };
+    std::vector<moving_joint> joints_;
+    std::array<double, 3> p_e_{};
 };
 
 ///
