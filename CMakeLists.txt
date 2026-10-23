@@ -528,6 +528,36 @@ if (VIAM_TRAJEX_BUILD_BENCHMARKS)
   )
 
   apply_wall_werror(viam-trajex-totg-bench)
+
+  # Instruments refuses to attach to a process whose binary does not carry
+  # `get-task-allow`, so `xctrace record` launches the benchmark, fails with "Failed to
+  # attach to target process", and still writes out a trace -- one containing no samples,
+  # which is easy to mistake for a profiling result. Re-signing ad-hoc adds the entitlement
+  # without weakening anything, since the linker already ad-hoc signs arm64 binaries, and
+  # the benchmarks are neither installed nor shipped.
+  if (APPLE)
+    set(VIAM_TRAJEX_BENCH_ENTITLEMENTS
+      "${CMAKE_CURRENT_BINARY_DIR}/viam-trajex-totg-bench.entitlements")
+
+    file(WRITE "${VIAM_TRAJEX_BENCH_ENTITLEMENTS}"
+[=[<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.get-task-allow</key>
+    <true/>
+</dict>
+</plist>
+]=])
+
+    add_custom_command(TARGET viam-trajex-totg-bench POST_BUILD
+      COMMAND codesign -s - -f
+        --entitlements "${VIAM_TRAJEX_BENCH_ENTITLEMENTS}"
+        $<TARGET_FILE:viam-trajex-totg-bench>
+      COMMENT "Re-signing viam-trajex-totg-bench with get-task-allow for Instruments"
+      VERBATIM
+    )
+  endif()
 endif()
 
 
