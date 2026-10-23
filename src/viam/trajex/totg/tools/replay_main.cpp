@@ -6,9 +6,7 @@
 //   cat failed.json | trajex_replay_trajectory | python3 visualize.py
 
 #include <filesystem>
-#include <fstream>
 #include <iostream>
-#include <stdexcept>
 
 #include <viam/trajex/totg/tools/json_serialization.hpp>
 #include <viam/trajex/totg/tools/replay.hpp>

@@ -7,9 +7,7 @@
 #include <functional>
 #include <limits>
 #include <memory>
-#include <new>
 #include <optional>
-#include <ranges>
 #include <sstream>
 #include <stdexcept>
 #include <string>

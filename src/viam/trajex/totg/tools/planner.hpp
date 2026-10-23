@@ -37,26 +37,71 @@ namespace viam::trajex::totg {
 ///
 class planner_base {
    public:
+    ///
+    /// What a planner plans with: limits, path construction settings, and the optional TCP cap.
+    ///
     struct config {
+        ///
+        /// Per-joint velocity limits, in configuration-space units per second.
+        ///
         xrank_checked<xvector<>> velocity_limits;
+
+        ///
+        /// Per-joint acceleration limits, in configuration-space units per second squared.
+        ///
         xrank_checked<xvector<>> acceleration_limits;
+
+        ///
+        /// Maximum blend deviation, in configuration-space units. Zero disables blending.
+        ///
         double path_blend_tolerance = 0.0;
-        std::optional<double> colinearization_ratio{};
-        // Curvature bounds for blend construction. nullopt leaves path::options at its
-        // built-in defaults (k_default_min_blend_curvature / k_default_max_blend_curvature).
-        std::optional<double> min_blend_curvature{};
-        std::optional<double> max_blend_curvature{};
+
+        ///
+        /// Ratio of the colinear merging tolerance to path_blend_tolerance. nullopt disables
+        /// merging.
+        ///
+        std::optional<double> colinearization_ratio;
+
+        ///
+        /// Lower curvature bound for blend construction. nullopt leaves path::options at its
+        /// built-in default (k_default_min_blend_curvature).
+        ///
+        std::optional<double> min_blend_curvature;
+
+        ///
+        /// Upper curvature bound for blend construction. nullopt leaves path::options at its
+        /// built-in default (k_default_max_blend_curvature).
+        ///
+        std::optional<double> max_blend_curvature;
+
+        ///
+        /// Whether TOTG runs on the segmenter's segments. When false and a segmenter is
+        /// registered, TOTG runs on the whole unsegmented waypoint sequence, while the legacy
+        /// generator still runs per segment.
+        ///
         bool segment_totg = true;
-        trajectory::integration_observer* observer = nullptr;  // totg only; ignored by legacy
-        // The arm and whatever it carries, for a TCP speed limit. Having kinematics is a property of
-        // the caller and wanting a cap is a property of the call, so a chain without a cap is legal
-        // and simply unused. Kept as the chain rather than as a limit built from it, because the
-        // chain is what serialize_for_replay can write down.
-        std::optional<kinematics::chain> kinematics_chain{};
-        // Cap on the speed of the chain's last frame origin, in the length unit of the chain's
-        // translations per second. Totg only, and requires kinematics_chain, which planner construction
-        // checks.
-        std::optional<double> tcp_max_linear_speed{};
+
+        ///
+        /// Integration observer passed to TOTG. Ignored by the legacy generator. Not owned.
+        ///
+        trajectory::integration_observer* observer = nullptr;
+
+        ///
+        /// The arm and whatever it carries, for a TCP speed limit.
+        ///
+        /// Having kinematics is a property of the caller and wanting a cap is a property of the
+        /// call, so a chain without a cap is legal and simply unused. Kept as the chain rather than
+        /// as a limit built from it, because the chain is what serialize_for_replay can write down.
+        ///
+        std::optional<kinematics::chain> kinematics_chain;
+
+        ///
+        /// Cap on the speed of the chain's last frame origin, in the length unit of the chain's
+        /// translations per second.
+        ///
+        /// TOTG only, and requires kinematics_chain, which planner construction checks.
+        ///
+        std::optional<double> tcp_max_linear_speed;
     };
 
     ///
