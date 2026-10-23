@@ -41,6 +41,9 @@ class planner_base {
     /// What a planner plans with: limits, path construction settings, and the optional TCP cap.
     ///
     struct config {
+        // The optional members below are initialized with {}, which clang-tidy calls redundant. Without it,
+        // clang's -Wmissing-designated-field-initializers rejects designated initializers that leave them out.
+        // NOLINTBEGIN(readability-redundant-member-init)
         ///
         /// Per-joint velocity limits, in configuration-space units per second.
         ///
@@ -60,19 +63,19 @@ class planner_base {
         /// Ratio of the colinear merging tolerance to path_blend_tolerance. nullopt disables
         /// merging.
         ///
-        std::optional<double> colinearization_ratio;
+        std::optional<double> colinearization_ratio{};
 
         ///
         /// Lower curvature bound for blend construction. nullopt leaves path::options at its
         /// built-in default (k_default_min_blend_curvature).
         ///
-        std::optional<double> min_blend_curvature;
+        std::optional<double> min_blend_curvature{};
 
         ///
         /// Upper curvature bound for blend construction. nullopt leaves path::options at its
         /// built-in default (k_default_max_blend_curvature).
         ///
-        std::optional<double> max_blend_curvature;
+        std::optional<double> max_blend_curvature{};
 
         ///
         /// Whether TOTG runs on the segmenter's segments. When false and a segmenter is
@@ -93,7 +96,7 @@ class planner_base {
         /// call, so a chain without a cap is legal and simply unused. Kept as the chain rather than
         /// as a limit built from it, because the chain is what serialize_for_replay can write down.
         ///
-        std::optional<kinematics::chain> kinematics_chain;
+        std::optional<kinematics::chain> kinematics_chain{};
 
         ///
         /// Cap on the speed of the chain's last frame origin, in the length unit of the chain's
@@ -101,7 +104,8 @@ class planner_base {
         ///
         /// TOTG only, and requires kinematics_chain, which planner construction checks.
         ///
-        std::optional<double> tcp_max_linear_speed;
+        std::optional<double> tcp_max_linear_speed{};
+        // NOLINTEND(readability-redundant-member-init)
     };
 
     ///
