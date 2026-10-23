@@ -2,6 +2,7 @@
 // Extracted from test.cpp lines 1563-1753
 
 #include <cmath>
+#include <limits>
 
 #include <viam/trajex/totg/path.hpp>
 #include <viam/trajex/totg/test/test_utils.hpp>
@@ -89,6 +90,15 @@ BOOST_AUTO_TEST_CASE(validates_delta_positive) {
     };
 
     BOOST_CHECK_THROW(static_cast<void>(trajectory::create(p, options)), std::invalid_argument);
+
+    // NaN and infinity fail later and less clearly if they get past validation, so they are rejected up front.
+    for (const double bad : {std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity()}) {
+        BOOST_TEST_CONTEXT("delta " << bad) {
+            trajectory::options bad_options = options;
+            bad_options.delta = trajectory::seconds{bad};
+            BOOST_CHECK_THROW(static_cast<void>(trajectory::create(p, bad_options)), std::invalid_argument);
+        }
+    }
 }
 
 BOOST_AUTO_TEST_CASE(validates_epsilon_positive) {
@@ -103,6 +113,14 @@ BOOST_AUTO_TEST_CASE(validates_epsilon_positive) {
     };
 
     BOOST_CHECK_THROW(static_cast<void>(trajectory::create(p, options)), std::invalid_argument);
+
+    for (const double bad : {std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity()}) {
+        BOOST_TEST_CONTEXT("epsilon " << bad) {
+            trajectory::options bad_options = options;
+            bad_options.epsilon = epsilon{bad};
+            BOOST_CHECK_THROW(static_cast<void>(trajectory::create(p, bad_options)), std::invalid_argument);
+        }
+    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()

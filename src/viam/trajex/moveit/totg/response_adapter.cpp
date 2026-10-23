@@ -2,7 +2,6 @@
 // plugins.xml in the ament package, and nothing else refers to them, so there's no header.
 
 #include <exception>
-#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -26,8 +25,11 @@ rclcpp::Logger logger() {
 
 // Declares and reads one of an adapter's double parameters. The hosting node may already have declared it, for
 // instance from a YAML override in a node that declares overrides automatically, in which case we leave it alone.
-// Otherwise we declare it with its default, its description, and a non-negative range. Values that must be strictly
-// positive are checked later, when the time parameterization is built.
+// Otherwise we declare it with its default and its description. We give it no range: rclcpp enforces a range at
+// declaration, so an out-of-range value in YAML would throw out of initialize() on a node that doesn't declare its
+// overrides, where in move_group it would be declared without one. Leaving the range off makes both fail the plan
+// instead, when the time parameterization checks its values, which is also how MoveIt's own adapters behave. The
+// descriptions state each constraint.
 class double_parameter {
    public:
     double_parameter(std::string name, double default_value, std::string description)
@@ -40,10 +42,6 @@ class double_parameter {
         }
         rcl_interfaces::msg::ParameterDescriptor descriptor;
         descriptor.description = description_;
-        rcl_interfaces::msg::FloatingPointRange range;
-        range.from_value = 0.0;
-        range.to_value = std::numeric_limits<double>::max();
-        descriptor.floating_point_range.push_back(range);
         node.declare_parameter(full_name_, default_, descriptor);
     }
 
@@ -161,11 +159,11 @@ class response_adapter final : public adapter_base {
         "path.max_blend_deviation",
         k_path_defaults.max_blend_deviation(),
         "Maximum distance a blend may deviate from its corner, in configuration space units (rad for revolute joints, "
-        "m for prismatic). 0 disables blending."};
-    double_parameter max_linear_deviation_{
-        "path.max_linear_deviation",
-        k_path_defaults.max_linear_deviation(),
-        "Maximum deviation for merging nearly collinear waypoints, in configuration space units. 0 disables merging."};
+        "m for prismatic). Must be non-negative. 0 disables blending."};
+    double_parameter max_linear_deviation_{"path.max_linear_deviation",
+                                           k_path_defaults.max_linear_deviation(),
+                                           "Maximum deviation for merging nearly collinear waypoints, in configuration space "
+                                           "units. Must be non-negative. 0 disables merging."};
     double_parameter min_blend_curvature_{"path.min_blend_curvature",
                                           k_path_defaults.min_blend_curvature(),
                                           "Minimum blend curvature, in 1 / configuration space unit. Must be positive."};
@@ -177,7 +175,7 @@ class response_adapter final : public adapter_base {
         "path.deduplication_tolerance",
         time_parameterization::k_default_deduplication_tolerance,
         "Waypoints within this distance of the previous kept waypoint in every joint are dropped, in configuration "
-        "space units."};
+        "space units. Must be non-negative."};
     double_parameter delta_{"trajectory.delta",
                             trajex::totg::trajectory::options::k_default_delta.count(),
                             "Phase plane integration time step, in s. Must be positive."};

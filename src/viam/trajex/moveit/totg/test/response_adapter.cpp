@@ -57,6 +57,11 @@ class response_adapter_test : public testing::Test {
                                                   .parameter_overrides(std::move(overrides)));
     }
 
+    // A node with default options, which leaves its overrides undeclared until something declares them.
+    static rclcpp::Node::SharedPtr plain_node(const std::string& name, std::vector<rclcpp::Parameter> overrides) {
+        return std::make_shared<rclcpp::Node>(name, rclcpp::NodeOptions().parameter_overrides(std::move(overrides)));
+    }
+
     std::shared_ptr<adapter> load(const std::string& name, const rclcpp::Node::SharedPtr& node) {
         auto instance = loader_.createSharedInstance(name);
         instance->initialize(node, k_namespace);
@@ -156,6 +161,18 @@ TEST_F(response_adapter_test, overrides_are_honored) {
     const auto trajex_response = run(*trajex_adapter);
     ASSERT_EQ(trajex_response.error_code.val, error_codes::SUCCESS);
     EXPECT_LE(max_spacing(trajex_response), 0.01 + 1e-9);
+}
+
+// A node built by a user, for instance around MoveItCpp, need not declare its overrides automatically as move_group's
+// does. The adapters declare their parameters themselves then, and a value out of range should still fail the plan, as
+// it does in move_group and with MoveIt's own adapters, rather than the adapter's initialization.
+TEST_F(response_adapter_test, invalid_overrides_fail_the_plan_on_a_node_that_does_not_declare_them) {
+    const auto n = plain_node("trajex_plain_negative", {rclcpp::Parameter("pipeline.trajex.totg.path.max_blend_deviation", -1.0)});
+    std::shared_ptr<adapter> instance;
+    ASSERT_NO_THROW(instance = load(k_trajex, n));
+    auto response = plan();
+    EXPECT_NO_THROW(instance->adapt(nullptr, request(), response));
+    EXPECT_EQ(response.error_code.val, error_codes::FAILURE);
 }
 
 // Changes made after initialization apply to the next plan.

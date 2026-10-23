@@ -2,6 +2,7 @@
 // Extracted from test.cpp lines 150-376
 
 #include <concepts>
+#include <limits>
 
 #include <viam/trajex/totg/path.hpp>
 #include <viam/trajex/totg/waypoint_accumulator.hpp>
@@ -41,6 +42,17 @@ BOOST_AUTO_TEST_CASE(validates_max_deviation) {
 
     // Negative linear deviation should throw
     BOOST_CHECK_THROW(static_cast<void>(path::create(acc, path::options{}.set_max_linear_deviation(-0.1))), std::invalid_argument);
+
+    // So should NaN and infinity, in the deviations and the curvature bounds alike. A NaN in particular
+    // passes a plain sign check, so it has to be rejected explicitly.
+    for (const double bad : {std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity()}) {
+        BOOST_TEST_CONTEXT("value " << bad) {
+            BOOST_CHECK_THROW(static_cast<void>(path::create(acc, path::options{}.set_max_blend_deviation(bad))), std::invalid_argument);
+            BOOST_CHECK_THROW(static_cast<void>(path::create(acc, path::options{}.set_max_linear_deviation(bad))), std::invalid_argument);
+            BOOST_CHECK_THROW(static_cast<void>(path::create(acc, path::options{}.set_min_blend_curvature(bad))), std::invalid_argument);
+            BOOST_CHECK_THROW(static_cast<void>(path::create(acc, path::options{}.set_max_blend_curvature(bad))), std::invalid_argument);
+        }
+    }
 }
 
 BOOST_AUTO_TEST_CASE(requires_minimum_two_waypoints) {

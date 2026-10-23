@@ -289,20 +289,20 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         throw std::invalid_argument{"Path requires at least 2 waypoints"};
     }
 
-    if (opts.max_blend_deviation() < 0.0) {
-        throw std::invalid_argument{"Max blend deviation must be non-negative"};
+    if (!std::isfinite(opts.max_blend_deviation()) || opts.max_blend_deviation() < 0.0) {
+        throw std::invalid_argument{"Max blend deviation must be finite and non-negative"};
     }
 
-    if (opts.max_linear_deviation() < 0.0) {
-        throw std::invalid_argument{"Max linear deviation must be non-negative"};
+    if (!std::isfinite(opts.max_linear_deviation()) || opts.max_linear_deviation() < 0.0) {
+        throw std::invalid_argument{"Max linear deviation must be finite and non-negative"};
     }
 
-    if (opts.min_blend_curvature() <= 0.0) {
-        throw std::invalid_argument{"Min blend curvature must be positive"};
+    if (!std::isfinite(opts.min_blend_curvature()) || opts.min_blend_curvature() <= 0.0) {
+        throw std::invalid_argument{"Min blend curvature must be finite and positive"};
     }
 
-    if (opts.max_blend_curvature() < 0.0) {
-        throw std::invalid_argument{"Max blend curvature must be non-negative"};
+    if (!std::isfinite(opts.max_blend_curvature()) || opts.max_blend_curvature() < 0.0) {
+        throw std::invalid_argument{"Max blend curvature must be finite and non-negative"};
     }
 
     if (opts.max_blend_curvature() < opts.min_blend_curvature()) {
