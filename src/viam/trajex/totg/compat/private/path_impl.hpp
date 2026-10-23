@@ -13,8 +13,8 @@
 
 namespace viam::trajex::totg::compat {
 
-// Shared with trajectory.cpp, which needs the trajex path a compat Path wraps and the error
-// it captured. Exactly one of the two is engaged.
+// This lives in a header because trajectory.cpp needs it too, for the trajex path that a compat
+// Path wraps and the error the Path captured. Either the path or the error is set, never both.
 struct Path::impl {
     std::optional<totg::path> path;
     std::exception_ptr error;

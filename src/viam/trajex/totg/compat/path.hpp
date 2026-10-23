@@ -11,8 +11,9 @@
 
 #include <viam/trajex/totg/compat/export.hpp>
 
-// There is no feature-test macro for std::exception_ptr, which predates them. MSVC reports a
-// C++98 __cplusplus unless built with /Zc:__cplusplus, so it is checked separately.
+// std::exception_ptr is older than feature-test macros, so we test the language version instead.
+// MSVC reports a C++98 __cplusplus unless built with /Zc:__cplusplus, which is why we also look at
+// _MSVC_LANG.
 #if __cplusplus >= 201103L || (defined(_MSVC_LANG) && _MSVC_LANG >= 201103L)
 #include <exception>
 #endif
@@ -27,7 +28,8 @@ class Trajectory;
 ///
 /// The `Path` interface of the Kunz & Stilman reference implementation, backed by trajex.
 ///
-/// Source compatible with the original `Path`, with these differences:
+/// Code written against the original `Path` compiles against this one unchanged. It behaves
+/// differently in these ways:
 ///
 /// - Construction never throws for bad input. A path that cannot be built reports a length of
 ///   zero, returns empty vectors from the geometry queries, and makes any `Trajectory` built
@@ -48,8 +50,8 @@ class VIAM_TRAJEX_TOTG_COMPAT_API Path {
     /// Builds a path through waypoints, blending corners with circular arcs.
     ///
     /// @param path Waypoints, all of the same dimension
-    /// @param maxDeviation Maximum distance a blend may deviate from its corner; zero disables
-    ///        blending
+    /// @param maxDeviation Maximum distance a blend may deviate from its corner. Zero disables
+    ///        blending.
     ///
     Path(const std::list<Eigen::VectorXd>& path, double maxDeviation = 0.0);
 
@@ -120,7 +122,7 @@ class VIAM_TRAJEX_TOTG_COMPAT_API Path {
 
 #if __cplusplus >= 201103L || (defined(_MSVC_LANG) && _MSVC_LANG >= 201103L)
     ///
-    /// Gets the reason construction failed. An extension to the original interface.
+    /// Gets the reason construction failed. This extends the original interface, and needs C++11.
     ///
     /// @return The exception construction raised, or a null pointer if it succeeded
     ///

@@ -957,8 +957,8 @@ if (VIAM_TRAJEX_BUILD_TESTS)
 
 
   if (VIAM_TRAJEX_TOTG_ENABLE_LEGACY_COMPAT)
-    # Links the reference implementation too when it is enabled, so the suite can run the same
-    # inputs through both.
+    # The suite also links the reference implementation when it's enabled, so that it can run the
+    # same inputs through both.
     add_executable(viam-trajex-totg-compat-test)
 
     target_sources(viam-trajex-totg-compat-test
@@ -1302,7 +1302,7 @@ if (VIAM_TRAJEX_INSTALL_CMAKE_PACKAGE)
 endif()
 
 if (VIAM_TRAJEX_ENABLE_SERVICE)
-  # The service library and executable, and the module packaging artifacts (meta.json + CPack).
+  # Install the service library and executable, and the module packaging artifacts (meta.json + CPack).
   viam_trajex_install(trajex-service viam-trajex-service viam-trajex-service-exe)
 
   # Configure meta.json from template

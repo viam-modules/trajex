@@ -2,6 +2,6 @@
 # CMakeLists.txt for a plain CMake package, and since colcon doesn't look inside packages, it would
 # never find the ament package in src/viam/trajex/moveit. Giving the root a type but no name keeps
 # colcon from identifying it, so it keeps looking. Every colcon command will then warn that the root
-# package is incomplete. The warning is harmless, and on balance that seems an acceptable trade-off
-# for keeping the MoveIt specific parts in their own subtree.
+# package is incomplete. The warning is harmless, and we'd rather live with it than give up keeping
+# the MoveIt specific parts in their own subtree.
 type: none

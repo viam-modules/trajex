@@ -38,73 +38,82 @@ namespace viam::trajex::totg {
 class planner_base {
    public:
     ///
-    /// What a planner plans with: limits, path construction settings, and the optional TCP cap.
+    /// The joint limits, path settings and optional TCP speed cap that a planner plans with.
+    ///
+    /// Constructing a planner validates the TCP settings. It throws std::invalid_argument if
+    /// tcp_max_linear_speed is set without a kinematics_chain, or if the chain's degrees of
+    /// freedom don't match the joint limits.
     ///
     struct config {
-        // The optional members below are initialized with {}, which clang-tidy calls redundant. Without it,
-        // clang's -Wmissing-designated-field-initializers rejects designated initializers that leave them out.
+        // We initialize the optional members with {} even though clang-tidy calls that redundant,
+        // because without it clang's -Wmissing-designated-field-initializers rejects any designated
+        // initializer that leaves them out.
         // NOLINTBEGIN(readability-redundant-member-init)
+
         ///
-        /// Per-joint velocity limits, in configuration-space units per second.
+        /// The velocity limit of each joint, in configuration-space units per second.
         ///
         xrank_checked<xvector<>> velocity_limits;
 
         ///
-        /// Per-joint acceleration limits, in configuration-space units per second squared.
+        /// The acceleration limit of each joint, in configuration-space units per second squared.
         ///
         xrank_checked<xvector<>> acceleration_limits;
 
         ///
-        /// Maximum blend deviation, in configuration-space units. Zero disables blending.
+        /// The furthest a blend may stray from the corner it rounds, in configuration-space units.
+        /// Both generators honor it, and zero disables blending.
         ///
         double path_blend_tolerance = 0.0;
 
         ///
-        /// Ratio of the colinear merging tolerance to path_blend_tolerance. nullopt disables
-        /// merging.
+        /// When set, nearly collinear waypoints are merged before the path is built, within a
+        /// tolerance of this ratio times path_blend_tolerance. Both generators honor it.
         ///
         std::optional<double> colinearization_ratio{};
 
         ///
-        /// Lower curvature bound for blend construction. nullopt leaves path::options at its
-        /// built-in default (k_default_min_blend_curvature).
+        /// When set, the smallest curvature TOTG will give a blend, so that no blend radius exceeds
+        /// its reciprocal. Otherwise path::options::k_default_min_blend_curvature applies.
         ///
         std::optional<double> min_blend_curvature{};
 
         ///
-        /// Upper curvature bound for blend construction. nullopt leaves path::options at its
-        /// built-in default (k_default_max_blend_curvature).
+        /// When set, the largest curvature TOTG will give a blend. A corner that would need a
+        /// tighter blend is left unblended. Otherwise path::options::k_default_max_blend_curvature
+        /// applies.
         ///
         std::optional<double> max_blend_curvature{};
 
         ///
-        /// Whether TOTG runs on the segmenter's segments. When false and a segmenter is
-        /// registered, TOTG runs on the whole unsegmented waypoint sequence, while the legacy
-        /// generator still runs per segment.
+        /// Whether TOTG runs on the segmenter's segments. If false and a segmenter is registered,
+        /// TOTG runs on the whole waypoint sequence instead, while the legacy generator still runs
+        /// on each segment.
         ///
         bool segment_totg = true;
 
         ///
-        /// Integration observer passed to TOTG. Ignored by the legacy generator. Not owned.
+        /// An observer for TOTG's integration, which the planner does not own. The legacy generator
+        /// ignores it.
         ///
         trajectory::integration_observer* observer = nullptr;
 
         ///
-        /// The arm and whatever it carries, for a TCP speed limit.
+        /// The kinematics of the arm and anything it carries, for a TCP speed cap.
         ///
-        /// Having kinematics is a property of the caller and wanting a cap is a property of the
-        /// call, so a chain without a cap is legal and simply unused. Kept as the chain rather than
-        /// as a limit built from it, because the chain is what serialize_for_replay can write down.
+        /// A chain without a cap is valid and simply goes unused, since the arm belongs to the
+        /// caller while the cap is chosen for each call. The planner keeps the chain rather than a
+        /// limit built from it, because the chain is what serialize_for_replay can record.
         ///
         std::optional<kinematics::chain> kinematics_chain{};
 
         ///
-        /// Cap on the speed of the chain's last frame origin, in the length unit of the chain's
-        /// translations per second.
-        ///
-        /// TOTG only, and requires kinematics_chain, which planner construction checks.
+        /// When set, the speed cap for the origin of the chain's last frame, in the length unit
+        /// of the chain's translations per second. It requires kinematics_chain, and only TOTG
+        /// enforces it.
         ///
         std::optional<double> tcp_max_linear_speed{};
+
         // NOLINTEND(readability-redundant-member-init)
     };
 

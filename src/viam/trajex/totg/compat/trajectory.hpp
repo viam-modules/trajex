@@ -13,8 +13,9 @@ namespace compat {
 ///
 /// The `Trajectory` interface of the Kunz & Stilman reference implementation, backed by trajex.
 ///
-/// Source compatible with the original `Trajectory`, but the implementation is trajex's, so the
-/// results won't match the original's exactly. The interface differs in these ways:
+/// Code written against the original `Trajectory` compiles against this one unchanged. The
+/// implementation is trajex's, so results won't match the original's exactly, and the interface
+/// behaves differently in these ways:
 ///
 /// - Construction never throws. Failure is reported through `isValid`, as in the original, and
 ///   `getError` reports why. An invalid trajectory has a duration of zero and returns empty
@@ -28,7 +29,7 @@ class VIAM_TRAJEX_TOTG_COMPAT_API Trajectory {
     ///
     /// Generates a time-optimal trajectory along a path.
     ///
-    /// @param path Path to follow, which is copied, so it need not outlive the trajectory
+    /// @param path Path to follow. The trajectory keeps its own copy, so the path need not outlive it.
     /// @param maxVelocity Maximum velocity per dimension
     /// @param maxAcceleration Maximum acceleration per dimension
     /// @param timeStep Integration time step
@@ -87,7 +88,8 @@ class VIAM_TRAJEX_TOTG_COMPAT_API Trajectory {
 
 #if __cplusplus >= 201103L || (defined(_MSVC_LANG) && _MSVC_LANG >= 201103L)
     ///
-    /// Gets the reason trajectory generation failed. An extension to the original interface.
+    /// Gets the reason trajectory generation failed. This extends the original interface, and
+    /// needs C++11.
     ///
     /// @return The exception generation raised, the path's error if the path was invalid, or a
     ///         null pointer if generation succeeded

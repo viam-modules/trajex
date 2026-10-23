@@ -164,8 +164,8 @@ TEST_F(response_adapter_test, overrides_are_honored) {
 }
 
 // A node built by a user, for instance around MoveItCpp, need not declare its overrides automatically as move_group's
-// does. The adapters declare their parameters themselves then, and a value out of range should still fail the plan, as
-// it does in move_group and with MoveIt's own adapters, rather than the adapter's initialization.
+// does, so the adapters declare their parameters themselves. A value out of range should still fail the plan rather
+// than the adapter's initialization, just as it does in move_group and with MoveIt's own adapters.
 TEST_F(response_adapter_test, invalid_overrides_fail_the_plan_on_a_node_that_does_not_declare_them) {
     const auto n = plain_node("trajex_plain_negative", {rclcpp::Parameter("pipeline.trajex.totg.path.max_blend_deviation", -1.0)});
     std::shared_ptr<adapter> instance;
@@ -175,7 +175,6 @@ TEST_F(response_adapter_test, invalid_overrides_fail_the_plan_on_a_node_that_doe
     EXPECT_EQ(response.error_code.val, error_codes::FAILURE);
 }
 
-// Changes made after initialization apply to the next plan.
 TEST_F(response_adapter_test, parameter_changes_apply_to_later_plans) {
     const auto n = node("trajex_runtime");
     const auto instance = load(k_trajex, n);

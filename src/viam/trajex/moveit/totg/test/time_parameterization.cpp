@@ -21,7 +21,8 @@ namespace {
 namespace mc = ::moveit::core;
 using viam::trajex::moveit::totg::time_parameterization;
 
-// Allowance for the integration step's overshoot of the velocity limit.
+// The integration step lets sampled velocities and accelerations overshoot their limits slightly, so the checks
+// leave this much room, relative to each limit.
 constexpr double k_limit_tolerance = 1e-3;
 
 // MoveIt's testing model has no acceleration limits in its URDF, so we add them, as MoveIt's own TOTG tests do.

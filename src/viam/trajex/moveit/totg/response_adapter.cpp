@@ -23,13 +23,12 @@ rclcpp::Logger logger() {
     return ::moveit::getLogger("viam.trajex.moveit.totg.response_adapter");
 }
 
-// Declares and reads one of an adapter's double parameters. The hosting node may already have declared it, for
-// instance from a YAML override in a node that declares overrides automatically, in which case we leave it alone.
-// Otherwise we declare it with its default and its description. We give it no range: rclcpp enforces a range at
-// declaration, so an out-of-range value in YAML would throw out of initialize() on a node that doesn't declare its
-// overrides, where in move_group it would be declared without one. Leaving the range off makes both fail the plan
-// instead, when the time parameterization checks its values, which is also how MoveIt's own adapters behave. The
-// descriptions state each constraint.
+// Declares and reads one of an adapter's double parameters. If the hosting node has already declared it, as move_group
+// does for anything set in YAML, we leave it alone. Otherwise we declare it with its default and description, but
+// without a range. rclcpp enforces a range when a parameter is declared, so an out-of-range YAML value would throw out
+// of initialize() on such a node, although move_group would accept it. Without the range, both fail the plan when the
+// time parameterization checks the value, which is also what MoveIt's own adapters do. The descriptions state each
+// constraint instead.
 class double_parameter {
    public:
     double_parameter(std::string name, double default_value, std::string description)
@@ -113,7 +112,7 @@ class adapter_base : public planning_interface::PlanningResponseAdapter {
 
 }  // namespace
 
-// Configured by trajex's own options, under `trajex.totg`, with trajex's defaults.
+// This adapter takes trajex's own options, under `trajex.totg`, with trajex's defaults.
 class response_adapter final : public adapter_base {
    public:
     std::string getDescription() const override {
@@ -188,7 +187,7 @@ class response_adapter final : public adapter_base {
                                          "Must be positive."};
 };
 
-// Configured by the same parameters as MoveIt's own AddTimeOptimalParameterization, so that an existing `totg`
+// This adapter reads the same parameters as MoveIt's own AddTimeOptimalParameterization, so that an existing `totg`
 // configuration works unchanged.
 class compat_response_adapter final : public adapter_base {
    public:

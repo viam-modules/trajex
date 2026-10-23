@@ -55,7 +55,8 @@ class VIAM_TRAJEX_TOTG_API composite_integration_observer final : public traject
     std::shared_ptr<T> add_observer(std::shared_ptr<T> observer);
 
     ///
-    /// The non-template part of add_observer, which only it can call.
+    /// Adds an observer on behalf of the add_observer template. Only that template can call it,
+    /// because it requires a key that only this class can construct.
     ///
     void add_observer(pass_key_, std::shared_ptr<integration_observer> observer);
 

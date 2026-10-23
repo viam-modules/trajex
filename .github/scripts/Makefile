@@ -17,9 +17,10 @@ help:
 
 SOURCE_FILES := $(shell find src/viam -type f \( -name '*.cpp' -o -name '*.c' -o -name '*.h' -o -name '*.hpp' \))
 
-# The translation units the configured build compiles, from its compile database. Clang tools given a file
+# Lists the translation units the configured build compiles, from its compile database. Clang tools given a file
 # the database lacks borrow a neighbour's flags and fail on its includes, so we only hand them what is there,
-# filtered to our own sources. Sources of disabled targets go unchecked. Expanded in recipes, after configure.
+# filtered to our own sources. That leaves the sources of disabled targets unchecked. Make expands this in the
+# recipes, after configure has written the database.
 DATABASE_TRANSLATION_UNITS = jq -r --arg root "$(CURDIR)/src/viam/" \
 	'[.[].file | select(startswith($$root))] | unique[]' build/compile_commands.json
 

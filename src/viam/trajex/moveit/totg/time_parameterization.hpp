@@ -16,9 +16,9 @@
 namespace viam::trajex::moveit::totg {
 
 ///
-/// MoveIt time parameterization backed by trajex's TOTG.
+/// A MoveIt time parameterization that uses trajex's TOTG.
 ///
-/// A replacement for MoveIt's own `trajectory_processing::TimeOptimalTrajectoryGeneration`. The algorithm is
+/// It can stand in for MoveIt's own `trajectory_processing::TimeOptimalTrajectoryGeneration`. The algorithm is
 /// trajex's, so the results won't match MoveIt's, but everything around the algorithm behaves the same way. Limits
 /// come from the robot model or from the call, and scaling factors outside (0, 1] fall back to 1.0 with a warning.
 /// Continuous joints are unwound, and near-duplicate waypoints are removed, always keeping the final one. A
@@ -53,8 +53,8 @@ class VIAM_TRAJEX_MOVEIT_TOTG_API time_parameterization final : public trajector
     /// Creates a time parameterization.
     ///
     /// @param path_options Options for building the path through the waypoints
-    /// @param deduplication_tolerance Waypoints within this distance of the previous kept waypoint in every joint
-    ///        are dropped, in configuration space units
+    /// @param deduplication_tolerance Distance in configuration space units. A waypoint within this distance of the
+    ///        last waypoint kept, in every joint, is dropped.
     /// @param trajectory_options Trajectory options to copy for each call, as described in the class documentation
     /// @param sampling_frequency Minimum rate at which waypoints are written back
     /// @throws std::invalid_argument if the deduplication tolerance is negative or not finite, or the sampling
@@ -71,7 +71,7 @@ class VIAM_TRAJEX_MOVEIT_TOTG_API time_parameterization final : public trajector
     /// @param trajectory Trajectory to time parameterize, replaced by the result on success
     /// @param max_velocity_scaling_factor Factor in (0, 1] applied to every velocity limit
     /// @param max_acceleration_scaling_factor Factor in (0, 1] applied to every acceleration limit
-    /// @return true on success, false on failure, which is logged
+    /// @return true on success. On failure, logs the reason and returns false.
     ///
     bool computeTimeStamps(robot_trajectory::RobotTrajectory& trajectory,
                            double max_velocity_scaling_factor = 1.0,
@@ -85,7 +85,7 @@ class VIAM_TRAJEX_MOVEIT_TOTG_API time_parameterization final : public trajector
     /// @param acceleration_limits Acceleration limits by joint variable name
     /// @param max_velocity_scaling_factor Factor in (0, 1] applied to every velocity limit
     /// @param max_acceleration_scaling_factor Factor in (0, 1] applied to every acceleration limit
-    /// @return true on success, false on failure, which is logged
+    /// @return true on success. On failure, logs the reason and returns false.
     ///
     bool computeTimeStamps(robot_trajectory::RobotTrajectory& trajectory,
                            const std::unordered_map<std::string, double>& velocity_limits,
@@ -97,10 +97,10 @@ class VIAM_TRAJEX_MOVEIT_TOTG_API time_parameterization final : public trajector
     /// Time parameterizes a trajectory using limits from joint limit messages, falling back to the robot model.
     ///
     /// @param trajectory Trajectory to time parameterize, replaced by the result on success
-    /// @param joint_limits Joint limits; only those flagged as present are used
+    /// @param joint_limits Joint limits, of which only those flagged as present are used
     /// @param max_velocity_scaling_factor Factor in (0, 1] applied to every velocity limit
     /// @param max_acceleration_scaling_factor Factor in (0, 1] applied to every acceleration limit
-    /// @return true on success, false on failure, which is logged
+    /// @return true on success. On failure, logs the reason and returns false.
     ///
     bool computeTimeStamps(robot_trajectory::RobotTrajectory& trajectory,
                            const std::vector<moveit_msgs::msg::JointLimits>& joint_limits,

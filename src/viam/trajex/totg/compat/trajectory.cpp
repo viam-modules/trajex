@@ -11,7 +11,7 @@
 
 namespace viam::trajex::totg::compat {
 
-// Exactly one of the two is engaged.
+// Either the trajectory or the error is set, never both.
 struct Trajectory::impl {
     std::optional<totg::trajectory> trajectory;
     std::exception_ptr error;
