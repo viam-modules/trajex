@@ -890,16 +890,20 @@ void path::cursor::rich::invalidate_() noexcept {
     cached_bits_ = decltype(cached_bits_){};
 }
 
+// A seek that leaves the position where it was keeps the cache. The segment needs no check of its
+// own, since the hint does not move when the position does not. The integration loop seeks to each
+// step's start, which is usually where the previous step's probe left the cursor.
 path::cursor::rich& path::cursor::rich::seek(arc_length s) noexcept {
+    const auto before = position();
     cursor::seek(s);
-    invalidate_();
+    if (position() != before) {
+        invalidate_();
+    }
     return *this;
 }
 
 path::cursor::rich& path::cursor::rich::seek_by(arc_length delta) noexcept {
-    cursor::seek_by(delta);
-    invalidate_();
-    return *this;
+    return this->rich::seek(position() + delta);
 }
 
 const xvector<>& path::cursor::rich::configuration_ref() const {
@@ -912,6 +916,36 @@ const xvector<>& path::cursor::rich::tangent_ref() const {
 
 const xvector<>& path::cursor::rich::curvature_ref() const {
     return cached_(curvature_, k_curvature_bit_, [this](std::span<double> out) { cursor::curvature(out); });
+}
+
+xvector<> path::cursor::rich::configuration() const {
+    return configuration_ref();
+}
+
+xvector<> path::cursor::rich::tangent() const {
+    return tangent_ref();
+}
+
+xvector<> path::cursor::rich::curvature() const {
+    return curvature_ref();
+}
+
+void path::cursor::rich::configuration(std::span<double> out) const {
+    const auto& cached = configuration_ref();
+    require_dof(out, cached.size());
+    std::copy_n(cached.data(), cached.size(), out.data());
+}
+
+void path::cursor::rich::tangent(std::span<double> out) const {
+    const auto& cached = tangent_ref();
+    require_dof(out, cached.size());
+    std::copy_n(cached.data(), cached.size(), out.data());
+}
+
+void path::cursor::rich::curvature(std::span<double> out) const {
+    const auto& cached = curvature_ref();
+    require_dof(out, cached.size());
+    std::copy_n(cached.data(), cached.size(), out.data());
 }
 
 void path::cursor::update_hint_() noexcept {
