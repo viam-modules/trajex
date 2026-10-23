@@ -311,11 +311,11 @@ struct chain::translation_axis {
     std::array<double, 3> direction{};
 };
 
-// What every joint has: its origin as given, and the parent-to-joint transform (row-major 4x4)
-// build derives from it.
+// What every joint has: its origin as given, and the unit quaternion build derives from the
+// origin's rotation. The origin's translation is used as given.
 struct chain::joint_base_ {
     joint_origin origin;
-    std::array<double, 16> origin_tf;
+    std::array<double, 4> origin_rotation;
 };
 
 struct chain::fixed_joint_ : joint_base_ {};
