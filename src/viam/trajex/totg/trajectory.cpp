@@ -1411,6 +1411,11 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
             std::optional<switching_point_kind> current_kind{std::move(where.kind)};
             auto* first_forward_observer{traj.options_.observer};
 
+            // The limit curves the probe computed at the end of the last step, and where. A step that
+            // commits the probed point without moving it starts the next one exactly there, so these are
+            // the curves the top of the loop would otherwise compute again.
+            std::optional<std::pair<arc_length, limit_curves>> probed;
+
             while (true) {
                 cache.path_cursor.seek(current_point.s);
 
@@ -1434,10 +1439,8 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     // Check if we are currently at the velocity limit. If so, use tangent acceleration
                     // to follow the curve rather than max acceleration, which would immediately breach
                     // the limit and trigger bisection.
-                    //
-                    // TODO: In some cases, we may already know these limits for `current` from work
-                    // done below on `next`, so we could eliminate this call.
-                    const auto vl = compute_limit_curves(cache.path_cursor, traj.options_);
+                    const auto vl = (probed && probed->first == current_point.s) ? probed->second
+                                                                                 : compute_limit_curves(cache.path_cursor, traj.options_);
                     const auto s_dot_max_vel = vl.s_dot_max_vel;
 
                     // Find the upper limit for acceleration at this phase point.
@@ -1495,7 +1498,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                 const auto next_segment = *cache.path_cursor;
 
                 // Compute the velocity limits at the probe point.
-                const auto next_curves = compute_limit_curves(cache.path_cursor, traj.options_);
+                const auto& next_curves = probed.emplace(next_point.s, compute_limit_curves(cache.path_cursor, traj.options_)).second;
                 auto next_s_dot_max_acc = next_curves.s_dot_max_acc;
                 auto next_s_dot_max_vel = next_curves.s_dot_max_vel;
 
