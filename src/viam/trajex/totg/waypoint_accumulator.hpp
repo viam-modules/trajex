@@ -170,7 +170,7 @@ class VIAM_TRAJEX_TOTG_API waypoint_accumulator {
     template <waypoint_accumulator_details::waypoints_like T>
     waypoint_accumulator& add_waypoints(const T& waypoints) {
         require_rank_two_(waypoints);
-        require_matching_dof_(waypoints.shape()[1]);
+        require_matching_dof_(waypoints);
         append_rows_(waypoints);
         return *this;
     }
@@ -300,8 +300,8 @@ class VIAM_TRAJEX_TOTG_API waypoint_accumulator {
         }
     }
 
-    void require_matching_dof_(size_t dof) const {
-        if (dof != dof_) {
+    void require_matching_dof_(const auto& waypoints) const {
+        if (waypoints.shape()[1] != dof_) {
             throw std::invalid_argument{"Waypoints dimensions must match existing DOF"};
         }
     }

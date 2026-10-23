@@ -18,7 +18,7 @@ struct hertz {
     ///
     /// @param hz Frequency in Hz
     ///
-    explicit hertz(double hz) : value{hz} {}
+    explicit constexpr hertz(double hz) : value{hz} {}
 };
 
 }  // namespace viam::trajex::types

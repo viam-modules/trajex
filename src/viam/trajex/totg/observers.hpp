@@ -24,6 +24,10 @@ namespace viam::trajex::totg {
 /// @endcode
 ///
 class VIAM_TRAJEX_TOTG_API composite_integration_observer final : public trajectory::integration_observer {
+    struct pass_key_ {
+        explicit pass_key_() = default;
+    };
+
    public:
     ///
     /// Constructs an empty composite observer.
@@ -49,6 +53,11 @@ class VIAM_TRAJEX_TOTG_API composite_integration_observer final : public traject
     ///
     template <std::derived_from<integration_observer> T>
     std::shared_ptr<T> add_observer(std::shared_ptr<T> observer);
+
+    ///
+    /// The non-template part of add_observer, which only it can call.
+    ///
+    void add_observer(pass_key_, std::shared_ptr<integration_observer> observer);
 
     ///
     /// Dispatches forward integration start to all observers.
@@ -91,10 +100,6 @@ class VIAM_TRAJEX_TOTG_API composite_integration_observer final : public traject
     void on_failed(std::exception_ptr error, std::shared_ptr<const trajectory> invalid) noexcept override;
 
    private:
-    // This can't be hidden, because it's called from `add_observer`, which is a template and so
-    // is instantiated in the caller's translation unit.
-    void add_observer_(std::shared_ptr<integration_observer> observer);
-
     std::vector<std::shared_ptr<integration_observer>> observers_;
     bool dispatching_ = false;
 };
@@ -195,7 +200,7 @@ class VIAM_TRAJEX_TOTG_API trajectory_integration_event_collector final : public
 
 template <std::derived_from<trajectory::integration_observer> T>
 std::shared_ptr<T> composite_integration_observer::add_observer(std::shared_ptr<T> observer) {
-    add_observer_(observer);
+    add_observer(pass_key_{}, observer);
     return observer;
 }
 

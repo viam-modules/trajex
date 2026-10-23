@@ -619,7 +619,7 @@ class path::const_iterator {
    private:
     friend class path;
 
-    const_iterator(const path* p, std::vector<positioned_segment>::const_iterator it) noexcept : path_{p}, it_{it} {}
+    VIAM_TRAJEX_TOTG_HIDDEN const_iterator(const path* p, std::vector<positioned_segment>::const_iterator it) noexcept;
 
     const path* path_;
     std::vector<positioned_segment>::const_iterator it_;
@@ -995,9 +995,7 @@ class path::cursor::rich : private path::cursor {
     /// @param c Cursor to compare
     /// @return True if cursor is at sentinel position (past end or invalid)
     ///
-    friend bool operator==(const rich& c, std::default_sentinel_t) noexcept {
-        return static_cast<const cursor&>(c) == std::default_sentinel;
-    }
+    friend VIAM_TRAJEX_TOTG_API bool operator==(const rich& c, std::default_sentinel_t) noexcept;
 
     ///
     /// Compares end sentinel with cursor (reversed order).
@@ -1005,9 +1003,7 @@ class path::cursor::rich : private path::cursor {
     /// @param c Cursor to compare
     /// @return True if cursor is at sentinel position (past end or invalid)
     ///
-    friend bool operator==(std::default_sentinel_t, const rich& c) noexcept {
-        return static_cast<const cursor&>(c) == std::default_sentinel;
-    }
+    friend VIAM_TRAJEX_TOTG_API bool operator==(std::default_sentinel_t, const rich& c) noexcept;
 
    private:
     // Position of each component within cached_bits_. One bitset rather than a flag apiece, so
@@ -1020,17 +1016,8 @@ class path::cursor::rich : private path::cursor {
     // Called on any move: all three components belong to the position the cursor just left.
     VIAM_TRAJEX_TOTG_HIDDEN void invalidate_() noexcept;
 
-    // A throwing fill leaves the bit clear, so a query that failed is not later mistaken for
-    // one that succeeded.
     template <typename Fill>
-    const xvector<>& cached_(xvector<>& storage, std::size_t bit, Fill&& fill) const {
-        if (!cached_bits_.test(bit)) {
-            std::forward<Fill>(fill)(std::span<double>{storage.data(), storage.size()});
-            cached_bits_.set(bit);
-        }
-
-        return storage;
-    }
+    const xvector<>& cached_(xvector<>& storage, std::size_t bit, Fill&& fill) const;
 
     // Filled by const accessors, hence mutable. Never released while the cursor lives, which is
     // what lets the accessors hand back references. An optional<> would free and reallocate on

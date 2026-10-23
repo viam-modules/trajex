@@ -201,7 +201,7 @@ inline arc_length abs(arc_length len) noexcept {
 /// @param t Interpolation factor (0.0 yields a, 1.0 yields b)
 /// @return Interpolated arc length
 ///
-inline arc_length lerp(arc_length a, arc_length b, double t) {
+constexpr arc_length lerp(arc_length a, arc_length b, double t) {
     return arc_length{std::lerp(static_cast<double>(a), static_cast<double>(b), t)};
 }
 
@@ -214,7 +214,7 @@ inline arc_length lerp(arc_length a, arc_length b, double t) {
 /// @param b Second arc length
 /// @return Midpoint arc length
 ///
-inline arc_length midpoint(arc_length a, arc_length b) {
+constexpr arc_length midpoint(arc_length a, arc_length b) {
     return arc_length{std::midpoint(static_cast<double>(a), static_cast<double>(b))};
 }
 
