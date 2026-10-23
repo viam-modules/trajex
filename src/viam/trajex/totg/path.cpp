@@ -1,11 +1,10 @@
-#include <ranges>
 #include <viam/trajex/totg/path.hpp>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <numbers>
 #include <optional>
+#include <ranges>
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
