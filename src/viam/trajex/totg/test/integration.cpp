@@ -2821,6 +2821,16 @@ BOOST_AUTO_TEST_CASE(orbsanding_3c08d6c4_plan003_trajectory_generation) {
                                          k_local_joint_kinematics_tolerance_override);
 }
 
+// The record behind the TCP-bound benchmark, with the TCP cap binding at every integration point.
+BOOST_AUTO_TEST_CASE(orbsanding_xarm850_tcp_bound_trajectory_generation) {
+    // TODO(RSDK-13890): Reduce these tolerances
+    constexpr auto k_local_trajectory_invariants_tolerance_override = 0.001;
+    constexpr auto k_local_joint_kinematics_tolerance_override = 6.0;
+    generate_trajectory_from_replay_file("orbsanding-xarm850-tcp-bound-20261022.trajex-totg-replay.json",
+                                         k_local_trajectory_invariants_tolerance_override,
+                                         k_local_joint_kinematics_tolerance_override);
+}
+
 BOOST_AUTO_TEST_CASE(failed_trajectory_2f698337_eae1c945_trajectory_generation) {
     // TODO(RSDK-13890): Reduce these tolerances
     constexpr auto k_local_trajectory_invariants_tolerance_override = 214.0;

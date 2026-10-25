@@ -780,6 +780,32 @@ BOOST_AUTO_TEST_CASE(every_frame_matches_its_prefix_chain) {
     check_forward_kinematics_at_every_frame(mixed_chain(), {0.3, -0.6, 0.2, 1.1}, {0.5, 0.4, -0.7, 0.2}, {-0.3, 0.1, 0.2, 0.6});
 }
 
+// A workspace is storage reused from call to call, so reuse is where it could go wrong. One
+// workspace is carried through every frame of chains of different lengths, a longer one after a
+// shorter so that its storage has to grow, and each result must be exactly what a call without
+// it gives.
+BOOST_AUTO_TEST_CASE(reused_workspace_matches_fresh_call) {
+    chain::workspace storage;
+
+    const auto check = [&storage](const test_chain& joints, const xvector<>& q, const xvector<>& q_dot, const xvector<>& q_ddot) {
+        const auto c = build_chain(joints);
+        for (std::size_t frame = 0; frame < c.size(); ++frame) {
+            BOOST_TEST_CONTEXT("frame " << frame) {
+                const auto fresh = c.forward_kinematics(frame, q, q_dot, q_ddot);
+                const auto reused = c.forward_kinematics(frame, q, q_dot, q_ddot, storage);
+                BOOST_CHECK(reused.position == fresh.position);
+                BOOST_CHECK(reused.linear_velocity == fresh.linear_velocity);
+                BOOST_CHECK(reused.linear_acceleration == fresh.linear_acceleration);
+            }
+        }
+    };
+
+    check(twolink_chain(), {0.3, -0.7}, {1.0, 0.5}, {0.2, -0.4});
+    check(sixdof_arm_chain(), {0.1, -0.5, 1.2, -0.3, 0.6, -0.1}, {0.2, 0.7, -0.4, 0.5, -0.6, 0.3}, {-0.1, 0.3, 0.2, -0.5, 0.4, -0.2});
+    check(mixed_chain(), {0.3, -0.6, 0.2, 1.1}, {0.5, 0.4, -0.7, 0.2}, {-0.3, 0.1, 0.2, 0.6});
+    check(sixdof_arm_chain(), {-0.4, 0.9, -0.2, 1.1, -0.7, 0.5}, {-0.3, 0.2, 0.6, -0.1, 0.4, -0.5}, {0.2, -0.1, 0.3, 0.4, -0.3, 0.1});
+}
+
 BOOST_AUTO_TEST_SUITE_END()
 
 // The tests in this suite validate trajectory::tcp_limits::from, whose evaluator reports the TCP's

@@ -971,8 +971,14 @@ BOOST_AUTO_TEST_CASE(rich_matches_plain_cursor_at_many_positions) {
     for (int step = 0; step <= 20; ++step) {
         const auto s = fraction_of(p.length(), static_cast<double>(step) / 20.0);
 
-        plain.seek(s);
-        r.seek(s);
+        // Alternate steps move by seek_by, which both cursors compute the same way.
+        if (step % 2 == 0) {
+            plain.seek(s);
+            r.seek(s);
+        } else {
+            plain.seek_by(s - plain.position());
+            r.seek_by(s - r.position());
+        }
 
         BOOST_CHECK_EQUAL(r.position(), plain.position());
 
@@ -984,11 +990,18 @@ BOOST_AUTO_TEST_CASE(rich_matches_plain_cursor_at_many_positions) {
         check_exactly_equal(plain.tangent(), {tangent.data(), tangent.size()});
         check_exactly_equal(plain.curvature(), {curvature.data(), curvature.size()});
 
-        // The inherited value accessors must agree with the borrowing ones, so that generic
+        // A seek to where the cursor already is keeps the cache, and must not change the answers.
+        r.seek(r.position());
+
+        // The value and span accessors read the same cache as the borrowing ones, so that generic
         // code reaching a rich cursor through cursor_like sees the same geometry.
         check_exactly_equal(r.configuration(), {configuration.data(), configuration.size()});
         check_exactly_equal(r.tangent(), {tangent.data(), tangent.size()});
         check_exactly_equal(r.curvature(), {curvature.data(), curvature.size()});
+
+        std::vector<double> filled(tangent.size());
+        r.tangent(filled);
+        check_exactly_equal(plain.tangent(), filled);
     }
 }
 
