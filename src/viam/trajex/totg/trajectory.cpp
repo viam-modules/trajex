@@ -129,7 +129,12 @@ tcp_velocity_limit compute_tcp_velocity_limit(const xvector<>& q,
     // the centripetal acceleration term q''(s)*s_dot^2 that appears when following a curved
     // path. The result is a set of downward-facing parabolas centered at the origin, and we
     // take the minimum of their positive bounds to find the feasible path velocity.
-    arc_velocity s_dot_max_accel{std::numeric_limits<double>::infinity()};
+    //
+    // Note that a mechanical translation of Eq. 31 would have several sqrt calls inside the
+    // loops here. Instead, since sqrt is monotone, we work in squared arc_velocity space,
+    // and defer the conversion back to arc_velocity space to a single terminal sqrt call.
+    // There is no strong type for squared arc velocity, so we just use double until the end.
+    double s_dot_max_accel_sq{std::numeric_limits<double>::infinity()};
 
     // For each pair of joints that are moving along the path, compare their curvature ratios
     // q''(s)/q'(s). When these ratios differ, the joints are curving at different rates, which
@@ -139,12 +144,14 @@ tcp_velocity_limit compute_tcp_velocity_limit(const xvector<>& q,
             continue;
         }
 
+        const auto curvature_ratio_i = q_double_prime(i) / q_prime(i);
+        const auto accel_sum_i_term = q_ddot_max(i) / std::abs(q_prime(i));
+
         for (size_t j = i + 1; j < q_prime.size(); ++j) {
             if (std::abs(q_prime(j)) < epsilon) {
                 continue;
             }
 
-            const auto curvature_ratio_i = q_double_prime(i) / q_prime(i);
             const auto curvature_ratio_j = q_double_prime(j) / q_prime(j);
             const auto curvature_difference = std::abs(curvature_ratio_i - curvature_ratio_j);
 
@@ -152,9 +159,10 @@ tcp_velocity_limit compute_tcp_velocity_limit(const xvector<>& q,
                 continue;
             }
 
-            const auto accel_sum = (q_ddot_max(i) / std::abs(q_prime(i))) + (q_ddot_max(j) / std::abs(q_prime(j)));
-            const auto limit = std::sqrt(accel_sum / curvature_difference);
-            s_dot_max_accel = std::min(s_dot_max_accel, arc_velocity{limit});
+            const auto accel_sum_j_term = q_ddot_max(j) / std::abs(q_prime(j));
+            const auto limit_sq = (accel_sum_i_term + accel_sum_j_term) / curvature_difference;
+
+            s_dot_max_accel_sq = std::min(s_dot_max_accel_sq, limit_sq);
         }
     }
 
@@ -171,11 +179,11 @@ tcp_velocity_limit compute_tcp_velocity_limit(const xvector<>& q,
             continue;
         }
 
-        const auto limit = std::sqrt(q_ddot_max(i) / std::abs(q_double_prime(i)));
-        s_dot_max_accel = std::min(s_dot_max_accel, arc_velocity{limit});
+        const auto limit_sq = q_ddot_max(i) / std::abs(q_double_prime(i));
+        s_dot_max_accel_sq = std::min(s_dot_max_accel_sq, limit_sq);
     }
 
-    return s_dot_max_accel;
+    return arc_velocity{std::sqrt(s_dot_max_accel_sq)};
 }
 
 // Every limit curve at one point on the path, with what the velocity curve's slope needs from that
