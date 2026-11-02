@@ -1,24 +1,25 @@
 //go:build !windows && cgo
 
-package viamapi_test
+package rdk_test
 
 import (
 	"math"
 	"testing"
 
+	"github.com/golang/geo/r3"
 	commonpb "go.viam.com/api/common/v1"
 	robotpb "go.viam.com/api/robot/v1"
 	"go.viam.com/test"
 
 	"github.com/viam-modules/trajex/go/kinematics"
-	"github.com/viam-modules/trajex/go/viamapi"
+	"github.com/viam-modules/trajex/go/rdk"
 )
 
-// The chains here are small enough to work out by hand, which is what pins
+// The messages here are small enough to work out by hand, which is what pins
 // down the conventions: which way links compose, where a joint's origin sits,
 // and how each orientation form on the wire turns into a rotation. Agreement
-// with RDK's own reading of the same messages is checked in the rdk package,
-// which may import RDK; this one must not.
+// with RDK's own forward kinematics over its shipped models is checked in
+// joints_test.go.
 
 func link(id, parent string, x, y, z float64, orientation any) *commonpb.KinematicLink {
 	pose := &commonpb.LinkPose{Translation: &commonpb.Vector3{X: x, Y: y, Z: z}}
@@ -68,47 +69,32 @@ func planarArm() *commonpb.KinematicModel {
 	}
 }
 
-func planarEnd(q1, q2 float64) [3]float64 {
-	return [3]float64{100*math.Cos(q1) + 80*math.Cos(q1+q2), 100*math.Sin(q1) + 80*math.Sin(q1+q2), 0}
-}
-
-func chain(t *testing.T, joints []kinematics.Joint, err error) *kinematics.Chain {
-	t.Helper()
-	test.That(t, err, test.ShouldBeNil)
-	c, err := kinematics.NewChain(joints)
-	test.That(t, err, test.ShouldBeNil)
-	t.Cleanup(c.Close)
-	return c
+func planarEnd(q1, q2 float64) r3.Vector {
+	return r3.Vector{X: 100*math.Cos(q1) + 80*math.Cos(q1+q2), Y: 100*math.Sin(q1) + 80*math.Sin(q1+q2)}
 }
 
 func modelChain(t *testing.T, m *commonpb.KinematicModel, outputFrame string) *kinematics.Chain {
 	t.Helper()
-	joints, err := viamapi.JointsFromKinematicModel(m, outputFrame)
-	return chain(t, joints, err)
+	joints, err := rdk.JointsFromKinematicModel(m, outputFrame)
+	test.That(t, err, test.ShouldBeNil)
+	return newChain(t, joints)
 }
 
 func partsChain(t *testing.T, parts []*robotpb.FrameSystemConfig, tip string) *kinematics.Chain {
 	t.Helper()
-	joints, err := viamapi.JointsFromFrameSystemConfig(parts, tip)
-	return chain(t, joints, err)
-}
-
-func endIs(t *testing.T, c *kinematics.Chain, q []float64, want [3]float64) {
-	t.Helper()
-	got, err := c.EndPosition(q)
+	joints, err := rdk.JointsFromFrameSystemConfig(parts, tip)
 	test.That(t, err, test.ShouldBeNil)
-	for i := range want {
-		test.That(t, got[i], test.ShouldAlmostEqual, want[i], 1e-9)
-	}
+	return newChain(t, joints)
 }
 
 func TestPlanarArmMatchesTrigonometry(t *testing.T) {
-	joints, err := viamapi.JointsFromKinematicModel(planarArm(), "")
-	c := chain(t, joints, err)
+	joints, err := rdk.JointsFromKinematicModel(planarArm(), "")
+	test.That(t, err, test.ShouldBeNil)
 	// two moving joints and the fixed joint every chain ends in
 	test.That(t, len(joints), test.ShouldEqual, 3)
+	c := newChain(t, joints)
 	for _, q := range [][2]float64{{0, 0}, {0.3, -1.1}, {2.5, 0.4}, {-3, 3}} {
-		endIs(t, c, q[:], planarEnd(q[0], q[1]))
+		endMatches(t, c, q[:], planarEnd(q[0], q[1]))
 	}
 }
 
@@ -123,49 +109,45 @@ func TestRotatedLinkTurnsAPrismaticJoint(t *testing.T) {
 		Joints: []*commonpb.KinematicJoint{joint("slide", "base", prismatic, 1, 0, 0)},
 	}
 	c := modelChain(t, m, "")
-	endIs(t, c, []float64{0}, [3]float64{0, 10, 0})
-	endIs(t, c, []float64{25}, [3]float64{0, 35, 0})
+	endMatches(t, c, []float64{0}, r3.Vector{Y: 10})
+	endMatches(t, c, []float64{25}, r3.Vector{Y: 35})
 }
 
 // Every orientation form is checked by what it does to a link placed after
-// it, against the rotation the values spell out.
+// it, against the rotation the values spell out, so a change in how RDK reads
+// a form shows up here as a moved end.
 func TestOrientationForms(t *testing.T) {
 	r := 1 / math.Sqrt2
 	for _, tc := range []struct {
 		name        string
 		orientation any
-		after       [3]float64
-		want        [3]float64
+		after       r3.Vector
+		want        r3.Vector
 	}{
-		{"quaternion 90 about z", &commonpb.LinkPose_Quaternion{Quaternion: &commonpb.Quaternion{W: r, Z: r}}, [3]float64{10, 0, 0}, [3]float64{0, 10, 0}},
-		{"quaternion not of unit length", &commonpb.LinkPose_Quaternion{Quaternion: &commonpb.Quaternion{W: 2, Z: 2}}, [3]float64{10, 0, 0}, [3]float64{0, 10, 0}},
-		{"euler roll 90", &commonpb.LinkPose_EulerAngles{EulerAngles: &commonpb.EulerAngles{Roll: 90}}, [3]float64{0, 10, 0}, [3]float64{0, 0, 10}},
-		{"euler yaw 90", yaw(90), [3]float64{10, 0, 0}, [3]float64{0, 10, 0}},
-		{"axis angles with a non-unit axis", &commonpb.LinkPose_AxisAngles{AxisAngles: &commonpb.AxisAngles{Rx: 3, Theta: 90}}, [3]float64{0, 10, 0}, [3]float64{0, 0, 10}},
+		{"quaternion 90 about z", &commonpb.LinkPose_Quaternion{Quaternion: &commonpb.Quaternion{W: r, Z: r}}, r3.Vector{X: 10}, r3.Vector{Y: 10}},
+		{"quaternion not of unit length", &commonpb.LinkPose_Quaternion{Quaternion: &commonpb.Quaternion{W: 2, Z: 2}}, r3.Vector{X: 10}, r3.Vector{Y: 10}},
+		{"euler roll 90", &commonpb.LinkPose_EulerAngles{EulerAngles: &commonpb.EulerAngles{Roll: 90}}, r3.Vector{Y: 10}, r3.Vector{Z: 10}},
+		{"euler yaw 90", yaw(90), r3.Vector{X: 10}, r3.Vector{Y: 10}},
+		{"axis angles with a non-unit axis", &commonpb.LinkPose_AxisAngles{AxisAngles: &commonpb.AxisAngles{Rx: 3, Theta: 90}}, r3.Vector{Y: 10}, r3.Vector{Z: 10}},
 		// an orientation vector along z with theta is a turn about z
-		{"orientation vector about z", &commonpb.LinkPose_OrientationVector{OrientationVector: &commonpb.Orientation{OZ: 1, Theta: 90}}, [3]float64{10, 0, 0}, [3]float64{0, 10, 0}},
+		{"orientation vector about z", &commonpb.LinkPose_OrientationVector{OrientationVector: &commonpb.Orientation{OZ: 1, Theta: 90}}, r3.Vector{X: 10}, r3.Vector{Y: 10}},
 		// RDK reads a zero quaternion as no rotation rather than refusing it
-		{"zero quaternion", &commonpb.LinkPose_Quaternion{Quaternion: &commonpb.Quaternion{}}, [3]float64{10, 0, 0}, [3]float64{10, 0, 0}},
+		{"zero quaternion", &commonpb.LinkPose_Quaternion{Quaternion: &commonpb.Quaternion{}}, r3.Vector{X: 10}, r3.Vector{X: 10}},
 		// pointing z along x is a turn of 90 about y, which sends x to minus z
-		{"orientation vector along x", &commonpb.LinkPose_OrientationVector{OrientationVector: &commonpb.Orientation{OX: 5}}, [3]float64{10, 0, 0}, [3]float64{0, 0, -10}},
+		{"orientation vector along x", &commonpb.LinkPose_OrientationVector{OrientationVector: &commonpb.Orientation{OX: 5}}, r3.Vector{X: 10}, r3.Vector{Z: -10}},
 		// within the pole radius theta is measured without the vector's longitude, so a vector a hair off
 		// z at 45 degrees of longitude with theta 30 is still a turn of 30 about z, not 75
-		{"orientation vector near the pole", &commonpb.LinkPose_OrientationVector{OrientationVector: &commonpb.Orientation{OX: 1e-7, OY: 1e-7, OZ: 1, Theta: 30}}, [3]float64{10, 0, 0}, [3]float64{10 * math.Cos(math.Pi/6), 10 * math.Sin(math.Pi/6), 0}},
+		{"orientation vector near the pole", &commonpb.LinkPose_OrientationVector{OrientationVector: &commonpb.Orientation{OX: 1e-7, OY: 1e-7, OZ: 1, Theta: 30}}, r3.Vector{X: 10}, r3.Vector{X: 10 * math.Cos(math.Pi/6), Y: 10 * math.Sin(math.Pi/6)}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := &commonpb.KinematicModel{
 				Links: []*commonpb.KinematicLink{
 					link("turn", "world", 0, 0, 0, tc.orientation),
-					link("after", "turn", tc.after[0], tc.after[1], tc.after[2], nil),
+					link("after", "turn", tc.after.X, tc.after.Y, tc.after.Z, nil),
 				},
 			}
-			c := modelChain(t, m, "")
-			got, err := c.EndPosition(nil)
-			test.That(t, err, test.ShouldBeNil)
 			// the near pole case leans the frame by its vector's small tilt, which moves the end by about a micrometre
-			for i := range tc.want {
-				test.That(t, got[i], test.ShouldAlmostEqual, tc.want[i], 1e-5)
-			}
+			endWithin(t, modelChain(t, m, ""), nil, tc.want, 1e-5)
 		})
 	}
 }
@@ -181,42 +163,42 @@ func TestOutputFrameChoice(t *testing.T) {
 
 	t.Run("the model's output frame", func(t *testing.T) {
 		c := modelChain(t, forked("fore"), "")
-		endIs(t, c, []float64{0, 0}, [3]float64{180, 0, 0})
+		endMatches(t, c, []float64{0, 0}, r3.Vector{X: 180})
 	})
 	t.Run("a frame the caller names", func(t *testing.T) {
 		c := modelChain(t, forked("fore"), "spur")
-		endIs(t, c, []float64{0, 0}, [3]float64{100, 30, 0})
+		endMatches(t, c, []float64{0, 0}, r3.Vector{X: 100, Y: 30})
 	})
 	t.Run("a frame past the model's output", func(t *testing.T) {
 		m := planarArm()
 		m.OutputFrames = []string{"fore"}
 		m.Links = append(m.Links, link("tool", "fore", 0, 0, 25, nil))
 		c := modelChain(t, m, "tool")
-		endIs(t, c, []float64{0, 0}, [3]float64{180, 0, 25})
+		endMatches(t, c, []float64{0, 0}, r3.Vector{X: 180, Z: 25})
 	})
 	t.Run("the single leaf when none is named", func(t *testing.T) {
 		c := modelChain(t, planarArm(), "")
-		endIs(t, c, []float64{0, 0}, [3]float64{180, 0, 0})
+		endMatches(t, c, []float64{0, 0}, r3.Vector{X: 180})
 	})
 	t.Run("several output frames", func(t *testing.T) {
-		_, err := viamapi.JointsFromKinematicModel(forked("fore", "spur"), "")
+		_, err := rdk.JointsFromKinematicModel(forked("fore", "spur"), "")
 		test.That(t, err, test.ShouldNotBeNil)
-		test.That(t, err.Error(), test.ShouldContainSubstring, "2 output frames [fore spur]")
+		test.That(t, err.Error(), test.ShouldContainSubstring, "multiple output frames are not yet supported")
 	})
 	t.Run("two leaves and none named", func(t *testing.T) {
-		_, err := viamapi.JointsFromKinematicModel(forked(), "")
+		_, err := rdk.JointsFromKinematicModel(forked(), "")
 		test.That(t, err, test.ShouldNotBeNil)
-		test.That(t, err.Error(), test.ShouldContainSubstring, "2 leaves [fore spur]")
+		test.That(t, err.Error(), test.ShouldContainSubstring, "need exactly one end effector")
 	})
 	t.Run("a frame the model lacks", func(t *testing.T) {
-		_, err := viamapi.JointsFromKinematicModel(planarArm(), "nowhere")
+		_, err := rdk.JointsFromKinematicModel(planarArm(), "nowhere")
 		test.That(t, err, test.ShouldNotBeNil)
 		test.That(t, err.Error(), test.ShouldContainSubstring, `"nowhere" is not a link or joint`)
 		m := planarArm()
 		m.OutputFrames = []string{"nowhere"}
-		_, err = viamapi.JointsFromKinematicModel(m, "")
+		_, err = rdk.JointsFromKinematicModel(m, "")
 		test.That(t, err, test.ShouldNotBeNil)
-		test.That(t, err.Error(), test.ShouldContainSubstring, `"nowhere" is not a link or joint`)
+		test.That(t, err.Error(), test.ShouldContainSubstring, `output frame "nowhere" not found`)
 	})
 }
 
@@ -229,7 +211,7 @@ func TestInputOrder(t *testing.T) {
 		m := planarArm()
 		m.Joints[0], m.Joints[1] = m.Joints[1], m.Joints[0]
 		c := modelChain(t, m, "")
-		endIs(t, c, []float64{0.3, -1.1}, planarEnd(0.3, -1.1))
+		endMatches(t, c, []float64{0.3, -1.1}, planarEnd(0.3, -1.1))
 	})
 	t.Run("siblings are ordered by id, not by the message", func(t *testing.T) {
 		// aardvark is listed after elbow but sorts before it, so RDK takes its position first
@@ -237,7 +219,7 @@ func TestInputOrder(t *testing.T) {
 		m.Joints = append(m.Joints, joint("aardvark", "upper", revolute, 0, 1, 0))
 		m.Links = append(m.Links, link("aardvark_tip", "aardvark", 0, 0, 5, nil))
 		m.OutputFrames = []string{"fore"}
-		_, err := viamapi.JointsFromKinematicModel(m, "")
+		_, err := rdk.JointsFromKinematicModel(m, "")
 		test.That(t, err, test.ShouldNotBeNil)
 		test.That(t, err.Error(), test.ShouldContainSubstring, "takes inputs for joints [shoulder aardvark elbow]")
 	})
@@ -246,7 +228,7 @@ func TestInputOrder(t *testing.T) {
 		m.Joints = append(m.Joints, joint("finger", "base", revolute, 0, 1, 0))
 		m.Links = append(m.Links, link("fingertip", "finger", 0, 0, 5, nil))
 		m.OutputFrames = []string{"fore"}
-		_, err := viamapi.JointsFromKinematicModel(m, "")
+		_, err := rdk.JointsFromKinematicModel(m, "")
 		test.That(t, err, test.ShouldNotBeNil)
 		test.That(t, err.Error(), test.ShouldContainSubstring, "takes inputs for joints [finger shoulder elbow]")
 		test.That(t, err.Error(), test.ShouldContainSubstring, "moves joints [shoulder elbow]")
@@ -260,14 +242,13 @@ func TestInputOrder(t *testing.T) {
 		m.Links = append(m.Links, link("follower_tip", "follower", 0, 0, 5, nil))
 		m.OutputFrames = []string{"fore"}
 		c := modelChain(t, m, "")
-		endIs(t, c, []float64{0.3, -1.1}, planarEnd(0.3, -1.1))
+		endMatches(t, c, []float64{0.3, -1.1}, planarEnd(0.3, -1.1))
 	})
 }
 
-// Each refusal stands in for a chain that would be wrong rather than missing:
-// a mimic joint has no position of its own, a cycle never reaches a root, a
-// joint without an axis would only be refused by index once the chain is
-// built, and a bad orientation would quietly become the identity.
+// Each refusal stands in for a chain that would be wrong rather than missing.
+// Most come from RDK loading the message. The rest are shapes RDK loads but
+// trajex cannot drive with the model's positions, or that RDK panics on.
 func TestRefusals(t *testing.T) {
 	cyclic := planarArm()
 	cyclic.Links[0].Parent = "fore"
@@ -307,16 +288,16 @@ func TestRefusals(t *testing.T) {
 		{"empty", &commonpb.KinematicModel{Name: "hollow"}, `model "hollow" has no links or joints`},
 		{"duplicate id", duplicate, `names "upper" more than once`},
 		{"missing id", unnamed, "with no id"},
-		{"cycle on the path", cyclic, "is a cycle"},
-		{"cycle off the path", strayCycle, "do not descend from its root"},
+		{"cycle on the path", cyclic, "infinite loop finding path"},
+		{"cycle off the path", strayCycle, "infinite loop finding path"},
 		{"mimic on the path", mimicOnPath, `joint "elbow" mimics another joint`},
 		{"joint without an axis", noAxis, `joint "elbow" has no axis`},
-		{"joint of an unknown type", unknownType, `joint "elbow" has type JOINT_TYPE_UNSPECIFIED`},
-		{"zero orientation vector", zeroOrientationVector, `link "base" of model "planar": orientation vector is zero`},
-		{"zero axis in axis angles", zeroAxisAngles, `link "base" of model "planar": axis angles have a zero axis`},
+		{"joint of an unknown type", unknownType, `unsupported joint type detected: "JOINT_TYPE_UNSPECIFIED"`},
+		{"zero orientation vector", zeroOrientationVector, "has a normal of 0"},
+		{"zero axis in axis angles", zeroAxisAngles, `link "base" of model "planar" turns about a zero axis`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := viamapi.JointsFromKinematicModel(tc.model, "")
+			_, err := rdk.JointsFromKinematicModel(tc.model, "")
 			test.That(t, err, test.ShouldNotBeNil)
 			test.That(t, err.Error(), test.ShouldContainSubstring, tc.want)
 		})
@@ -341,26 +322,27 @@ func TestFrameSystemConfig(t *testing.T) {
 	mount := part("mount", "world", 100, 0, 0, 90, nil)
 	arm := part("arm", "mount", 0, 0, 50, 0, planarArm())
 	// the arm's end seen from the mount is 50 mm up, and the mount turns x into y
-	expect := func(q1, q2 float64) [3]float64 {
+	expect := func(q1, q2 float64) r3.Vector {
 		p := planarEnd(q1, q2)
-		return [3]float64{100 - p[1], p[0], 50}
+		return r3.Vector{X: 100 - p.Y, Y: p.X, Z: 50}
 	}
 
 	t.Run("a mount and an arm", func(t *testing.T) {
-		joints, err := viamapi.JointsFromFrameSystemConfig([]*robotpb.FrameSystemConfig{arm, mount}, "arm")
-		c := chain(t, joints, err)
+		joints, err := rdk.JointsFromFrameSystemConfig([]*robotpb.FrameSystemConfig{arm, mount}, "arm")
+		test.That(t, err, test.ShouldBeNil)
 		// the two fixed transforms fold into the first joint's origin
 		test.That(t, len(joints), test.ShouldEqual, 3)
+		c := newChain(t, joints)
 		for _, q := range [][2]float64{{0, 0}, {0.3, -1.1}, {2.5, 0.4}} {
-			endIs(t, c, q[:], expect(q[0], q[1]))
+			endMatches(t, c, q[:], expect(q[0], q[1]))
 		}
 	})
 	t.Run("a part off the path takes no positions", func(t *testing.T) {
 		other := part("other", "world", -300, 0, 0, 0, planarArm())
-		joints, err := viamapi.JointsFromFrameSystemConfig([]*robotpb.FrameSystemConfig{other, arm, mount}, "arm")
-		c := chain(t, joints, err)
+		joints, err := rdk.JointsFromFrameSystemConfig([]*robotpb.FrameSystemConfig{other, arm, mount}, "arm")
+		test.That(t, err, test.ShouldBeNil)
 		test.That(t, len(joints), test.ShouldEqual, 3)
-		endIs(t, c, []float64{0.3, -1.1}, expect(0.3, -1.1))
+		endMatches(t, newChain(t, joints), []float64{0.3, -1.1}, expect(0.3, -1.1))
 	})
 	t.Run("a part pose with no orientation vector turns about z", func(t *testing.T) {
 		flat := &robotpb.FrameSystemConfig{Frame: &commonpb.Transform{
@@ -368,11 +350,11 @@ func TestFrameSystemConfig(t *testing.T) {
 			PoseInObserverFrame: &commonpb.PoseInFrame{ReferenceFrame: "world", Pose: &commonpb.Pose{X: 5, Theta: 90}},
 		}}
 		c := partsChain(t, []*robotpb.FrameSystemConfig{flat, part("on_flat", "flat", 10, 0, 0, 0, nil)}, "on_flat")
-		endIs(t, c, nil, [3]float64{5, 10, 0})
+		endMatches(t, c, nil, r3.Vector{X: 5, Y: 10})
 	})
 	t.Run("the mount alone is a fixed transform", func(t *testing.T) {
 		c := partsChain(t, []*robotpb.FrameSystemConfig{arm, mount}, "mount")
-		endIs(t, c, nil, [3]float64{100, 0, 0})
+		endMatches(t, c, nil, r3.Vector{X: 100})
 	})
 	t.Run("positions run from the part nearest world outward", func(t *testing.T) {
 		gantry := part("gantry", "world", 0, 0, 0, 0, &commonpb.KinematicModel{
@@ -385,14 +367,14 @@ func TestFrameSystemConfig(t *testing.T) {
 		riding := part("arm", "gantry", 0, 0, 50, 0, planarArm())
 		c := partsChain(t, []*robotpb.FrameSystemConfig{riding, gantry}, "arm")
 		p := planarEnd(0.3, -1.1)
-		endIs(t, c, []float64{40, 0.3, -1.1}, [3]float64{40 + p[0], p[1], 50})
+		endMatches(t, c, []float64{40, 0.3, -1.1}, r3.Vector{X: 40 + p.X, Y: p.Y, Z: 50})
 	})
 	t.Run("a model with no name is named after its part", func(t *testing.T) {
 		m := planarArm()
 		m.Name = ""
 		m.Joints = append(m.Joints, joint("finger", "base", revolute, 0, 1, 0))
 		m.OutputFrames = []string{"fore"}
-		_, err := viamapi.JointsFromFrameSystemConfig([]*robotpb.FrameSystemConfig{part("gripper", "world", 0, 0, 0, 0, m)}, "gripper")
+		_, err := rdk.JointsFromFrameSystemConfig([]*robotpb.FrameSystemConfig{part("gripper", "world", 0, 0, 0, 0, m)}, "gripper")
 		test.That(t, err, test.ShouldNotBeNil)
 		test.That(t, err.Error(), test.ShouldContainSubstring, `model "gripper" takes inputs`)
 	})
@@ -405,13 +387,14 @@ func TestFrameSystemConfig(t *testing.T) {
 	}{
 		{"no tip", []*robotpb.FrameSystemConfig{mount}, "", "tip of the chain is not named"},
 		{"unknown tip", []*robotpb.FrameSystemConfig{mount}, "arm", `has no part "arm"`},
-		{"part without a frame", []*robotpb.FrameSystemConfig{{}}, "arm", "part 0 of the frame system has no frame name"},
+		{"part without a frame", []*robotpb.FrameSystemConfig{{}}, "arm", "part 0 of the frame system"},
+		{"part without a parent", []*robotpb.FrameSystemConfig{part("loose", "", 0, 0, 0, 0, nil)}, "loose", "part 0 of the frame system"},
 		{"duplicate part", []*robotpb.FrameSystemConfig{mount, mount}, "mount", `names part "mount" more than once`},
 		{"parent that is not a part", []*robotpb.FrameSystemConfig{arm}, "arm", `part "arm" hangs from "mount", which is not a part`},
 		{"cycle", []*robotpb.FrameSystemConfig{part("a", "b", 0, 0, 0, 0, nil), part("b", "a", 0, 0, 0, 0, nil)}, "a", "is a cycle"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := viamapi.JointsFromFrameSystemConfig(tc.parts, tc.tip)
+			_, err := rdk.JointsFromFrameSystemConfig(tc.parts, tc.tip)
 			test.That(t, err, test.ShouldNotBeNil)
 			test.That(t, err.Error(), test.ShouldContainSubstring, tc.want)
 		})

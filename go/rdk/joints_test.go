@@ -18,7 +18,6 @@ import (
 
 	"github.com/viam-modules/trajex/go/kinematics"
 	"github.com/viam-modules/trajex/go/rdk"
-	"github.com/viam-modules/trajex/go/viamapi"
 )
 
 // RDK's own forward kinematics is the reference throughout. Comparing the end
@@ -67,11 +66,16 @@ func randomPositions(m referenceframe.Model, rng *rand.Rand) []float64 {
 
 func endMatches(t *testing.T, chain *kinematics.Chain, q []float64, want r3.Vector) {
 	t.Helper()
+	endWithin(t, chain, q, want, 1e-6)
+}
+
+func endWithin(t *testing.T, chain *kinematics.Chain, q []float64, want r3.Vector, tolerance float64) {
+	t.Helper()
 	got, err := chain.EndPosition(q)
 	test.That(t, err, test.ShouldBeNil)
-	test.That(t, got[0], test.ShouldAlmostEqual, want.X, 1e-6)
-	test.That(t, got[1], test.ShouldAlmostEqual, want.Y, 1e-6)
-	test.That(t, got[2], test.ShouldAlmostEqual, want.Z, 1e-6)
+	test.That(t, got[0], test.ShouldAlmostEqual, want.X, tolerance)
+	test.That(t, got[1], test.ShouldAlmostEqual, want.Y, tolerance)
+	test.That(t, got[2], test.ShouldAlmostEqual, want.Z, tolerance)
 }
 
 // Every arm model RDK ships, plus a URDF, a DH model and a gantry from its
@@ -203,9 +207,10 @@ func TestJointsFromModelRefusesAModelBuiltInCode(t *testing.T) {
 	test.That(t, err, test.ShouldNotBeNil)
 }
 
-// The message allows four spellings of a link's orientation, and viamapi
-// carries RDK's conversion of each. Here RDK reads the message itself, so a
-// drift between the two readings shows up as a moved end.
+// The message allows four spellings of a link's orientation, and RDK reads
+// each of them for us. What is left to check is that composing the poses it
+// hands back puts the end where RDK's own forward kinematics puts it, for
+// every form and on both sides of the orientation vector's pole.
 func TestOrientationFormsReadAsRDKReadsThem(t *testing.T) {
 	rng := rand.New(rand.NewSource(4))
 	angle := func() float64 { return rng.Float64()*720 - 360 }
@@ -250,7 +255,7 @@ func TestOrientationFormsReadAsRDKReadsThem(t *testing.T) {
 				want, err := m.Transform(nil)
 				test.That(t, err, test.ShouldBeNil)
 
-				joints, err := viamapi.JointsFromKinematicModel(pb, "")
+				joints, err := rdk.JointsFromKinematicModel(pb, "")
 				test.That(t, err, test.ShouldBeNil)
 				endMatches(t, newChain(t, joints), nil, want.Point())
 			}
@@ -303,7 +308,7 @@ func TestJointsFromFrameSystemConfigMatchesRDK(t *testing.T) {
 		{"arm", []referenceframe.Model{gantry, arm}},
 	} {
 		t.Run(tc.tip, func(t *testing.T) {
-			joints, err := viamapi.JointsFromFrameSystemConfig(pbParts, tc.tip)
+			joints, err := rdk.JointsFromFrameSystemConfig(pbParts, tc.tip)
 			test.That(t, err, test.ShouldBeNil)
 			chain := newChain(t, joints)
 
