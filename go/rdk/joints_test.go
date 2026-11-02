@@ -215,28 +215,31 @@ func TestOrientationFormsReadAsRDKReadsThem(t *testing.T) {
 	rng := rand.New(rand.NewSource(4))
 	angle := func() float64 { return rng.Float64()*720 - 360 }
 	unit := func() float64 { return rng.Float64()*2 - 1 }
-	forms := map[string]func() any{
-		"quaternion": func() any {
+	forms := []struct {
+		name string
+		form func() any
+	}{
+		{"quaternion", func() any {
 			return &commonpb.LinkPose_Quaternion{Quaternion: &commonpb.Quaternion{W: 3 * unit(), X: 3 * unit(), Y: 3 * unit(), Z: 3 * unit()}}
-		},
-		"orientation vector": func() any {
+		}},
+		{"orientation vector", func() any {
 			return &commonpb.LinkPose_OrientationVector{OrientationVector: &commonpb.Orientation{OX: unit(), OY: unit(), OZ: unit(), Theta: angle()}}
-		},
-		"orientation vector near a pole": func() any {
+		}},
+		{"orientation vector near a pole", func() any {
 			return &commonpb.LinkPose_OrientationVector{OrientationVector: &commonpb.Orientation{OX: 1e-6 * unit(), OY: 1e-6 * unit(), OZ: math.Copysign(1, unit()), Theta: angle()}}
-		},
-		"euler angles": func() any {
+		}},
+		{"euler angles", func() any {
 			return &commonpb.LinkPose_EulerAngles{EulerAngles: &commonpb.EulerAngles{Roll: angle(), Pitch: angle(), Yaw: angle()}}
-		},
-		"axis angles": func() any {
+		}},
+		{"axis angles", func() any {
 			return &commonpb.LinkPose_AxisAngles{AxisAngles: &commonpb.AxisAngles{Rx: 2 * unit(), Ry: 2 * unit(), Rz: 2 * unit(), Theta: angle()}}
-		},
+		}},
 	}
-	for name, form := range forms {
-		t.Run(name, func(t *testing.T) {
+	for _, tc := range forms {
+		t.Run(tc.name, func(t *testing.T) {
 			for i := 0; i < 25; i++ {
 				turn := &commonpb.LinkPose{Translation: &commonpb.Vector3{X: 100 * unit(), Y: 100 * unit(), Z: 100 * unit()}}
-				switch o := form().(type) {
+				switch o := tc.form().(type) {
 				case *commonpb.LinkPose_Quaternion:
 					turn.Orientation = o
 				case *commonpb.LinkPose_OrientationVector:
@@ -261,6 +264,25 @@ func TestOrientationFormsReadAsRDKReadsThem(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The RDK release we pin serves a part's model in the deprecated kinematics
+// field only. That field holds RDK's file format, which this reader does not
+// read, so the part is refused by name rather than read as a fixed transform
+// with no joints. Once the pin moves to a release that fills the model, this
+// test builds the old message by hand instead.
+func TestJointsFromFrameSystemConfigRefusesTheDeprecatedKinematicsField(t *testing.T) {
+	part := &referenceframe.FrameSystemPart{
+		FrameConfig: referenceframe.NewLinkInFrame(referenceframe.World, spatialmath.NewZeroPose(), "arm", nil),
+		ModelFrame:  loadModel(t, "components/arm/kinematics/ur5e.json", "arm"),
+	}
+	pb, err := part.ToProtobuf()
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, pb.Model, test.ShouldBeNil)
+
+	_, err = rdk.JointsFromFrameSystemConfig([]*robotpb.FrameSystemConfig{pb}, "arm")
+	test.That(t, err, test.ShouldNotBeNil)
+	test.That(t, err.Error(), test.ShouldContainSubstring, `part "arm" carries its model in the deprecated kinematics field only`)
 }
 
 // partsToProtobuf writes parts with the model beside the frame, which is the

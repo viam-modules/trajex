@@ -98,7 +98,12 @@ func JointsFromKinematicModel(model *commonpb.KinematicModel, outputFrame string
 // positions.
 //
 // A part whose parent is world hangs from the root. Any other parent has to
-// be a part of the same reply, since the message carries no other frames.
+// be a part of the same reply. RDK also lets a part hang from a frame inside
+// another part's model, or from a part's origin frame, but we walk parts
+// alone, so such a parent is refused. A part whose model arrives in the
+// deprecated kinematics field only, which is what a server older than
+// FrameSystemConfig.model sends, is refused rather than read as a fixed
+// transform with no joints.
 func JointsFromFrameSystemConfig(parts []*robotpb.FrameSystemConfig, tip string) ([]kinematics.Joint, error) {
 	if tip == "" {
 		return nil, errors.New("trajex/rdk: the tip of the chain is not named")
@@ -106,9 +111,16 @@ func JointsFromFrameSystemConfig(parts []*robotpb.FrameSystemConfig, tip string)
 	type placed struct {
 		link  *referenceframe.LinkInFrame
 		model *commonpb.KinematicModel
+		// legacy is set when the model came in the deprecated kinematics field,
+		// which holds RDK's file format rather than the message
+		legacy bool
 	}
 	byName := map[string]placed{}
 	for i, part := range parts {
+		// rdk reads the pose without a nil check, so we refuse a missing one rather than let it panic
+		if part.GetFrame().GetPoseInObserverFrame().GetPose() == nil {
+			return nil, errors.Errorf("trajex/rdk: part %d of the frame system has no pose", i)
+		}
 		link, err := referenceframe.LinkInFrameFromTransformProtobuf(part.GetFrame())
 		if err != nil {
 			return nil, errors.Wrapf(err, "trajex/rdk: part %d of the frame system", i)
@@ -116,7 +128,11 @@ func JointsFromFrameSystemConfig(parts []*robotpb.FrameSystemConfig, tip string)
 		if _, dup := byName[link.Name()]; dup {
 			return nil, errors.Errorf("trajex/rdk: the frame system names part %q more than once", link.Name())
 		}
-		byName[link.Name()] = placed{link: link, model: part.GetModel()}
+		byName[link.Name()] = placed{
+			link:   link,
+			model:  part.GetModel(),
+			legacy: part.GetModel() == nil && len(part.GetKinematics().GetFields()) > 0,
+		}
 	}
 	if _, ok := byName[tip]; !ok {
 		return nil, errors.Errorf("trajex/rdk: the frame system has no part %q", tip)
@@ -141,6 +157,11 @@ func JointsFromFrameSystemConfig(parts []*robotpb.FrameSystemConfig, tip string)
 	b := &chainBuilder{origin: spatialmath.NewZeroPose()}
 	for _, part := range path {
 		b.fixed(part.link.Pose())
+		if part.legacy {
+			return nil, errors.Errorf(
+				"trajex/rdk: part %q carries its model in the deprecated kinematics field only, which a server older than FrameSystemConfig.model sends and this reader does not read",
+				part.link.Name())
+		}
 		if part.model == nil {
 			continue
 		}
@@ -229,7 +250,7 @@ func (b *chainBuilder) appendModel(model *commonpb.KinematicModel, label, output
 			continue
 		}
 		if e.joint.Mimic != nil {
-			return errors.Errorf("trajex/rdk: joint %q mimics another joint, which trajex cannot express", id)
+			return errors.Errorf("trajex/rdk: joint %q of model %q mimics another joint, which trajex cannot express", id, label)
 		}
 		axis := [3]float64{e.joint.Axis.X, e.joint.Axis.Y, e.joint.Axis.Z}
 		switch e.joint.Type {
@@ -238,7 +259,7 @@ func (b *chainBuilder) appendModel(model *commonpb.KinematicModel, label, output
 		case referenceframe.PrismaticJoint:
 			b.translational(axis)
 		default:
-			return errors.Errorf("trajex/rdk: joint %q has type %q, which trajex does not support", id, e.joint.Type)
+			return errors.Errorf("trajex/rdk: joint %q of model %q has type %q, which trajex does not support", id, label, e.joint.Type)
 		}
 		moving = append(moving, id)
 	}
@@ -261,9 +282,10 @@ type element struct {
 
 // checkMessage refuses what RDK would not refuse clearly on its own. RDK
 // keeps the last of two elements with the same id, so a chain from such a
-// model would be a guess at which was meant. A zero axis, on a joint or in a
-// link's axis angle orientation, makes RDK panic while it loads the model
-// rather than return an error.
+// model would be a guess at which was meant. A zero axis on a revolute
+// joint, or in a link's axis angle orientation, makes RDK panic while it
+// loads the model rather than return an error, and on a prismatic joint it
+// gets an error that does not name the joint.
 func checkMessage(model *commonpb.KinematicModel, label string) error {
 	if len(model.GetLinks()) == 0 && len(model.GetJoints()) == 0 {
 		return errors.Errorf("trajex/rdk: model %q has no links or joints", label)
@@ -284,7 +306,7 @@ func checkMessage(model *commonpb.KinematicModel, label string) error {
 			return err
 		}
 		if aa, ok := link.GetPose().GetOrientation().(*commonpb.LinkPose_AxisAngles); ok {
-			if a := aa.AxisAngles; a.GetRx() == 0 && a.GetRy() == 0 && a.GetRz() == 0 {
+			if a := aa.AxisAngles; zeroLength(a.GetRx(), a.GetRy(), a.GetRz()) {
 				return errors.Errorf("trajex/rdk: link %q of model %q turns about a zero axis", link.GetId(), label)
 			}
 		}
@@ -293,11 +315,17 @@ func checkMessage(model *commonpb.KinematicModel, label string) error {
 		if err := add(joint.GetId()); err != nil {
 			return err
 		}
-		if axis := joint.GetAxis(); axis.GetX() == 0 && axis.GetY() == 0 && axis.GetZ() == 0 {
-			return errors.Errorf("trajex/rdk: joint %q has no axis", joint.GetId())
+		if axis := joint.GetAxis(); zeroLength(axis.GetX(), axis.GetY(), axis.GetZ()) {
+			return errors.Errorf("trajex/rdk: joint %q of model %q has no axis", joint.GetId(), label)
 		}
 	}
 	return nil
+}
+
+// zeroLength is the test RDK's normalization applies, a sum of squares that
+// is zero, so components small enough to underflow it count as zero here too.
+func zeroLength(x, y, z float64) bool {
+	return x*x+y*y+z*z == 0
 }
 
 // index maps the links and joints of the configuration RDK built by id.

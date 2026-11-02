@@ -113,6 +113,37 @@ func TestRotatedLinkTurnsAPrismaticJoint(t *testing.T) {
 	endMatches(t, c, []float64{25}, r3.Vector{Y: 35})
 }
 
+// RDK normalizes a joint's axis when it builds the frame, and so does trajex,
+// so an axis of any length gives the same chain.
+func TestJointAxisLengthDoesNotMatter(t *testing.T) {
+	m := planarArm()
+	m.Joints[0].Axis.Z = 3
+	m.Joints[1].Axis.Z = 0.5
+	endMatches(t, modelChain(t, m, ""), []float64{0.3, -1.1}, planarEnd(0.3, -1.1))
+
+	slide := &commonpb.KinematicModel{
+		Links:  []*commonpb.KinematicLink{link("base", "world", 0, 0, 0, nil), link("tip", "slide", 10, 0, 0, nil)},
+		Joints: []*commonpb.KinematicJoint{joint("slide", "base", prismatic, 2, 0, 0)},
+	}
+	endMatches(t, modelChain(t, slide, ""), []float64{25}, r3.Vector{X: 35})
+}
+
+// RDK hangs an element from world when its parent is not an element of the
+// model, whatever the parent is called, and the walk to the root has to stop
+// at the same place.
+func TestRootIsWhereParentsStop(t *testing.T) {
+	for _, tc := range []struct{ name, parent string }{
+		{"no parent", ""},
+		{"a parent that is not an element", "floor"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := planarArm()
+			m.Links[0].Parent = tc.parent
+			endMatches(t, modelChain(t, m, ""), []float64{0.3, -1.1}, planarEnd(0.3, -1.1))
+		})
+	}
+}
+
 // Every orientation form is checked by what it does to a link placed after
 // it, against the rotation the values spell out, so a change in how RDK reads
 // a form shows up here as a moved end.
@@ -168,6 +199,17 @@ func TestOutputFrameChoice(t *testing.T) {
 	t.Run("a frame the caller names", func(t *testing.T) {
 		c := modelChain(t, forked("fore"), "spur")
 		endMatches(t, c, []float64{0, 0}, r3.Vector{X: 100, Y: 30})
+	})
+	t.Run("a joint the caller names", func(t *testing.T) {
+		// the chain ends at the elbow's own frame, which only the shoulder turns
+		c := modelChain(t, planarArm(), "elbow")
+		endMatches(t, c, []float64{0.3, -1.1}, r3.Vector{X: 100 * math.Cos(0.3), Y: 100 * math.Sin(0.3)})
+	})
+	t.Run("a frame short of the last moving joint", func(t *testing.T) {
+		// the elbow still takes a position, which a chain ending at the upper link has no joint for
+		_, err := rdk.JointsFromKinematicModel(planarArm(), "upper")
+		test.That(t, err, test.ShouldNotBeNil)
+		test.That(t, err.Error(), test.ShouldContainSubstring, `output frame "upper" moves joints [shoulder]`)
 	})
 	t.Run("a frame past the model's output", func(t *testing.T) {
 		m := planarArm()
@@ -273,6 +315,13 @@ func TestRefusals(t *testing.T) {
 	zeroAxisAngles := planarArm()
 	zeroAxisAngles.Links[0].Pose.Orientation = &commonpb.LinkPose_AxisAngles{AxisAngles: &commonpb.AxisAngles{Theta: 10}}
 
+	// small enough that the sum of squares RDK normalizes by underflows to zero
+	tinyAxis := planarArm()
+	tinyAxis.Joints[1].Axis = &commonpb.Vector3{X: 1e-200}
+
+	tinyAxisAngles := planarArm()
+	tinyAxisAngles.Links[0].Pose.Orientation = &commonpb.LinkPose_AxisAngles{AxisAngles: &commonpb.AxisAngles{Rx: 1e-200, Theta: 10}}
+
 	duplicate := planarArm()
 	duplicate.Joints[1].Id = "upper"
 
@@ -290,11 +339,13 @@ func TestRefusals(t *testing.T) {
 		{"missing id", unnamed, "with no id"},
 		{"cycle on the path", cyclic, "infinite loop finding path"},
 		{"cycle off the path", strayCycle, "infinite loop finding path"},
-		{"mimic on the path", mimicOnPath, `joint "elbow" mimics another joint`},
-		{"joint without an axis", noAxis, `joint "elbow" has no axis`},
+		{"mimic on the path", mimicOnPath, `joint "elbow" of model "planar" mimics another joint`},
+		{"joint without an axis", noAxis, `joint "elbow" of model "planar" has no axis`},
+		{"joint axis too small to normalize", tinyAxis, `joint "elbow" of model "planar" has no axis`},
 		{"joint of an unknown type", unknownType, `unsupported joint type detected: "JOINT_TYPE_UNSPECIFIED"`},
 		{"zero orientation vector", zeroOrientationVector, "has a normal of 0"},
 		{"zero axis in axis angles", zeroAxisAngles, `link "base" of model "planar" turns about a zero axis`},
+		{"axis angles too small to normalize", tinyAxisAngles, `link "base" of model "planar" turns about a zero axis`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := rdk.JointsFromKinematicModel(tc.model, "")
@@ -389,6 +440,9 @@ func TestFrameSystemConfig(t *testing.T) {
 		{"unknown tip", []*robotpb.FrameSystemConfig{mount}, "arm", `has no part "arm"`},
 		{"part without a frame", []*robotpb.FrameSystemConfig{{}}, "arm", "part 0 of the frame system"},
 		{"part without a parent", []*robotpb.FrameSystemConfig{part("loose", "", 0, 0, 0, 0, nil)}, "loose", "part 0 of the frame system"},
+		{"part without a pose", []*robotpb.FrameSystemConfig{{Frame: &commonpb.Transform{
+			ReferenceFrame: "bare", PoseInObserverFrame: &commonpb.PoseInFrame{ReferenceFrame: "world"},
+		}}}, "bare", "part 0 of the frame system has no pose"},
 		{"duplicate part", []*robotpb.FrameSystemConfig{mount, mount}, "mount", `names part "mount" more than once`},
 		{"parent that is not a part", []*robotpb.FrameSystemConfig{arm}, "arm", `part "arm" hangs from "mount", which is not a part`},
 		{"cycle", []*robotpb.FrameSystemConfig{part("a", "b", 0, 0, 0, 0, nil), part("b", "a", 0, 0, 0, 0, nil)}, "a", "is a cycle"},
