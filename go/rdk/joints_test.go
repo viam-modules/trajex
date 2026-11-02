@@ -20,10 +20,9 @@ import (
 	"github.com/viam-modules/trajex/go/rdk"
 )
 
-// RDK's own forward kinematics is the reference throughout. Comparing the end
-// position of the chain we build against the position RDK reports, at many
-// joint positions, checks the order in which poses are composed, the
-// quaternion convention, the sense of each axis, and the units all at once.
+// RDK's own forward kinematics is the reference throughout. The end position
+// of the chain against RDK's, at many joint positions, checks composition
+// order, the quaternion convention, each axis and the units at once.
 
 func loadModel(t *testing.T, file, name string) referenceframe.Model {
 	t.Helper()
@@ -106,12 +105,9 @@ func TestJointsFromModelMatchesRDKForwardKinematics(t *testing.T) {
 	}
 }
 
-// None of RDK's own models puts a rotated link before a translated one in the
-// same run of links, so with them alone the order in which we compose a run
-// could be reversed without any test noticing. In this model every run of
-// links, before the first joint, between the joints, and after the last one,
-// turns and then moves, so composing any of them backwards moves the end. The
-// tool link past the output frame is for the test that caps a named frame.
+// Every run of links here turns and then moves, so composing a run backwards
+// moves the end, which none of RDK's own models would show. The tool link
+// past the output frame is for the test that caps a named frame.
 const orderSensitiveModel = `{
 	"name": "order_sensitive",
 	"output_frames": ["tip_move"],
@@ -225,13 +221,10 @@ func TestJointsFromModelBuiltFromFramesMatchesRDK(t *testing.T) {
 	test.That(t, err, test.ShouldNotBeNil)
 }
 
-// A machine's whole chain as one model, a gantry carrying a mount, an arm on
-// the mount and a tool on the arm, built with NewModel over the frame system.
-// RDK flattens each nested model into namespaced frames but keeps the model
-// itself as a frame under the part's name, and its frame walker refuses that
-// frame, so ModelToProto cannot write the composite out yet. The chain for
-// that machine shape comes from JointsFromFrameSystemConfig instead, and this
-// pins the refusal until RDK's walker learns to skip a flattened model.
+// A gantry carrying an arm, built with NewModel over the frame system, is
+// refused by RDK's ModelToProto: it keeps each nested model as a frame under
+// the part's name beside the flattened frames, and its walker refuses that
+// frame. This pins the refusal until RDK's walker skips a flattened model.
 func TestJointsFromModelRefusesACompositeOfNestedModels(t *testing.T) {
 	gantry := loadModel(t, "referenceframe/testfiles/example_gantry.json", "gantry")
 	arm := loadModel(t, "components/arm/kinematics/ur5e.json", "arm")
@@ -310,12 +303,9 @@ func TestOrientationFormsReadAsRDKReadsThem(t *testing.T) {
 	}
 }
 
-// A server older than FrameSystemConfig.model serves a part's model in the
-// deprecated kinematics field only. RDK still fills that field beside the
-// model, so dropping the model from its own message gives that server's
-// reply. The field holds RDK's file format, which this reader does not read,
-// so the part is refused by name rather than read as a fixed transform with
-// no joints.
+// A server older than FrameSystemConfig.model sends the deprecated kinematics
+// field only, which RDK still fills beside the model, so dropping the model
+// gives that reply. The part is refused rather than read as a fixed transform.
 func TestJointsFromFrameSystemConfigRefusesTheDeprecatedKinematicsField(t *testing.T) {
 	part := &referenceframe.FrameSystemPart{
 		FrameConfig: referenceframe.NewLinkInFrame(referenceframe.World, spatialmath.NewZeroPose(), "arm", nil),

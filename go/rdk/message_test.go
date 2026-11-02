@@ -15,11 +15,10 @@ import (
 	"github.com/viam-modules/trajex/go/rdk"
 )
 
-// The messages here are small enough to work out by hand, which is what pins
-// down the conventions: which way links compose, where a joint's origin sits,
-// and how each orientation form on the wire turns into a rotation. Agreement
-// with RDK's own forward kinematics over its shipped models is checked in
-// joints_test.go.
+// The messages here are small enough to work out by hand, which pins down
+// which way links compose, where a joint's origin sits, and how each
+// orientation form turns into a rotation. joints_test.go checks the same
+// against RDK's own forward kinematics.
 
 func link(id, parent string, x, y, z float64, orientation any) *commonpb.KinematicLink {
 	pose := &commonpb.LinkPose{Translation: &commonpb.Vector3{X: x, Y: y, Z: z}}
@@ -288,9 +287,8 @@ func TestInputOrder(t *testing.T) {
 	})
 }
 
-// Each refusal stands in for a chain that would be wrong rather than missing.
-// Most come from RDK loading the message. The rest are shapes RDK loads but
-// trajex cannot drive with the model's positions, or that RDK panics on.
+// Each refusal stands in for a chain that would be wrong rather than missing,
+// most of them RDK's own.
 func TestRefusals(t *testing.T) {
 	cyclic := planarArm()
 	cyclic.Links[0].Parent = "fore"

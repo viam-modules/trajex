@@ -1,11 +1,9 @@
 //go:build !windows && cgo
 
 // Package rdk turns the kinematic messages of the Viam API, KinematicModel
-// and FrameSystemConfig, and RDK's own models into trajex joints. It is the
-// one place in the chain building of this module that knows what an RDK
-// model is. RDK loads each message here the way it loads one it receives
-// itself, so a chain built from a message never reads the message
-// differently from the model RDK drives.
+// and FrameSystemConfig, and RDK's own models into trajex joints. RDK loads
+// each message here the way it loads one it receives itself, so a chain
+// never reads a message differently from the model RDK drives.
 package rdk
 
 import (
@@ -20,19 +18,8 @@ import (
 	"github.com/viam-modules/trajex/go/kinematics"
 )
 
-// JointsFromModel describes the serial chain from the base of m out to
-// outputFrame, which is where a TCP speed cap applies. It gives the chain
-// JointsFromKinematicModel gives for the message RDK serves for m, and that
-// function says what outputFrame means, the units, and which models are
-// refused.
-//
-// An empty outputFrame caps the model's own output frame. A caller whose
-// model has no link for the point it wants capped, such as a tool on the
-// flange of an arm that came from the robot's config, appends a
-// kinematics.FixedJoint carrying the tool's offset to the result.
-//
-// It returns an error for a model RDK cannot write out as a message, which is
-// one with no frames or with a frame that has no kinematics file form.
+// JointsFromModel is JointsFromKinematicModel for the message RDK serves for
+// m. It returns an error for a model RDK cannot write out as a message.
 func JointsFromModel(m referenceframe.Model, outputFrame string) ([]kinematics.Joint, error) {
 	if m == nil {
 		return nil, errors.New("trajex/rdk: model is nil")
@@ -45,32 +32,19 @@ func JointsFromModel(m referenceframe.Model, outputFrame string) ([]kinematics.J
 }
 
 // JointsFromKinematicModel describes the serial chain from the base of model
-// out to outputFrame, which is where a TCP speed cap applies. The result is
-// meant for kinematics.NewChain and always ends in a fixed joint, so a chain
-// has the same shape whether or not links follow the last moving joint.
+// out to outputFrame, which is where a TCP speed cap applies, for
+// kinematics.NewChain. The chain always ends in a fixed joint.
 //
-// RDK loads the message first, so a model RDK refuses, one with a cycle,
-// with several output frames, with no output frame and other than one leaf,
-// or with a mimic joint that carries limits of its own, is refused here with
-// RDK's reason. outputFrame names a link or joint of the model. When it is
-// empty the model's own output frame is used, which is the first of its
-// output_frames or else its single leaf. A caller capping a point past that
-// frame, such as the tip of a tool on a flange, names the link that stands
-// for the point, or appends a kinematics.FixedJoint to the result. It
-// returns an error if outputFrame names no link or joint of model.
+// outputFrame names a link or joint of the model, or is empty for the model's
+// own output frame. A point past that, such as a tool on a flange, is a link
+// the model names or a kinematics.FixedJoint the caller appends. Lengths are
+// in millimetres, as in the message. Limits and properties are not mapped.
 //
-// Lengths are in millimetres, as they are in the message, so prismatic joint
-// positions and a TCP speed cap for the chain are in millimetres as well.
-// Only geometry is mapped. The limits and properties the message carries are
-// left to the caller's policy.
-//
-// RDK drives a model with one position for every moving joint in the whole
-// model, in its own order, and a caller hands trajex those same positions. So
-// the moving joints on the path to outputFrame must be exactly the model's
-// moving joints in that order, and a model that fails that is refused rather
-// than given a chain that would read the positions wrongly. That covers a
-// mimic joint on the path, which has no position of its own, and a moving
-// joint off the path, such as a gripper's finger.
+// The chain takes the positions RDK's model takes, in the same order, so the
+// moving joints on the path to outputFrame must be exactly the model's
+// moving joints. A model with a mimic joint on the path or a moving joint off
+// it, such as a gripper's finger, is refused, as is anything RDK refuses to
+// load.
 func JointsFromKinematicModel(model *commonpb.KinematicModel, outputFrame string) ([]kinematics.Joint, error) {
 	if model == nil {
 		return nil, errors.New("trajex/rdk: kinematic model is nil")
@@ -82,28 +56,18 @@ func JointsFromKinematicModel(model *commonpb.KinematicModel, outputFrame string
 	return b.finish(), nil
 }
 
-// JointsFromFrameSystemConfig describes the serial chain from the world frame
-// of a machine out to the output frame of the part named tip, through every
-// part between. It is for a caller holding a machine's FrameSystemConfig
-// reply rather than one component's model, such as one capping the speed of a
-// gripper carried by an arm that itself rides a gantry.
+// JointsFromFrameSystemConfig describes the serial chain from the world
+// frame of a machine out to the output frame of the part named tip, for a
+// caller holding a machine's FrameSystemConfig reply rather than one
+// component's model. Each part on the path contributes the fixed transform
+// that places it on its parent, then the joints of its model as
+// JointsFromKinematicModel builds them. Positions run part by part from the
+// one nearest world out to tip. Parts off the path take none.
 //
-// Each part contributes the fixed transform that places its frame on its
-// parent, then the joints of its model, built as JointsFromKinematicModel
-// builds them with the model's own output frame. A part with no model is a
-// fixed transform alone. Positions for the chain are the positions of each
-// part's model in turn, from the part nearest world out to tip, an order of
-// this function's own, since a frame system keys positions by part rather
-// than listing them. Parts off that path contribute nothing and take no
-// positions.
-//
-// A part whose parent is world hangs from the root. Any other parent has to
-// be a part of the same reply. RDK also lets a part hang from a frame inside
-// another part's model, or from a part's origin frame, but we walk parts
-// alone, so such a parent is refused. A part whose model arrives in the
-// deprecated kinematics field only, which is what a server older than
+// A parent has to be world or another part of the reply. A part whose model
+// arrives in the deprecated kinematics field only, which a server older than
 // FrameSystemConfig.model sends, is refused rather than read as a fixed
-// transform with no joints.
+// transform.
 func JointsFromFrameSystemConfig(parts []*robotpb.FrameSystemConfig, tip string) ([]kinematics.Joint, error) {
 	if tip == "" {
 		return nil, errors.New("trajex/rdk: the tip of the chain is not named")
@@ -206,14 +170,11 @@ func (b *chainBuilder) finish() []kinematics.Joint {
 	return append(b.joints, kinematics.FixedJoint(xyz, wxyz))
 }
 
-// appendModel walks model from its root to outputFrame, adding what it finds
-// to the chain. label names the model in errors, since a model served inside
-// a frame system part may carry no name of its own.
-//
-// RDK loads the message before we walk it. That is what refuses the shapes
-// RDK cannot drive and reads each orientation form as RDK reads it, and it
-// leaves us the configuration RDK built from the message, with every link's
-// pose parsed and the order RDK takes positions in.
+// appendModel adds the model's chain to outputFrame. label names the model in
+// errors, since a model inside a frame system part may carry no name. RDK
+// loads the message first, which refuses what it cannot drive and leaves us
+// the configuration it built, with each link's pose parsed and the order it
+// takes positions in.
 func (b *chainBuilder) appendModel(model *commonpb.KinematicModel, label, outputFrame string) error {
 	if err := checkMessage(model, label); err != nil {
 		return err
@@ -280,12 +241,9 @@ type element struct {
 	joint  *referenceframe.JointConfig
 }
 
-// checkMessage refuses what RDK would not refuse clearly on its own. RDK
-// keeps the last of two elements with the same id, so a chain from such a
-// model would be a guess at which was meant. A zero axis on a revolute
-// joint, or in a link's axis angle orientation, makes RDK panic while it
-// loads the model rather than return an error, and on a prismatic joint it
-// gets an error that does not name the joint.
+// checkMessage refuses what RDK would not refuse clearly: a duplicate id,
+// which RDK silently merges, and a zero axis on a joint or in an axis angle
+// orientation, which makes RDK panic rather than return an error.
 func checkMessage(model *commonpb.KinematicModel, label string) error {
 	if len(model.GetLinks()) == 0 && len(model.GetJoints()) == 0 {
 		return errors.Errorf("trajex/rdk: model %q has no links or joints", label)
@@ -342,10 +300,9 @@ func index(cfg *referenceframe.ModelConfigJSON) map[string]*element {
 	return elements
 }
 
-// outputFrameOf picks the frame the chain ends at: the one the caller named,
-// else the one the model names, else its single leaf. RDK has already refused
-// a model that names several output frames, names one it lacks, or names none
-// and has other than one leaf, so only the caller's name can fail here.
+// outputFrameOf picks the frame the chain ends at: the caller's, else the
+// model's, else its single leaf. RDK has already refused the other shapes, so
+// only the caller's name can fail here.
 func outputFrameOf(cfg *referenceframe.ModelConfigJSON, elements map[string]*element, label, requested string) (string, error) {
 	if requested != "" {
 		if _, ok := elements[requested]; !ok {
@@ -368,10 +325,9 @@ func outputFrameOf(cfg *referenceframe.ModelConfigJSON, elements map[string]*ele
 	return "", errors.Errorf("trajex/rdk: model %q has no leaf", label)
 }
 
-// pathToRoot lists the elements from the model's root down to output. The
-// root is the first element whose parent is not an element, which RDK hangs
-// from world. RDK has refused any cycle, so the walk is bounded only to keep
-// it finite should that ever change.
+// pathToRoot lists the elements from the model's root, the first whose parent
+// is not an element, down to output. RDK has refused cycles, so the bound is
+// only a guard.
 func pathToRoot(elements map[string]*element, output string) ([]string, error) {
 	var path []string
 	id := output
