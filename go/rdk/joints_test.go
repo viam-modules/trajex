@@ -310,11 +310,12 @@ func TestOrientationFormsReadAsRDKReadsThem(t *testing.T) {
 	}
 }
 
-// The RDK release we pin serves a part's model in the deprecated kinematics
-// field only. That field holds RDK's file format, which this reader does not
-// read, so the part is refused by name rather than read as a fixed transform
-// with no joints. Once the pin moves to a release that fills the model, this
-// test builds the old message by hand instead.
+// A server older than FrameSystemConfig.model serves a part's model in the
+// deprecated kinematics field only. RDK still fills that field beside the
+// model, so dropping the model from its own message gives that server's
+// reply. The field holds RDK's file format, which this reader does not read,
+// so the part is refused by name rather than read as a fixed transform with
+// no joints.
 func TestJointsFromFrameSystemConfigRefusesTheDeprecatedKinematicsField(t *testing.T) {
 	part := &referenceframe.FrameSystemPart{
 		FrameConfig: referenceframe.NewLinkInFrame(referenceframe.World, spatialmath.NewZeroPose(), "arm", nil),
@@ -322,7 +323,8 @@ func TestJointsFromFrameSystemConfigRefusesTheDeprecatedKinematicsField(t *testi
 	}
 	pb, err := part.ToProtobuf()
 	test.That(t, err, test.ShouldBeNil)
-	test.That(t, pb.Model, test.ShouldBeNil)
+	test.That(t, len(pb.GetKinematics().GetFields()), test.ShouldBeGreaterThan, 0)
+	pb.Model = nil
 
 	_, err = rdk.JointsFromFrameSystemConfig([]*robotpb.FrameSystemConfig{pb}, "arm")
 	test.That(t, err, test.ShouldNotBeNil)
