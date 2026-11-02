@@ -3,7 +3,9 @@
 // Package rdk turns the kinematic messages of the Viam API, KinematicModel
 // and FrameSystemConfig, and RDK's own models into trajex joints. RDK loads
 // each message here the way it loads one it receives itself, so a chain
-// never reads a message differently from the model RDK drives.
+// never reads a message differently from the model RDK drives. Lengths are
+// millimetres and angles radians throughout, as in RDK, so a TCP speed cap
+// for a chain is in millimetres per second.
 package rdk
 
 import (
@@ -58,81 +60,18 @@ func JointsFromKinematicModel(model *commonpb.KinematicModel, outputFrame string
 // that places it on its parent, then the joints of its model as
 // JointsFromKinematicModel builds them. Positions run part by part from the
 // one nearest world out to tip. Parts off the path take none.
+// ArmFromFrameSystemConfig carries the limits and properties beside the chain.
 //
 // A parent has to be world or another part of the reply. A part whose model
 // arrives in the deprecated kinematics field only, which a server older than
 // FrameSystemConfig.model sends, is refused rather than read as a fixed
 // transform.
 func JointsFromFrameSystemConfig(parts []*robotpb.FrameSystemConfig, tip string) ([]kinematics.Joint, error) {
-	if tip == "" {
-		return nil, errors.New("trajex/rdk: the tip of the chain is not named")
+	arm, err := ArmFromFrameSystemConfig(parts, tip)
+	if err != nil {
+		return nil, err
 	}
-	type placed struct {
-		link  *referenceframe.LinkInFrame
-		model *commonpb.KinematicModel
-		// legacy is set when the model came in the deprecated kinematics field,
-		// which holds RDK's file format rather than the message
-		legacy bool
-	}
-	byName := map[string]placed{}
-	for i, part := range parts {
-		// rdk reads the pose without a nil check, so we refuse a missing one rather than let it panic
-		if part.GetFrame().GetPoseInObserverFrame().GetPose() == nil {
-			return nil, errors.Errorf("trajex/rdk: part %d of the frame system has no pose", i)
-		}
-		link, err := referenceframe.LinkInFrameFromTransformProtobuf(part.GetFrame())
-		if err != nil {
-			return nil, errors.Wrapf(err, "trajex/rdk: part %d of the frame system", i)
-		}
-		if _, dup := byName[link.Name()]; dup {
-			return nil, errors.Errorf("trajex/rdk: the frame system names part %q more than once", link.Name())
-		}
-		byName[link.Name()] = placed{
-			link:   link,
-			model:  part.GetModel(),
-			legacy: part.GetModel() == nil && len(part.GetKinematics().GetFields()) > 0,
-		}
-	}
-	if _, ok := byName[tip]; !ok {
-		return nil, errors.Errorf("trajex/rdk: the frame system has no part %q", tip)
-	}
-
-	var path []placed
-	seen := map[string]bool{}
-	for name, child := tip, ""; name != referenceframe.World; {
-		part, ok := byName[name]
-		if !ok {
-			return nil, errors.Errorf("trajex/rdk: part %q hangs from %q, which is not a part of the frame system", child, name)
-		}
-		if seen[name] {
-			return nil, errors.Errorf("trajex/rdk: the path from %q to the world frame is a cycle", tip)
-		}
-		seen[name] = true
-		path = append(path, part)
-		name, child = part.link.Parent(), name
-	}
-	slices.Reverse(path)
-
-	b := &chainBuilder{origin: spatialmath.NewZeroPose()}
-	for _, part := range path {
-		b.fixed(part.link.Pose())
-		if part.legacy {
-			return nil, errors.Errorf(
-				"trajex/rdk: part %q carries its model in the deprecated kinematics field only, which a server older than FrameSystemConfig.model sends and this reader does not read",
-				part.link.Name())
-		}
-		if part.model == nil {
-			continue
-		}
-		label := part.model.GetName()
-		if label == "" {
-			label = part.link.Name()
-		}
-		if err := b.appendModel(part.model, label, ""); err != nil {
-			return nil, err
-		}
-	}
-	return b.finish(), nil
+	return arm.Joints, nil
 }
 
 // chainBuilder collects joints base first. A trajex joint carries the static
@@ -248,9 +187,10 @@ type element struct {
 	joint  *referenceframe.JointConfig
 }
 
-// checkMessage refuses what RDK would not refuse clearly: a duplicate id,
-// which RDK silently merges, and a zero axis on a joint or in an axis angle
-// orientation, which makes RDK panic rather than return an error.
+// checkMessage refuses what RDK would not refuse clearly: an empty model, an
+// element with no id, a duplicate id, which RDK silently merges, and a zero
+// axis on a joint or in an axis angle orientation, which makes RDK panic
+// rather than return an error.
 func checkMessage(model *commonpb.KinematicModel, label string) error {
 	if len(model.GetLinks()) == 0 && len(model.GetJoints()) == 0 {
 		return errors.Errorf("trajex/rdk: model %q has no links or joints", label)

@@ -401,6 +401,10 @@ func TestFrameSystemConfig(t *testing.T) {
 		c := partsChain(t, []*robotpb.FrameSystemConfig{flat, part("on_flat", "flat", 10, 0, 0, 0, nil)}, "on_flat")
 		endMatches(t, c, nil, r3.Vector{X: 5, Y: 10})
 	})
+	t.Run("an empty model is no model", func(t *testing.T) {
+		c := partsChain(t, []*robotpb.FrameSystemConfig{part("bare", "world", 0, 30, 0, 0, &commonpb.KinematicModel{})}, "bare")
+		endMatches(t, c, nil, r3.Vector{Y: 30})
+	})
 	t.Run("the mount alone is a fixed transform", func(t *testing.T) {
 		c := partsChain(t, []*robotpb.FrameSystemConfig{arm, mount}, "mount")
 		endMatches(t, c, nil, r3.Vector{X: 100})
