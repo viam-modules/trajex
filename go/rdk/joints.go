@@ -31,8 +31,8 @@ import (
 // flange of an arm that came from the robot's config, appends a
 // kinematics.FixedJoint carrying the tool's offset to the result.
 //
-// It returns an error for a model the pinned RDK release cannot write out as
-// a message, which is one built in code rather than loaded from a file.
+// It returns an error for a model RDK cannot write out as a message, which is
+// one with no frames or with a frame that has no kinematics file form.
 func JointsFromModel(m referenceframe.Model, outputFrame string) ([]kinematics.Joint, error) {
 	if m == nil {
 		return nil, errors.New("trajex/rdk: model is nil")

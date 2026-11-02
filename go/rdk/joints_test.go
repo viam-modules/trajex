@@ -189,22 +189,66 @@ func TestJointsFromModelRefusesMovingJointsOffThePath(t *testing.T) {
 	}
 }
 
-// A model assembled in code has no configuration for the RDK release we pin
-// to write out as a message, so there is nothing to build a chain from. Once
-// the pin moves to a release that writes such a model out (RSDK-14772), this
-// turns into a parity test like the ones above.
-func TestJointsFromModelRefusesAModelBuiltInCode(t *testing.T) {
-	joint, err := referenceframe.NewRotationalFrame("joint", spatialmath.R4AA{RZ: 1}, referenceframe.Limit{Min: -math.Pi, Max: math.Pi})
+// A model assembled from frames in code has no configuration, and RDK
+// describes it from its frames instead. Every frame here turns and moves at
+// once and the joint axes are off the grid, so a wrong composition or an
+// unnormalized axis shows as a moved end.
+func TestJointsFromModelBuiltFromFramesMatchesRDK(t *testing.T) {
+	static := func(name string, pose spatialmath.Pose) referenceframe.Frame {
+		f, err := referenceframe.NewStaticFrame(name, pose)
+		test.That(t, err, test.ShouldBeNil)
+		return f
+	}
+	turn, err := referenceframe.NewRotationalFrame("turn", spatialmath.R4AA{RX: 0.2, RZ: 1}, referenceframe.Limit{Min: -math.Pi, Max: math.Pi})
 	test.That(t, err, test.ShouldBeNil)
-	m, err := referenceframe.NewSerialModel("code", []referenceframe.Frame{joint})
+	slide, err := referenceframe.NewTranslationalFrame("slide", r3.Vector{X: 1, Y: 0.5}, referenceframe.Limit{Min: -50, Max: 50})
+	test.That(t, err, test.ShouldBeNil)
+	m, err := referenceframe.NewSerialModel("code", []referenceframe.Frame{
+		static("base", spatialmath.NewPose(r3.Vector{X: 10, Y: -20, Z: 30}, &spatialmath.EulerAngles{Roll: 0.3, Pitch: -0.2, Yaw: 1.1})),
+		turn,
+		static("upper", spatialmath.NewPose(r3.Vector{X: 100, Z: 40}, &spatialmath.EulerAngles{Pitch: 0.5})),
+		slide,
+		static("tool", spatialmath.NewPose(r3.Vector{Y: 25, Z: 60}, &spatialmath.EulerAngles{Roll: -0.4})),
+	})
+	test.That(t, err, test.ShouldBeNil)
+	chain := chainFromModel(t, m, "")
+
+	rng := rand.New(rand.NewSource(6))
+	for i := 0; i < 50; i++ {
+		q := randomPositions(m, rng)
+		want, err := m.Transform(q)
+		test.That(t, err, test.ShouldBeNil)
+		endMatches(t, chain, q, want.Point())
+	}
+
+	_, err = rdk.JointsFromModel(nil, "")
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
+// A machine's whole chain as one model, a gantry carrying a mount, an arm on
+// the mount and a tool on the arm, built with NewModel over the frame system.
+// RDK flattens each nested model into namespaced frames but keeps the model
+// itself as a frame under the part's name, and its frame walker refuses that
+// frame, so ModelToProto cannot write the composite out yet. The chain for
+// that machine shape comes from JointsFromFrameSystemConfig instead, and this
+// pins the refusal until RDK's walker learns to skip a flattened model.
+func TestJointsFromModelRefusesACompositeOfNestedModels(t *testing.T) {
+	gantry := loadModel(t, "referenceframe/testfiles/example_gantry.json", "gantry")
+	arm := loadModel(t, "components/arm/kinematics/ur5e.json", "arm")
+	parts := []*referenceframe.FrameSystemPart{
+		{FrameConfig: referenceframe.NewLinkInFrame(referenceframe.World, spatialmath.NewZeroPose(), "gantry", nil), ModelFrame: gantry},
+		{FrameConfig: referenceframe.NewLinkInFrame("gantry", spatialmath.NewPose(r3.Vector{X: 120, Y: -40, Z: 25}, &spatialmath.EulerAngles{Roll: 0.4}), "mount", nil)},
+		{FrameConfig: referenceframe.NewLinkInFrame("mount", spatialmath.NewZeroPose(), "arm", nil), ModelFrame: arm},
+		{FrameConfig: referenceframe.NewLinkInFrame("arm", spatialmath.NewPoseFromPoint(r3.Vector{Z: 90}), "tool", nil)},
+	}
+	fs, err := referenceframe.NewFrameSystem("machine", parts, nil)
+	test.That(t, err, test.ShouldBeNil)
+	m, err := referenceframe.NewModel("composite", fs, "tool")
 	test.That(t, err, test.ShouldBeNil)
 
 	_, err = rdk.JointsFromModel(m, "")
 	test.That(t, err, test.ShouldNotBeNil)
-	test.That(t, err.Error(), test.ShouldContainSubstring, "trajex/rdk")
-
-	_, err = rdk.JointsFromModel(nil, "")
-	test.That(t, err, test.ShouldNotBeNil)
+	test.That(t, err.Error(), test.ShouldContainSubstring, "has no kinematics file form")
 }
 
 // The message allows four spellings of a link's orientation, and RDK reads
@@ -285,19 +329,14 @@ func TestJointsFromFrameSystemConfigRefusesTheDeprecatedKinematicsField(t *testi
 	test.That(t, err.Error(), test.ShouldContainSubstring, `part "arm" carries its model in the deprecated kinematics field only`)
 }
 
-// partsToProtobuf writes parts with the model beside the frame, which is the
-// message rdk#6693 (RSDK-14751) serves. The RDK release we pin fills the
-// deprecated Struct only, so we add the model ourselves.
+// partsToProtobuf writes parts the way a machine serves them, with the typed
+// model beside the frame.
 func partsToProtobuf(t *testing.T, parts []*referenceframe.FrameSystemPart) []*robotpb.FrameSystemConfig {
 	t.Helper()
 	var out []*robotpb.FrameSystemConfig
 	for _, part := range parts {
 		pb, err := part.ToProtobuf()
 		test.That(t, err, test.ShouldBeNil)
-		if part.ModelFrame != nil {
-			pb.Model, err = referenceframe.ModelToProto(part.ModelFrame)
-			test.That(t, err, test.ShouldBeNil)
-		}
 		out = append(out, pb)
 	}
 	return out
