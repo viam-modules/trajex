@@ -21,14 +21,11 @@ import (
 // JointsFromModel is JointsFromKinematicModel for the message RDK serves for
 // m. It returns an error for a model RDK cannot write out as a message.
 func JointsFromModel(m referenceframe.Model, outputFrame string) ([]kinematics.Joint, error) {
-	if m == nil {
-		return nil, errors.New("trajex/rdk: model is nil")
-	}
-	pb, err := referenceframe.ModelToProto(m)
+	arm, err := ArmFromModel(m, outputFrame)
 	if err != nil {
-		return nil, errors.Wrap(err, "trajex/rdk")
+		return nil, err
 	}
-	return JointsFromKinematicModel(pb, outputFrame)
+	return arm.Joints, nil
 }
 
 // JointsFromKinematicModel describes the serial chain from the base of model
@@ -38,7 +35,8 @@ func JointsFromModel(m referenceframe.Model, outputFrame string) ([]kinematics.J
 // outputFrame names a link or joint of the model, or is empty for the model's
 // own output frame. A point past that, such as a tool on a flange, is a link
 // the model names or a kinematics.FixedJoint the caller appends. Lengths are
-// in millimetres, as in the message. Limits and properties are not mapped.
+// in millimetres, as in the message. ArmFromKinematicModel carries the
+// limits and properties beside the chain.
 //
 // The chain takes the positions RDK's model takes, in the same order, so the
 // moving joints on the path to outputFrame must be exactly the model's
@@ -46,14 +44,11 @@ func JointsFromModel(m referenceframe.Model, outputFrame string) ([]kinematics.J
 // it, such as a gripper's finger, is refused, as is anything RDK refuses to
 // load.
 func JointsFromKinematicModel(model *commonpb.KinematicModel, outputFrame string) ([]kinematics.Joint, error) {
-	if model == nil {
-		return nil, errors.New("trajex/rdk: kinematic model is nil")
-	}
-	b := &chainBuilder{origin: spatialmath.NewZeroPose()}
-	if err := b.appendModel(model, model.GetName(), outputFrame); err != nil {
+	arm, err := ArmFromKinematicModel(model, outputFrame)
+	if err != nil {
 		return nil, err
 	}
-	return b.finish(), nil
+	return arm.Joints, nil
 }
 
 // JointsFromFrameSystemConfig describes the serial chain from the world
@@ -171,22 +166,34 @@ func (b *chainBuilder) finish() []kinematics.Joint {
 }
 
 // appendModel adds the model's chain to outputFrame. label names the model in
-// errors, since a model inside a frame system part may carry no name. RDK
-// loads the message first, which refuses what it cannot drive and leaves us
-// the configuration it built, with each link's pose parsed and the order it
-// takes positions in.
+// errors, since a model inside a frame system part may carry no name.
 func (b *chainBuilder) appendModel(model *commonpb.KinematicModel, label, outputFrame string) error {
-	if err := checkMessage(model, label); err != nil {
+	sm, err := load(model, label)
+	if err != nil {
 		return err
+	}
+	return b.appendLoaded(sm, label, outputFrame)
+}
+
+// load has RDK read the message, which refuses what it cannot drive and leaves
+// us the configuration it built, with each link's pose parsed and the order
+// it takes positions in.
+func load(model *commonpb.KinematicModel, label string) (*referenceframe.SimpleModel, error) {
+	if err := checkMessage(model, label); err != nil {
+		return nil, err
 	}
 	loaded, err := referenceframe.ModelFromProto(model, label)
 	if err != nil {
-		return errors.Wrapf(err, "trajex/rdk: model %q", label)
+		return nil, errors.Wrapf(err, "trajex/rdk: model %q", label)
 	}
 	sm, ok := loaded.(*referenceframe.SimpleModel)
 	if !ok {
-		return errors.Errorf("trajex/rdk: model %q loaded as a %T, which does not report its moving joints", label, loaded)
+		return nil, errors.Errorf("trajex/rdk: model %q loaded as a %T, which does not report its moving joints", label, loaded)
 	}
+	return sm, nil
+}
+
+func (b *chainBuilder) appendLoaded(sm *referenceframe.SimpleModel, label, outputFrame string) error {
 	cfg := sm.ModelConfig()
 
 	elements := index(cfg)
