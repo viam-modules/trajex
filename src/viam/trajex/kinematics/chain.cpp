@@ -66,7 +66,7 @@ quat axis_rotation(const vec3& axis, double theta) {
     return {std::cos(half), s * axis[0], s * axis[1], s * axis[2]};
 }
 
-// A rigid transform, applied as rotation then translation. The default is the identity.
+// The rotation applies first, then the translation.
 struct rigid_transform {
     quat rotation{1.0, 0.0, 0.0, 0.0};
     vec3 translation{0.0, 0.0, 0.0};
@@ -105,8 +105,8 @@ vec3 linear_column(const auto& joint, const vec3& p_e) {
 // construction. Joints after last_joint cannot move anything before them, so we stop there, but q
 // is still checked against the whole chain, because callers always hand us a full joint vector.
 //
-// Clearing keeps the capacity, so a reused workspace allocates only on the first call, or when a
-// longer chain than before is given it.
+// Clearing keeps the capacity, so a reused workspace allocates only on its first call, or when it
+// is next used with a longer chain than before.
 void chain::update_chain_state_(const xvector<>& q, std::size_t last_joint, workspace& storage) const {
     if (q.size() != actuated_count_) {
         throw std::invalid_argument("viam::trajex::kinematics: q size mismatch: expected " + std::to_string(actuated_count_) +

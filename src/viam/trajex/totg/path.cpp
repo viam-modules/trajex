@@ -890,9 +890,9 @@ void path::cursor::rich::invalidate_() noexcept {
     cached_bits_ = decltype(cached_bits_){};
 }
 
-// A seek that leaves the position where it was keeps the cache. The segment needs no check of its
-// own, since the hint does not move when the position does not. The integration loop seeks to each
-// step's start, which is usually where the previous step's probe left the cursor.
+// The integration loop seeks to each step's start, which is usually where the previous step's probe
+// left the cursor, so a seek that does not move the cursor keeps the cache. The segment needs no
+// check of its own, since the hint does not move when the position does not.
 path::cursor::rich& path::cursor::rich::seek(arc_length s) noexcept {
     const auto before = position();
     cursor::seek(s);

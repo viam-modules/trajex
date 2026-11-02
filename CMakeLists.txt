@@ -531,7 +531,7 @@ if (VIAM_TRAJEX_BUILD_BENCHMARKS)
 
   # Instruments refuses to attach to a process whose binary does not carry
   # `get-task-allow`, so `xctrace record` launches the benchmark, fails with "Failed to
-  # attach to target process", and still writes out a trace -- one containing no samples,
+  # attach to target process", and still writes out a trace. The trace has no samples in it,
   # which is easy to mistake for a profiling result. Re-signing ad-hoc adds the entitlement
   # without weakening anything, since the linker already ad-hoc signs arm64 binaries, and
   # the benchmarks are neither installed nor shipped.

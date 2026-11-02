@@ -971,7 +971,8 @@ BOOST_AUTO_TEST_CASE(rich_matches_plain_cursor_at_many_positions) {
     for (int step = 0; step <= 20; ++step) {
         const auto s = fraction_of(p.length(), static_cast<double>(step) / 20.0);
 
-        // Alternate steps move by seek_by, which both cursors compute the same way.
+        // Alternate steps move by seek_by, so that the rich cursor's route through its own seek is
+        // checked against the plain cursor's.
         if (step % 2 == 0) {
             plain.seek(s);
             r.seek(s);

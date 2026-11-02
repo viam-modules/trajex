@@ -780,10 +780,8 @@ BOOST_AUTO_TEST_CASE(every_frame_matches_its_prefix_chain) {
     check_forward_kinematics_at_every_frame(mixed_chain(), {0.3, -0.6, 0.2, 1.1}, {0.5, 0.4, -0.7, 0.2}, {-0.3, 0.1, 0.2, 0.6});
 }
 
-// A workspace is storage reused from call to call, so reuse is where it could go wrong. One
-// workspace is carried through every frame of chains of different lengths, a longer one after a
-// shorter so that its storage has to grow, and each result must be exactly what a call without
-// it gives.
+// One workspace is carried through every frame of several chains, a longer one after a shorter so
+// that its storage has to grow, and every result must exactly match a call made without it.
 BOOST_AUTO_TEST_CASE(reused_workspace_matches_fresh_call) {
     chain::workspace storage;
 

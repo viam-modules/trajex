@@ -59,16 +59,15 @@ class chain {
     };
 
     ///
-    /// Storage that forward_kinematics can reuse from one call to the next.
+    /// Storage that forward_kinematics can reuse across calls.
     ///
-    /// On its way along the chain, forward_kinematics records the world-frame axis and origin of
-    /// each moving joint it passes. A caller evaluating repeatedly, as trajectory generation does,
-    /// can hand the same workspace to every call so that this storage is allocated once rather than
-    /// on each call. A workspace carries nothing from one call to the next that affects the result,
-    /// and it may be used with any chain.
+    /// forward_kinematics needs scratch storage for each moving joint in the chain. A caller that
+    /// evaluates repeatedly can pass the same workspace to every call, so that the storage is
+    /// allocated once rather than on each call. Nothing left in a workspace affects a later result,
+    /// and one workspace may be used with any chain.
     ///
-    /// A workspace is modified by every call it is given to, so two calls must not share one at
-    /// the same time.
+    /// Every call modifies the workspace it is given, so two calls must not use the same one
+    /// concurrently.
     ///
     class workspace;
 

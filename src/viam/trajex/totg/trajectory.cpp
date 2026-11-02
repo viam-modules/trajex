@@ -70,8 +70,8 @@ struct joint_velocity_limit {
 };
 
 // Joint velocity limit curve (Kunz & Stilman Eq. 36): min_i q_dot_max(i) / |q'(i)|. The limiting
-// joint is the first to reach the minimum, and joint 0 where no joint moves along the path, which
-// is the joint the slope has always been taken from.
+// joint is the lowest-numbered one at the minimum, or joint 0 where no joint moves along the path
+// and the limit is infinite.
 [[gnu::pure]] joint_velocity_limit compute_joint_velocity_limit(const xvector<>& q_prime,
                                                                 const xvector<>& q_double_prime,
                                                                 const xvector<>& q_dot_max,
@@ -130,10 +130,9 @@ tcp_velocity_limit compute_tcp_velocity_limit(const xvector<>& q,
     // path. The result is a set of downward-facing parabolas centered at the origin, and we
     // take the minimum of their positive bounds to find the feasible path velocity.
     //
-    // Note that a mechanical translation of Eq. 31 would have several sqrt calls inside the
-    // loops here. Instead, since sqrt is monotone, we work in squared arc_velocity space,
-    // and defer the conversion back to arc_velocity space to a single terminal sqrt call.
-    // There is no strong type for squared arc velocity, so we just use double until the end.
+    // Eq. 31 written out directly takes a sqrt for every bound inside the loops below. Since sqrt
+    // is monotone, we take the minimum over squared velocities instead and convert only the
+    // result. There is no strong type for squared arc velocity, so these stay double until then.
     double s_dot_max_accel_sq{std::numeric_limits<double>::infinity()};
 
     // For each pair of joints that are moving along the path, compare their curvature ratios
@@ -187,8 +186,8 @@ tcp_velocity_limit compute_tcp_velocity_limit(const xvector<>& q,
 }
 
 // Every limit curve at one point on the path, with what the velocity curve's slope needs from that
-// same evaluation, so that compute_velocity_limit_slope takes nothing that could have come from
-// somewhere else. joint is the Kunz & Stilman Eq. 36 per-DOF limit, tcp is the TCP limit (+inf
+// same evaluation, so that compute_velocity_limit_slope cannot pair a value from one point with a
+// slope from another. joint is the Kunz & Stilman Eq. 36 per-DOF limit, tcp is the TCP limit (+inf
 // where there is none or the TCP does not move), and s_dot_max_vel is their minimum. s_dot_max_acc
 // is the acceleration limit curve, which the TCP limit does not affect.
 struct limit_curves {
@@ -200,7 +199,7 @@ struct limit_curves {
     std::optional<trajectory::tcp_limits::linear_speed_per_arc_velocity> tcp_ratio;
 };
 
-// The joint curves alone, which is all of it where no TCP limit is set.
+// The joint limit curves only. Without a TCP limit these are all the limit curves there are.
 [[nodiscard]] limit_curves compute_joint_limit_curves(const xvector<>& q_prime,
                                                       const xvector<>& q_double_prime,
                                                       const trajectory::options& opt) {
@@ -215,8 +214,8 @@ struct limit_curves {
     };
 }
 
-// The limit curves at geometry the caller supplies, for the places a cursor cannot: one-sided
-// derivatives at a segment boundary, or a point in a segment the cursor is not positioned at.
+// The limit curves at geometry the caller supplies, for where a cursor cannot provide it: one-sided
+// derivatives at a segment boundary, or a point other than the cursor's position.
 [[nodiscard]] limit_curves compute_limit_curves(const xvector<>& q,
                                                 const xvector<>& q_prime,
                                                 const xvector<>& q_double_prime,
@@ -231,9 +230,9 @@ struct limit_curves {
     return curves;
 }
 
-// The limit curves at a cursor's position, with the geometry read from the cursor itself. A rich
-// cursor lends its geometry by reference and a plain one returns copies, but both compute the
-// configuration when it is asked for, so it is read only when a TCP limit needs it.
+// The limit curves at a cursor's position. Either kind of cursor computes the configuration only
+// when asked for it, and only the TCP limit needs it, so it is not read without one. A rich cursor
+// lends its geometry by reference, where a plain one returns copies.
 template <cursor_like C>
 [[nodiscard]] limit_curves compute_limit_curves(const C& cursor, const trajectory::options& opt) {
     if constexpr (rich_cursor_like<C>) {
@@ -337,7 +336,7 @@ phase_plane_slope compute_joint_velocity_limit_slope(const limiting_joint& limit
     // incorrect value that could cause incorrect curve-following behavior.
     if (std::abs(denominator) < epsilon) {
         throw std::runtime_error{
-            "compute_velocity_limit_derivative: denominator near zero for limiting joint - "
+            "compute_joint_velocity_limit_slope: denominator near zero for limiting joint - "
             "velocity limit curve derivative is numerically undefined (joint barely moving along path)"};
     }
 
@@ -346,8 +345,7 @@ phase_plane_slope compute_joint_velocity_limit_slope(const limiting_joint& limit
 
 // The slope of the velocity limit curve where `curves` was evaluated: the joint curve's (Eq. 37)
 // where it is the active one, the TCP curve's (`Extension 1`, see README.md) where the TCP limit is
-// the binding constraint. Everything comes from `curves`, so the slope cannot be taken from a
-// different point than the value was.
+// the binding constraint.
 phase_plane_slope compute_velocity_limit_slope(const limit_curves& curves, const trajectory::options& opt) {
     // Joint active (TCP not binding, including the singular tcp = +inf case): the joint curve has
     // a closed-form slope the code can evaluate; use it. The comparison is exact, not
@@ -360,15 +358,16 @@ phase_plane_slope compute_velocity_limit_slope(const limit_curves& curves, const
         return compute_joint_velocity_limit_slope(curves.limiting, opt.max_velocity, opt.epsilon);
     }
 
-    // The TCP limit is the lower of the two here, so it is finite, which it is only where the
-    // evaluator returned a ratio g of at least epsilon, and d/ds s_dot_max_TCP = -v_TCP * (dg/ds) / g^2.
+    // The TCP limit is the lower of the two here, so it is finite, and it is finite only where the
+    // evaluator returned a ratio g of at least epsilon. Its slope is d/ds s_dot_max_TCP =
+    // -v_TCP * (dg/ds) / g^2.
     assert(opt.tcp.has_value() && curves.tcp_ratio.has_value());
     const auto& r = curves.tcp_ratio;
     const double slope = -opt.tcp->max_linear_speed * r->arc_length_derivative / (r->value * r->value);
 
     if (!std::isfinite(slope)) {
         throw std::runtime_error{
-            "compute_velocity_limit_derivative_with_tcp: non-finite TCP limit-curve slope (evaluator "
+            "compute_velocity_limit_slope: non-finite TCP limit-curve slope (evaluator "
             "returned value " +
             std::to_string(r->value) + ", arc_length_derivative " + std::to_string(r->arc_length_derivative) +
             " where the TCP limit is the lower one)"};
@@ -1277,9 +1276,10 @@ void trajectory::integration_event_observer::on_trajectory_extended(const trajec
 trajectory::tcp_limits trajectory::tcp_limits::from(kinematics::chain chain, double max_linear_speed) {
     return tcp_limits{
         .max_linear_speed = max_linear_speed,
-        // The evaluator runs once or twice per integration step, so it keeps one workspace for all
-        // of them rather than allocating on each call. That makes it stateful, which is why one
-        // evaluator must not be called concurrently, but trajex never promised that it could be.
+        // The evaluator runs once or twice per integration step, so it keeps one workspace rather
+        // than allocating on each call. That makes one evaluator unsafe to call concurrently, but
+        // every copy carries its own workspace, and trajectory::create takes its options by value,
+        // so separate generations never share one.
         .evaluator = [chain = std::move(chain), storage = kinematics::chain::workspace{}](
                          const xvector<>& q,
                          const xvector<>& q_prime,
