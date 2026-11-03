@@ -1,0 +1,1 @@
+This isn't a colcon package. It only builds against an installed trajex. colcon only checks that this file exists.

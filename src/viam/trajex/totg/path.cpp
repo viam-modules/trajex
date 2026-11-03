@@ -1,11 +1,10 @@
-#include <ranges>
 #include <viam/trajex/totg/path.hpp>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <numbers>
 #include <optional>
+#include <ranges>
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
@@ -290,20 +289,20 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         throw std::invalid_argument{"Path requires at least 2 waypoints"};
     }
 
-    if (opts.max_blend_deviation() < 0.0) {
-        throw std::invalid_argument{"Max blend deviation must be non-negative"};
+    if (!std::isfinite(opts.max_blend_deviation()) || opts.max_blend_deviation() < 0.0) {
+        throw std::invalid_argument{"Max blend deviation must be finite and non-negative"};
     }
 
-    if (opts.max_linear_deviation() < 0.0) {
-        throw std::invalid_argument{"Max linear deviation must be non-negative"};
+    if (!std::isfinite(opts.max_linear_deviation()) || opts.max_linear_deviation() < 0.0) {
+        throw std::invalid_argument{"Max linear deviation must be finite and non-negative"};
     }
 
-    if (opts.min_blend_curvature() <= 0.0) {
-        throw std::invalid_argument{"Min blend curvature must be positive"};
+    if (!std::isfinite(opts.min_blend_curvature()) || opts.min_blend_curvature() <= 0.0) {
+        throw std::invalid_argument{"Min blend curvature must be finite and positive"};
     }
 
-    if (opts.max_blend_curvature() < 0.0) {
-        throw std::invalid_argument{"Max blend curvature must be non-negative"};
+    if (!std::isfinite(opts.max_blend_curvature()) || opts.max_blend_curvature() < 0.0) {
+        throw std::invalid_argument{"Max blend curvature must be finite and non-negative"};
     }
 
     if (opts.max_blend_curvature() < opts.min_blend_curvature()) {
@@ -678,6 +677,8 @@ path::const_iterator path::cend() const noexcept {
 
 path::const_iterator::const_iterator() noexcept : path_{nullptr} {}
 
+path::const_iterator::const_iterator(const path* p, std::vector<positioned_segment>::const_iterator it) noexcept : path_{p}, it_{it} {}
+
 path::segment::view path::const_iterator::operator*() const {
     // Compute end: next segment's start, or path length
     auto next = std::next(it_);
@@ -906,6 +907,18 @@ path::cursor::rich& path::cursor::rich::seek_by(arc_length delta) noexcept {
     return this->rich::seek(position() + delta);
 }
 
+// A throwing fill leaves the bit clear, so a query that failed is not later mistaken for one that
+// succeeded.
+template <typename Fill>
+const xvector<>& path::cursor::rich::cached_(xvector<>& storage, std::size_t bit, Fill&& fill) const {
+    if (!cached_bits_.test(bit)) {
+        std::forward<Fill>(fill)(std::span<double>{storage.data(), storage.size()});
+        cached_bits_.set(bit);
+    }
+
+    return storage;
+}
+
 const xvector<>& path::cursor::rich::configuration_ref() const {
     return cached_(configuration_, k_configuration_bit_, [this](std::span<double> out) { cursor::configuration(out); });
 }
@@ -946,6 +959,14 @@ void path::cursor::rich::curvature(std::span<double> out) const {
     const auto& cached = curvature_ref();
     require_dof(out, cached.size());
     std::copy_n(cached.data(), cached.size(), out.data());
+}
+
+bool operator==(const path::cursor::rich& c, std::default_sentinel_t) noexcept {
+    return static_cast<const path::cursor&>(c) == std::default_sentinel;
+}
+
+bool operator==(std::default_sentinel_t, const path::cursor::rich& c) noexcept {
+    return static_cast<const path::cursor&>(c) == std::default_sentinel;
 }
 
 void path::cursor::update_hint_() noexcept {

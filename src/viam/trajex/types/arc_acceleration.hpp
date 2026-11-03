@@ -201,7 +201,7 @@ inline arc_acceleration abs(arc_acceleration acc) noexcept {
 /// @param t Interpolation factor (0.0 yields a, 1.0 yields b)
 /// @return Interpolated arc acceleration
 ///
-inline arc_acceleration lerp(arc_acceleration a, arc_acceleration b, double t) {
+constexpr arc_acceleration lerp(arc_acceleration a, arc_acceleration b, double t) {
     return arc_acceleration{std::lerp(static_cast<double>(a), static_cast<double>(b), t)};
 }
 
@@ -214,7 +214,7 @@ inline arc_acceleration lerp(arc_acceleration a, arc_acceleration b, double t) {
 /// @param b Second arc acceleration
 /// @return Midpoint arc acceleration
 ///
-inline arc_acceleration midpoint(arc_acceleration a, arc_acceleration b) {
+constexpr arc_acceleration midpoint(arc_acceleration a, arc_acceleration b) {
     return arc_acceleration{std::midpoint(static_cast<double>(a), static_cast<double>(b))};
 }
 

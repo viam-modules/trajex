@@ -1,10 +1,15 @@
 cmake_minimum_required(VERSION 3.25 FATAL_ERROR)
 
-project(trajex VERSION 0.1.0
+project(trajex VERSION 0.102.0
   DESCRIPTION "Viam trajectory execution library"
   HOMEPAGE_URL https://github.com/viam-modules/trajex
   LANGUAGES C CXX
 )
+
+# Defines the CMAKE_INSTALL_* variables. This has to happen before the RPATH setup and the
+# install include directories below read them, because GNUInstallDirs caches its variables,
+# and a later include would only take effect on the second configure.
+include(GNUInstallDirs)
 
 # Detect if we're building trajex as a standalone module
 # vs being included via FetchContent by universal-robots
@@ -31,6 +36,32 @@ option(VIAM_TRAJEX_BUILD_BENCHMARKS "Build the Trajex benchmark programs" ${VIAM
 # path. Pulls in Eigen. Useful for cross-validating the new TOTG implementation.
 option(VIAM_TRAJEX_ENABLE_LEGACY "Enable the reference implementation" ON)
 
+# Enable the TOTG compatibility layer (`viam::trajex::totg::compat`), which implements the
+# reference implementation's `Path` and `Trajectory` interface on top of trajex, so that code
+# written against the original can try trajex without changes. There's also a shim target that
+# makes it available under the original header names. Pulls in Eigen. Defaults ON for standalone
+# builds, OFF for FetchContent consumers.
+option(VIAM_TRAJEX_TOTG_ENABLE_LEGACY_COMPAT "Enable the TOTG reference implementation compatibility layer" ${VIAM_TRAJEX_STANDALONE_BUILD})
+
+# Enable the MoveIt 2 integration (`viam::trajex::moveit::totg`), a MoveIt time parameterization
+# backed by trajex, for calling directly from C++. It needs MoveIt 2 from the ROS environment, so
+# source the ROS setup script before configuring. The ament package in `src/viam/trajex/moveit`
+# turns this on and builds the MoveIt plugins. Defaults OFF.
+option(VIAM_TRAJEX_ENABLE_MOVEIT "Enable the MoveIt 2 integration" OFF)
+
+# Install static archives in the `-runtime` install components instead of `-dev`. This is for
+# consumers that ship the archives as they are, like the Go module, and not for find_package
+# consumers, since the package config that refers to the archives lives in `-dev`. It has no
+# effect on shared builds. Defaults OFF.
+option(VIAM_TRAJEX_INSTALL_ARCHIVES_AS_RUNTIME "Install static archives in the runtime components" OFF)
+
+# Install the package config and library exports that let `find_package(trajex)` find an installed
+# trajex. Consumers that stage individual install components, such as the Go module, should turn
+# this off, since the exports would refer to components they never stage. Defaults ON for
+# standalone builds, OFF for FetchContent consumers, which can turn it on to make trajex findable in
+# what they install.
+option(VIAM_TRAJEX_INSTALL_CMAKE_PACKAGE "Install the CMake package config and target exports" ${VIAM_TRAJEX_STANDALONE_BUILD})
+
 # Enable the planner, replay, and JSON serialization tooling layer
 # (`viam::trajex::totg::tools`). Required by the service layer and by the regression test
 # suite (the latter for opt-in trajectory dumping; see the TODO at the test target).
@@ -56,6 +87,15 @@ option(VIAM_TRAJEX_ENABLE_CAPI "Enable the C ABI shim" ON)
 # FetchContent consumers so a parent project's looser warning posture isn't broken by
 # upstream warnings.
 option(VIAM_TRAJEX_USE_WALL_WERROR "Build with -Wall and -Werror flags" ${VIAM_TRAJEX_STANDALONE_BUILD})
+
+# Build shared libraries, as the module release does (conan's `shared` option defaults on). This
+# has to be declared before any dependency is fetched, because viam-cpp-sdk declares its own
+# BUILD_SHARED_LIBS option, which would otherwise decide this whenever the SDK is fetched rather
+# than found. When trajex is included with FetchContent, the parent project decides. The Go
+# artifact build asks for static libraries explicitly.
+if (VIAM_TRAJEX_STANDALONE_BUILD)
+  option(BUILD_SHARED_LIBS "Build the trajex libraries as shared libraries" ON)
+endif()
 
 # Set minimum macOS deployment target to 14.0 (Sonoma) for mature
 # C++20 support in Xcode 15's libc++.
@@ -118,6 +158,41 @@ function(apply_wall_werror target_name)
   endif()
 endfunction()
 
+# Hides every symbol of a library that its headers don't mark with VIAM_TRAJEX_<NAME>_API, and
+# generates the export header defining that macro and VIAM_TRAJEX_<NAME>_HIDDEN. The header is
+# generated in the build tree, in a directory we add to the library's public header set as a second
+# base directory, so that it installs with the rest. On ELF and Mach-O one macro could serve every
+# library, but Windows' dllexport and dllimport need one per library.
+#
+# The macros only matter in a shared library. For a static library GenerateExportHeader defines
+# them as empty, and since the presets still apply, every symbol in the archive is hidden, including
+# the API. We want that, because it keeps trajex private to any shared library that someone links
+# our archives into. Executables don't care, since hidden visibility only limits what is exported
+# dynamically.
+include(GenerateExportHeader)
+function(viam_trajex_hide_symbols target name header)
+  set_target_properties(${target} PROPERTIES
+    C_VISIBILITY_PRESET hidden
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+    DEFINE_SYMBOL VIAM_TRAJEX_${name}_EXPORTS
+  )
+  set(base_dir ${CMAKE_CURRENT_BINARY_DIR}/generated/include)
+  generate_export_header(${target}
+    BASE_NAME VIAM_TRAJEX_${name}
+    EXPORT_MACRO_NAME VIAM_TRAJEX_${name}_API
+    NO_EXPORT_MACRO_NAME VIAM_TRAJEX_${name}_HIDDEN
+    INCLUDE_GUARD_NAME VIAM_TRAJEX_${name}_EXPORT_H
+    EXPORT_FILE_NAME ${base_dir}/${header}
+  )
+  target_sources(${target}
+    PUBLIC
+    FILE_SET HEADERS
+    BASE_DIRS ${base_dir}
+    FILES ${base_dir}/${header}
+  )
+endfunction()
+
 if (NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE "RelWithDebInfo")
 endif()
@@ -132,6 +207,13 @@ endif()
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# Check that every public header compiles on its own, so none depends on what happens to be
+# included before it. We only do this for standalone builds, so a parent project isn't slowed
+# down checking headers it didn't write.
+if (VIAM_TRAJEX_STANDALONE_BUILD)
+  set(CMAKE_VERIFY_INTERFACE_HEADER_SETS ON)
+endif()
 
 
 #
@@ -162,7 +244,9 @@ set(VIAM_TRAJEX_XTL_VERSION_MINIMUM 0.7.2)
 #                  below become silent no-ops. Pins match the SDK's current pins so
 #                  the no-SDK path tracks the same versions.
 #   viam-cpp-sdk   ENABLE_SERVICE; FetchContent with find_package fallback.
-#   Eigen3         ENABLE_LEGACY (reference impl + colinearization helpers).
+#   Eigen3         ENABLE_LEGACY (reference impl + colinearization helpers), and
+#                  TOTG_ENABLE_LEGACY_COMPAT (the compatibility layer's interface).
+#   moveit_core    ENABLE_MOVEIT; found through the ROS environment, never fetched.
 #   Boost          BUILD_TESTS (boost.test framework, consumed in header-only mode
 #                  via `<boost/test/included/unit_test.hpp>`; we still declare the
 #                  `unit_test_framework` component to validate it is installed.
@@ -204,10 +288,23 @@ FetchContent_Declare(
   FIND_PACKAGE_ARGS ${VIAM_TRAJEX_XTENSOR_VERSION_MINIMUM} CONFIG
 )
 
+# When xtl and xtensor are fetched rather than found, they get installed alongside trajex, which
+# our installed headers need. Neither project assigns its install rules to a component, so this
+# default puts them in one of ours instead of CMake's "Unspecified".
+set(CMAKE_INSTALL_DEFAULT_COMPONENT_NAME trajex-vendored-dependencies-dev)
 FetchContent_MakeAvailable(xtl xtensor)
+unset(CMAKE_INSTALL_DEFAULT_COMPONENT_NAME)
 
 if (VIAM_TRAJEX_ENABLE_LEGACY)
   find_package(Eigen3 ${VIAM_TRAJEX_EIGEN3_VERSION_MINIMUM} CONFIG REQUIRED)
+endif()
+
+if (VIAM_TRAJEX_TOTG_ENABLE_LEGACY_COMPAT)
+  find_package(Eigen3 ${VIAM_TRAJEX_EIGEN3_VERSION_MINIMUM} CONFIG REQUIRED)
+endif()
+
+if (VIAM_TRAJEX_ENABLE_MOVEIT)
+  find_package(moveit_core CONFIG REQUIRED)
 endif()
 
 if (VIAM_TRAJEX_BUILD_TESTS)
@@ -264,7 +361,7 @@ if (VIAM_TRAJEX_ENABLE_LEGACY)
   target_include_directories(viam-trajex-totg-legacy
     INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
-    $<INSTALL_INTERFACE:include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
   )
 
   target_precompile_headers(viam-trajex-totg-legacy PRIVATE <assert.h>)
@@ -296,10 +393,32 @@ target_sources(viam-trajex-totg
     src/viam/trajex/totg/waypoint_utils.cpp
 )
 
-target_include_directories(viam-trajex-totg
+# List the public headers, so that they install with their paths under src preserved. Headers
+# under `private` directories are left off the list so they don't get installed. The base directory
+# also becomes the include directory for this target and anything that links it.
+target_sources(viam-trajex-totg
   PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
-    $<INSTALL_INTERFACE:include>
+    FILE_SET HEADERS
+    BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/src
+    FILES
+    src/viam/trajex/trajex.hpp
+    src/viam/trajex/kinematics/chain.hpp
+    src/viam/trajex/totg/observers.hpp
+    src/viam/trajex/totg/path.hpp
+    src/viam/trajex/totg/streaming/session.hpp
+    src/viam/trajex/totg/totg.hpp
+    src/viam/trajex/totg/trajectory.hpp
+    src/viam/trajex/totg/uniform_sampler.hpp
+    src/viam/trajex/totg/waypoint_accumulator.hpp
+    src/viam/trajex/totg/waypoint_utils.hpp
+    src/viam/trajex/types/angles.hpp
+    src/viam/trajex/types/arc_acceleration.hpp
+    src/viam/trajex/types/arc_length.hpp
+    src/viam/trajex/types/arc_operations.hpp
+    src/viam/trajex/types/arc_velocity.hpp
+    src/viam/trajex/types/epsilon.hpp
+    src/viam/trajex/types/hertz.hpp
+    src/viam/trajex/types/xt.hpp
 )
 
 target_link_libraries(viam-trajex-totg
@@ -308,9 +427,123 @@ target_link_libraries(viam-trajex-totg
     xtl
 )
 
+viam_trajex_hide_symbols(viam-trajex-totg TOTG viam/trajex/totg/export.hpp)
 apply_wall_werror(viam-trajex-totg)
 
 add_library(viam::trajex::totg ALIAS viam-trajex-totg)
+
+
+# Compatibility layer: the reference implementation's `Path` and `Trajectory` interface in the
+# `viam::trajex::totg::compat` namespace, backed by trajex. Its headers need only Eigen, so
+# trajex stays a private dependency. The shim target adds a directory of headers named after
+# the originals, which bring the compat classes into the global namespace. Only contains
+# meaningful content if `VIAM_TRAJEX_TOTG_ENABLE_LEGACY_COMPAT` is truthy.
+
+if (VIAM_TRAJEX_TOTG_ENABLE_LEGACY_COMPAT)
+  add_library(viam-trajex-totg-compat)
+
+  target_sources(viam-trajex-totg-compat
+    PRIVATE
+    src/viam/trajex/totg/compat/path.cpp
+    src/viam/trajex/totg/compat/trajectory.cpp
+  )
+
+  target_compile_definitions(viam-trajex-totg-compat
+    INTERFACE
+    VIAM_TRAJEX_TOTG_LEGACY_COMPAT_ENABLED=1
+  )
+
+  target_sources(viam-trajex-totg-compat
+    PUBLIC
+    FILE_SET HEADERS
+    BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/src
+    FILES
+    src/viam/trajex/totg/compat/path.hpp
+    src/viam/trajex/totg/compat/trajectory.hpp
+  )
+
+  target_link_libraries(viam-trajex-totg-compat
+    PUBLIC
+    Eigen3::Eigen
+    PRIVATE
+    viam::trajex::totg
+  )
+
+  viam_trajex_hide_symbols(viam-trajex-totg-compat TOTG_COMPAT viam/trajex/totg/compat/export.hpp)
+  apply_wall_werror(viam-trajex-totg-compat)
+
+  add_library(viam-trajex-totg-compat-shim INTERFACE)
+
+  # These install with their paths preserved, like every other header, so that names like
+  # `Path.h` don't land at the top of the include tree. Callers include them by bare name, so we
+  # make the shim directory itself the include directory, both in the build tree and once
+  # installed.
+  target_sources(viam-trajex-totg-compat-shim
+    INTERFACE
+    FILE_SET HEADERS
+    BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/src
+    FILES
+    src/viam/trajex/totg/compat/shim/Path.h
+    src/viam/trajex/totg/compat/shim/Trajectory.h
+  )
+
+  target_include_directories(viam-trajex-totg-compat-shim
+    INTERFACE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/viam/trajex/totg/compat/shim>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/viam/trajex/totg/compat/shim>
+  )
+
+  target_link_libraries(viam-trajex-totg-compat-shim
+    INTERFACE
+    viam::trajex::totg::compat
+  )
+else()
+  add_library(viam-trajex-totg-compat INTERFACE)
+  add_library(viam-trajex-totg-compat-shim INTERFACE)
+endif()
+
+add_library(viam::trajex::totg::compat ALIAS viam-trajex-totg-compat)
+add_library(viam::trajex::totg::compat::shim ALIAS viam-trajex-totg-compat-shim)
+
+
+# MoveIt integration: a MoveIt `TimeParameterization` backed by trajex TOTG. Its header includes
+# both MoveIt's headers and trajex's, so both are public dependencies. Only contains meaningful
+# content if `VIAM_TRAJEX_ENABLE_MOVEIT` is truthy.
+
+if (VIAM_TRAJEX_ENABLE_MOVEIT)
+  add_library(viam-trajex-moveit-totg)
+
+  target_sources(viam-trajex-moveit-totg
+    PRIVATE
+    src/viam/trajex/moveit/totg/time_parameterization.cpp
+  )
+
+  target_sources(viam-trajex-moveit-totg
+    PUBLIC
+    FILE_SET HEADERS
+    BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/src
+    FILES
+    src/viam/trajex/moveit/totg/time_parameterization.hpp
+  )
+
+  target_link_libraries(viam-trajex-moveit-totg
+    PUBLIC
+    viam::trajex::totg
+    moveit_core::moveit_robot_trajectory
+    moveit_core::moveit_trajectory_processing
+    PRIVATE
+    moveit_core::moveit_robot_model
+    moveit_core::moveit_robot_state
+    moveit_core::moveit_utils
+  )
+
+  viam_trajex_hide_symbols(viam-trajex-moveit-totg MOVEIT_TOTG viam/trajex/moveit/totg/export.hpp)
+  apply_wall_werror(viam-trajex-moveit-totg)
+else()
+  add_library(viam-trajex-moveit-totg INTERFACE)
+endif()
+
+add_library(viam::trajex::moveit::totg ALIAS viam-trajex-moveit-totg)
 
 
 # Tools-legacy library: colinearization helpers in the `viam::trajex::totg::legacy` namespace,
@@ -328,7 +561,7 @@ if (VIAM_TRAJEX_ENABLE_TOOLS AND VIAM_TRAJEX_ENABLE_LEGACY)
   target_include_directories(viam-trajex-totg-tools-legacy
     PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
-    $<INSTALL_INTERFACE:include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
   )
 
   target_link_libraries(viam-trajex-totg-tools-legacy
@@ -392,7 +625,7 @@ if (VIAM_TRAJEX_ENABLE_SERVICE)
   target_include_directories(viam-trajex-service
     PUBLIC
       $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
-      $<INSTALL_INTERFACE:include>
+      $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
   )
 
   # NOTE: viam::trajex::totg::tools is linked PUBLIC rather than PRIVATE so that the
@@ -437,12 +670,13 @@ if (VIAM_TRAJEX_ENABLE_CAPI)
   target_include_directories(viam-trajex-capi
     PUBLIC
       $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
-      $<INSTALL_INTERFACE:include>
+      $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
   )
   target_link_libraries(viam-trajex-capi
     PRIVATE
       viam::trajex::totg
   )
+  viam_trajex_hide_symbols(viam-trajex-capi CAPI viam/trajex/capi/export.h)
   apply_wall_werror(viam-trajex-capi)
 else()
   add_library(viam-trajex-capi INTERFACE)
@@ -722,6 +956,104 @@ if (VIAM_TRAJEX_BUILD_TESTS)
   )
 
 
+  if (VIAM_TRAJEX_TOTG_ENABLE_LEGACY_COMPAT)
+    # The suite also links the reference implementation when it's enabled, so that it can run the
+    # same inputs through both.
+    add_executable(viam-trajex-totg-compat-test)
+
+    target_sources(viam-trajex-totg-compat-test
+      PRIVATE
+      src/viam/trajex/totg/compat/test/main.cpp
+      src/viam/trajex/totg/compat/test/compat.cpp
+    )
+
+    target_link_libraries(viam-trajex-totg-compat-test
+      PRIVATE
+      viam::trajex::totg::compat
+      viam::trajex::totg
+      viam::trajex::totg::legacy
+      Boost::boost
+    )
+
+    apply_wall_werror(viam-trajex-totg-compat-test)
+
+    add_test(
+      NAME viam-trajex-totg-compat-test
+      COMMAND viam-trajex-totg-compat-test
+    )
+
+    # We also build the reference implementation's own example and test programs, unmodified,
+    # against the shim, so that we notice if it stops being source compatible with the original.
+    # They're copied out of their directory first, since their quoted includes would otherwise
+    # find the original headers beside them. They aren't registered with ctest, because both
+    # always exit zero and the example waits on stdin.
+    #
+    # We build them as C++98, the oldest standard the compat headers claim to support. However,
+    # CMake raises that to whatever the Eigen target requires, so with Eigen 5 the check is
+    # really against C++14.
+    foreach (program Example Test)
+      string(TOLOWER ${program} program_lower)
+      set(target viam-trajex-totg-compat-shim-${program_lower})
+
+      configure_file(
+        src/third_party/trajectories/${program}.cpp
+        ${CMAKE_CURRENT_BINARY_DIR}/compat-shim/${program}.cpp
+        COPYONLY
+      )
+
+      add_executable(${target})
+
+      target_sources(${target}
+        PRIVATE
+        ${CMAKE_CURRENT_BINARY_DIR}/compat-shim/${program}.cpp
+      )
+
+      set_target_properties(${target} PROPERTIES
+        CXX_STANDARD 98
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS OFF
+      )
+
+      target_link_libraries(${target}
+        PRIVATE
+        viam::trajex::totg::compat::shim
+      )
+    endforeach()
+
+    # Test.cpp uses std::cout without including <iostream>, relying on older Eigen to provide
+    # it. It fails the same way against the original headers with current Eigen, so supply the
+    # include rather than edit the file.
+    target_compile_options(viam-trajex-totg-compat-shim-test PRIVATE "SHELL:-include iostream")
+  endif()
+
+
+  if (VIAM_TRAJEX_ENABLE_MOVEIT)
+    add_executable(viam-trajex-moveit-totg-test)
+
+    target_sources(viam-trajex-moveit-totg-test
+      PRIVATE
+      src/viam/trajex/moveit/totg/test/main.cpp
+      src/viam/trajex/moveit/totg/test/time_parameterization.cpp
+    )
+
+    target_link_libraries(viam-trajex-moveit-totg-test
+      PRIVATE
+      viam::trajex::moveit::totg
+      moveit_core::moveit_robot_model
+      moveit_core::moveit_robot_state
+      moveit_core::moveit_test_utils
+      Boost::boost
+    )
+
+    apply_wall_werror(viam-trajex-moveit-totg-test)
+
+    add_test(
+      NAME viam-trajex-moveit-totg-test
+      COMMAND viam-trajex-moveit-totg-test
+    )
+  endif()
+
+
   if (VIAM_TRAJEX_ENABLE_SERVICE)
     add_executable(viam-trajex-service-test)
 
@@ -796,75 +1128,182 @@ if (VIAM_TRAJEX_BUILD_TESTS)
     )
   endif()
 
+  # We also build the find_package consumer's programs here, against this build's own targets, so
+  # that they're in the compile database for the analysers and the build breaks as soon as they stop
+  # compiling. They only test the package when .github/scripts/verify-package.sh builds the consumer
+  # project against an install. That project's directory is never added here, since its find_package
+  # should only run outside this build.
+  function(viam_trajex_add_consumer_test name source library)
+    add_executable(viam-trajex-consumer-${name})
+    target_sources(viam-trajex-consumer-${name} PRIVATE src/viam/trajex/test/cmake/${source})
+    target_link_libraries(viam-trajex-consumer-${name} PRIVATE ${library})
+    apply_wall_werror(viam-trajex-consumer-${name})
+    add_test(NAME viam-trajex-consumer-${name} COMMAND viam-trajex-consumer-${name})
+  endfunction()
+
+  viam_trajex_add_consumer_test(totg totg.cpp viam::trajex::totg)
+
+  if (VIAM_TRAJEX_TOTG_ENABLE_LEGACY_COMPAT)
+    viam_trajex_add_consumer_test(compat compat.cpp viam::trajex::totg::compat::shim)
+  endif()
+
+  if (VIAM_TRAJEX_ENABLE_CAPI)
+    viam_trajex_add_consumer_test(capi capi.c viam::trajex::capi)
+    set_target_properties(viam-trajex-consumer-capi PROPERTIES
+      C_STANDARD 99
+      C_STANDARD_REQUIRED ON
+      C_EXTENSIONS OFF
+    )
+  endif()
+
+  if (VIAM_TRAJEX_ENABLE_MOVEIT)
+    viam_trajex_add_consumer_test(moveit moveit.cpp viam::trajex::moveit::totg)
+  endif()
+
 endif()
 
 #
 # Installation
 #
 
-include(GNUInstallDirs)
+# Every install rule names an install component, and each part of trajex has two of them.
+# `<component>-runtime` holds what a program needs to run (executables and shared libraries), and
+# `<component>-dev` holds what is needed to build against it (headers, static archives and shared
+# library namelinks). Static archives go in `-runtime` instead when
+# VIAM_TRAJEX_INSTALL_ARCHIVES_AS_RUNTIME is set.
+#
+# Installing with `--component` installs only the named component, and CMake has no notion of
+# dependencies between components, so a consumer that installs this way has to name everything it
+# needs. That means `-runtime` as well as `-dev`, for every library it links. A full install, with
+# no `--component`, installs everything, and that's what the module package and the ament package
+# do. Fetched xtl and xtensor go in trajex-vendored-dependencies-dev.
+#
+# Each library's public headers are its HEADERS file set, installed with their paths under src
+# preserved, so `#include <viam/trajex/...>` works against the install tree as it does against the
+# source tree.
+#
+# When EXPORT is given and VIAM_TRAJEX_INSTALL_CMAKE_PACKAGE is set, the targets are also exported
+# for the package config, with one export file per component, installed in its `-dev` component.
+# Targets are exported under their alias names, so `viam-trajex-totg-compat` exports as
+# `viam::trajex::totg::compat`. We only export libraries that install public headers, since a
+# find_package consumer can't use the others.
+set(VIAM_TRAJEX_CMAKE_PACKAGE_INSTALL_DIR ${CMAKE_INSTALL_LIBDIR}/cmake/trajex)
 
-# Put every trajex install() rule below into the `trajex` component -- none of them set a
-# component individually, so this default applies to all of them. This lets
-# `cmake --install --component trajex` stage just trajex's own outputs: the FetchContent'd
-# xtl/xtensor registered their install rules earlier (during FetchContent_MakeAvailable),
-# under the built-in "Unspecified" component, so they are excluded. A full install (no
-# --component) is unaffected -- every component installs. Finer-grained roles/components
-# (dev vs runtime, capi vs tools, ...) are future work; for now the feature flags gate
-# what exists, so one component is enough.
-set(CMAKE_INSTALL_DEFAULT_COMPONENT_NAME trajex)
+function(viam_trajex_install component)
+  cmake_parse_arguments(PARSE_ARGV 1 arg "EXPORT" "" "")
+  set(targets ${arg_UNPARSED_ARGUMENTS})
 
-# Always install core libraries. The legacy alias is always installed; when
-# VIAM_TRAJEX_ENABLE_LEGACY is OFF it is an empty INTERFACE library and install() is a no-op.
-install(
-  TARGETS
-  viam-trajex-totg-legacy
-  viam-trajex-totg
-  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-)
+  if (VIAM_TRAJEX_INSTALL_ARCHIVES_AS_RUNTIME)
+    set(archive_role runtime)
+  else()
+    set(archive_role dev)
+  endif()
 
-if (VIAM_TRAJEX_ENABLE_TOOLS)
+  set(export_args)
+  if (arg_EXPORT AND VIAM_TRAJEX_INSTALL_CMAKE_PACKAGE)
+    foreach(target IN LISTS targets)
+      string(REGEX REPLACE "^viam-trajex-" "" export_name ${target})
+      string(REPLACE "-" "::" export_name ${export_name})
+      set_target_properties(${target} PROPERTIES EXPORT_NAME ${export_name})
+    endforeach()
+    set(export_args EXPORT ${component}-targets)
+  endif()
+
   install(
-    TARGETS
-    viam-trajex-totg-tools-legacy
-    viam-trajex-totg-tools
-    viam-trajex-totg-replay-exe
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    TARGETS ${targets} ${export_args}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT ${component}-runtime
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT ${component}-runtime NAMELINK_COMPONENT ${component}-dev
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT ${component}-${archive_role}
+    FILE_SET HEADERS DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT ${component}-dev
   )
+
+  if (export_args)
+    install(
+      EXPORT ${component}-targets
+      NAMESPACE viam::trajex::
+      DESTINATION ${VIAM_TRAJEX_CMAKE_PACKAGE_INSTALL_DIR}
+      COMPONENT ${component}-dev
+    )
+  endif()
+endfunction()
+
+# The legacy target is always installed. When VIAM_TRAJEX_ENABLE_LEGACY is OFF it's an empty
+# INTERFACE library and installs nothing. It has no public headers, so it isn't exported.
+viam_trajex_install(trajex-legacy viam-trajex-totg-legacy)
+
+viam_trajex_install(trajex-totg EXPORT viam-trajex-totg)
+
+if (VIAM_TRAJEX_TOTG_ENABLE_LEGACY_COMPAT)
+  viam_trajex_install(trajex-compat EXPORT viam-trajex-totg-compat viam-trajex-totg-compat-shim)
 endif()
 
-if (VIAM_TRAJEX_ENABLE_SERVICE)
-  install(
-    TARGETS
-    viam-trajex-service
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  )
+if (VIAM_TRAJEX_ENABLE_TOOLS)
+  viam_trajex_install(trajex-tools viam-trajex-totg-tools-legacy viam-trajex-totg-tools viam-trajex-totg-replay-exe)
 endif()
 
 if (VIAM_TRAJEX_ENABLE_CAPI)
+  viam_trajex_install(trajex-capi EXPORT viam-trajex-capi)
+endif()
+
+if (VIAM_TRAJEX_ENABLE_MOVEIT)
+  viam_trajex_install(trajex-moveit EXPORT viam-trajex-moveit-totg)
+endif()
+
+# The package config goes in trajex-totg-dev, next to the totg export, since every component needs
+# totg. It looks for xtl and xtensor the same way this build got them. If they were found, it finds
+# them again, at the version found here or newer, or at our minimum if no version was reported. If
+# they were fetched, we installed them alongside trajex, so it looks only for those copies, in the
+# same prefix.
+if (VIAM_TRAJEX_INSTALL_CMAKE_PACKAGE)
+  include(CMakePackageConfigHelpers)
+
+  foreach(dependency IN ITEMS xtl xtensor)
+    string(TOUPPER ${dependency} dependency_upper)
+    get_target_property(dependency_imported ${dependency} IMPORTED)
+    if (dependency_imported)
+      set(dependency_version ${${dependency}_VERSION})
+      if (NOT dependency_version)
+        set(dependency_version ${VIAM_TRAJEX_${dependency_upper}_VERSION_MINIMUM})
+      endif()
+      set(find_args "${dependency_version} CONFIG")
+    else()
+      get_directory_property(dependency_version DIRECTORY ${${dependency}_SOURCE_DIR} DEFINITION ${dependency}_VERSION)
+      set(dependency_config_dir ${${dependency_upper}_CMAKECONFIG_INSTALL_DIR})
+      if (NOT dependency_version OR NOT dependency_config_dir)
+        message(FATAL_ERROR "Cannot tell which version of the fetched ${dependency} is installed, or where its package config goes")
+      endif()
+      if (NOT IS_ABSOLUTE "${dependency_config_dir}")
+        set(dependency_config_dir "\${PACKAGE_PREFIX_DIR}/${dependency_config_dir}")
+      endif()
+      set(find_args "${dependency_version} EXACT CONFIG PATHS \"${dependency_config_dir}\" NO_DEFAULT_PATH")
+    endif()
+    set(VIAM_TRAJEX_${dependency_upper}_FIND_ARGS ${find_args})
+  endforeach()
+
+  configure_package_config_file(
+    cmake/trajexConfig.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/trajexConfig.cmake
+    INSTALL_DESTINATION ${VIAM_TRAJEX_CMAKE_PACKAGE_INSTALL_DIR}
+  )
+
+  # trajex is at major version 0, where a minor version may break compatibility.
+  write_basic_package_version_file(
+    ${CMAKE_CURRENT_BINARY_DIR}/trajexConfigVersion.cmake
+    COMPATIBILITY SameMinorVersion
+  )
+
   install(
-    TARGETS
-    viam-trajex-capi
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    FILE_SET HEADERS DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    FILES
+      ${CMAKE_CURRENT_BINARY_DIR}/trajexConfig.cmake
+      ${CMAKE_CURRENT_BINARY_DIR}/trajexConfigVersion.cmake
+    DESTINATION ${VIAM_TRAJEX_CMAKE_PACKAGE_INSTALL_DIR}
+    COMPONENT trajex-totg-dev
   )
 endif()
 
 if (VIAM_TRAJEX_ENABLE_SERVICE)
-  # Install the service executable and the module packaging artifacts (meta.json + CPack).
-  install(
-    TARGETS
-    viam-trajex-service-exe
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-  )
+  # Install the service library and executable, and the module packaging artifacts (meta.json + CPack).
+  viam_trajex_install(trajex-service viam-trajex-service viam-trajex-service-exe)
 
   # Configure meta.json from template
   configure_file(
@@ -877,6 +1316,7 @@ if (VIAM_TRAJEX_ENABLE_SERVICE)
   install(
     FILES ${CMAKE_CURRENT_BINARY_DIR}/meta.json
     DESTINATION .
+    COMPONENT trajex-service-runtime
   )
 
   # Set up CPack for trajex module packaging

@@ -4,6 +4,7 @@
 #include <iterator>
 #include <optional>
 
+#include <viam/trajex/totg/export.hpp>
 #include <viam/trajex/totg/trajectory.hpp>
 #include <viam/trajex/types/hertz.hpp>
 
@@ -17,7 +18,7 @@ namespace viam::trajex::totg {
 /// `start` values support chaining samplers across trajectory boundaries without
 /// duplicating the seam sample.
 ///
-class uniform_sampler {
+class VIAM_TRAJEX_TOTG_API uniform_sampler {
    public:
     ///
     /// Constructs uniform sampler with sample count and a starting time.

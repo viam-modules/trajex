@@ -148,6 +148,14 @@ chain::chain(std::vector<joint_> joints) : joints_(std::move(joints)) {
         std::ranges::count_if(joints_, [](const joint_& joint) { return !std::holds_alternative<fixed_joint_>(joint); }));
 }
 
+std::size_t chain::dof() const noexcept {
+    return actuated_count_;
+}
+
+std::size_t chain::size() const noexcept {
+    return joints_.size();
+}
+
 xmatrix<> chain::jacobian(const xvector<>& q) const {
     workspace storage;
     update_chain_state_(q, joints_.size() - 1, storage);
@@ -276,6 +284,18 @@ chain::builder& chain::builder::extend(const joint_origin& origin, const rotatio
 chain::builder& chain::builder::extend(const joint_origin& origin, const translation_axis& axis) & {
     joints_.emplace_back(translating_joint_{{origin, {}}, axis, {}});
     return *this;
+}
+
+chain::builder&& chain::builder::extend(const joint_origin& origin) && {
+    return std::move(extend(origin));
+}
+
+chain::builder&& chain::builder::extend(const joint_origin& origin, const rotation_axis& axis) && {
+    return std::move(extend(origin, axis));
+}
+
+chain::builder&& chain::builder::extend(const joint_origin& origin, const translation_axis& axis) && {
+    return std::move(extend(origin, axis));
 }
 
 chain chain::builder::build() && {

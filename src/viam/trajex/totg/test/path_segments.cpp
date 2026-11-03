@@ -12,8 +12,6 @@
 #include <xtensor/xnorm.hpp>
 #endif
 
-#include <numbers>
-
 #include <boost/test/unit_test.hpp>
 
 BOOST_AUTO_TEST_SUITE(segment_tests)

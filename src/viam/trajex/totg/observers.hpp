@@ -4,6 +4,7 @@
 #include <memory>
 #include <vector>
 
+#include <viam/trajex/totg/export.hpp>
 #include <viam/trajex/totg/trajectory.hpp>
 
 namespace viam::trajex::totg {
@@ -22,7 +23,11 @@ namespace viam::trajex::totg {
 /// options.observer = &composite;
 /// @endcode
 ///
-class composite_integration_observer final : public trajectory::integration_observer {
+class VIAM_TRAJEX_TOTG_API composite_integration_observer final : public trajectory::integration_observer {
+    struct pass_key_ {
+        explicit pass_key_() = default;
+    };
+
    public:
     ///
     /// Constructs an empty composite observer.
@@ -48,6 +53,12 @@ class composite_integration_observer final : public trajectory::integration_obse
     ///
     template <std::derived_from<integration_observer> T>
     std::shared_ptr<T> add_observer(std::shared_ptr<T> observer);
+
+    ///
+    /// Adds an observer on behalf of the add_observer template. Only that template can call it,
+    /// because it requires a key that only this class can construct.
+    ///
+    void add_observer(pass_key_, std::shared_ptr<integration_observer> observer);
 
     ///
     /// Dispatches forward integration start to all observers.
@@ -90,8 +101,6 @@ class composite_integration_observer final : public trajectory::integration_obse
     void on_failed(std::exception_ptr error, std::shared_ptr<const trajectory> invalid) noexcept override;
 
    private:
-    void add_observer_(std::shared_ptr<integration_observer> observer);
-
     std::vector<std::shared_ptr<integration_observer>> observers_;
     bool dispatching_ = false;
 };
@@ -111,7 +120,7 @@ class composite_integration_observer final : public trajectory::integration_obse
 /// }
 /// @endcode
 ///
-class trajectory_integration_event_collector final : public trajectory::integration_event_observer {
+class VIAM_TRAJEX_TOTG_API trajectory_integration_event_collector final : public trajectory::integration_event_observer {
    public:
     ///
     /// Constructs an empty event collector.
@@ -192,7 +201,7 @@ class trajectory_integration_event_collector final : public trajectory::integrat
 
 template <std::derived_from<trajectory::integration_observer> T>
 std::shared_ptr<T> composite_integration_observer::add_observer(std::shared_ptr<T> observer) {
-    add_observer_(observer);
+    add_observer(pass_key_{}, observer);
     return observer;
 }
 

@@ -84,7 +84,7 @@ BOOST_AUTO_TEST_CASE(totg_only_config) {
     BOOST_CHECK(result);
 
     // Should have accelerations (trajex produces them)
-    BOOST_CHECK(result->count("accelerations_rads_per_sec2") > 0);
+    BOOST_CHECK(result->contains("accelerations_rads_per_sec2"));
 }
 
 #if defined(VIAM_TRAJEX_LEGACY_ENABLED)
@@ -97,7 +97,7 @@ BOOST_AUTO_TEST_CASE(legacy_only_config) {
     BOOST_CHECK(result);
 
     // Should NOT have accelerations (legacy doesn't produce them)
-    BOOST_CHECK(result->count("accelerations_rads_per_sec2") == 0);
+    BOOST_CHECK(!result->contains("accelerations_rads_per_sec2"));
 }
 #endif
 
@@ -156,9 +156,9 @@ BOOST_AUTO_TEST_CASE(simple_trajectory_produces_valid_output) {
     auto result = service->infer(make_simple_inputs(), {});
 
     BOOST_REQUIRE(result);
-    BOOST_CHECK(result->count("sample_times_sec") > 0);
-    BOOST_CHECK(result->count("configurations_rads") > 0);
-    BOOST_CHECK(result->count("velocities_rads_per_sec") > 0);
+    BOOST_CHECK(result->contains("sample_times_sec"));
+    BOOST_CHECK(result->contains("configurations_rads"));
+    BOOST_CHECK(result->contains("velocities_rads_per_sec"));
 
     // Verify output types are float64
     BOOST_CHECK_EQUAL(vsdk::MLModelService::tensor_info::tensor_views_to_data_type(result->at("sample_times_sec")),
@@ -201,10 +201,10 @@ BOOST_AUTO_TEST_CASE(totg_trajectory_has_samples_and_accelerations) {
     auto result = service->infer(make_simple_inputs(), {});
 
     BOOST_REQUIRE(result);
-    BOOST_CHECK(result->count("sample_times_sec") > 0);
-    BOOST_CHECK(result->count("configurations_rads") > 0);
-    BOOST_CHECK(result->count("velocities_rads_per_sec") > 0);
-    BOOST_CHECK(result->count("accelerations_rads_per_sec2") > 0);
+    BOOST_CHECK(result->contains("sample_times_sec"));
+    BOOST_CHECK(result->contains("configurations_rads"));
+    BOOST_CHECK(result->contains("velocities_rads_per_sec"));
+    BOOST_CHECK(result->contains("accelerations_rads_per_sec2"));
 
     // All output tensors should be float64
     for (const auto& key : {"sample_times_sec", "configurations_rads", "velocities_rads_per_sec", "accelerations_rads_per_sec2"}) {
@@ -222,10 +222,10 @@ BOOST_AUTO_TEST_CASE(legacy_trajectory_has_samples_but_no_accelerations) {
     auto result = service->infer(make_simple_inputs(), {});
 
     BOOST_REQUIRE(result);
-    BOOST_CHECK(result->count("sample_times_sec") > 0);
-    BOOST_CHECK(result->count("configurations_rads") > 0);
-    BOOST_CHECK(result->count("velocities_rads_per_sec") > 0);
-    BOOST_CHECK_EQUAL(result->count("accelerations_rads_per_sec2"), 0U);
+    BOOST_CHECK(result->contains("sample_times_sec"));
+    BOOST_CHECK(result->contains("configurations_rads"));
+    BOOST_CHECK(result->contains("velocities_rads_per_sec"));
+    BOOST_CHECK(!result->contains("accelerations_rads_per_sec2"));
 }
 #endif
 
@@ -235,7 +235,7 @@ BOOST_AUTO_TEST_CASE(dual_algorithm_prefers_totg) {
 
     BOOST_REQUIRE(result);
     // Default config runs both; totg result should be preferred (has accelerations)
-    BOOST_CHECK(result->count("accelerations_rads_per_sec2") > 0);
+    BOOST_CHECK(result->contains("accelerations_rads_per_sec2"));
 }
 
 BOOST_AUTO_TEST_SUITE_END()

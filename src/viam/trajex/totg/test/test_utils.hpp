@@ -6,7 +6,6 @@
 #include <cmath>
 #include <optional>
 #include <string>
-#include <utility>
 
 #include <viam/trajex/totg/trajectory.hpp>
 #include <viam/trajex/totg/uniform_sampler.hpp>
@@ -64,9 +63,9 @@ inline xmatrix<> planar_2link_jacobian(double l1, double l2, const xvector<>& q)
     const double s12 = std::sin(q1 + q2);
     const double c12 = std::cos(q1 + q2);
     xmatrix<> J = xt::zeros<double>({std::size_t{3}, std::size_t{2}});
-    J(0, 0) = -l1 * s1 - l2 * s12;
+    J(0, 0) = (-l1 * s1) - (l2 * s12);
     J(0, 1) = -l2 * s12;
-    J(1, 0) = l1 * c1 + l2 * c12;
+    J(1, 0) = (l1 * c1) + (l2 * c12);
     J(1, 1) = l2 * c12;
     return J;
 }

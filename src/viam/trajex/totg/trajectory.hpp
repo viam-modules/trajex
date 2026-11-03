@@ -11,6 +11,7 @@
 #include <utility>
 
 #include <viam/trajex/kinematics/chain.hpp>
+#include <viam/trajex/totg/export.hpp>
 #include <viam/trajex/totg/path.hpp>
 #include <viam/trajex/types/arc_acceleration.hpp>
 #include <viam/trajex/types/arc_length.hpp>
@@ -65,7 +66,7 @@ concept sized_sampler = sampler<S, Cursor, Sample> && requires(const S& s) {
 ///
 /// **Note**: Cannot be default-constructed. Must be created via trajectory::create().
 ///
-class trajectory {
+class VIAM_TRAJEX_TOTG_API trajectory {
    public:
     ///
     /// Time duration in seconds (as floating point).
@@ -462,10 +463,10 @@ class trajectory {
 
    private:
     // Private constructor for completed trajectories with validated integration points
-    trajectory(class path p, struct options opt, integration_points points);
+    VIAM_TRAJEX_TOTG_HIDDEN trajectory(class path p, struct options opt, integration_points points);
 
     // Private constructor for in-progress trajectory building (integration points added incrementally)
-    trajectory(class path p, struct options opt);
+    VIAM_TRAJEX_TOTG_HIDDEN trajectory(class path p, struct options opt);
 
     // Geometric path
     class path path_;
@@ -729,7 +730,7 @@ class trajectory::cursor {
     /// @param c Cursor to compare
     /// @return True if cursor is at sentinel position (past end or invalid)
     ///
-    friend bool operator==(const cursor& c, std::default_sentinel_t) noexcept;
+    friend VIAM_TRAJEX_TOTG_API bool operator==(const cursor& c, std::default_sentinel_t) noexcept;
 
     ///
     /// Compares end sentinel with cursor (reversed order).
@@ -737,14 +738,14 @@ class trajectory::cursor {
     /// @param c Cursor to compare
     /// @return True if cursor is at sentinel position (past end or invalid)
     ///
-    friend bool operator==(std::default_sentinel_t, const cursor& c) noexcept;
+    friend VIAM_TRAJEX_TOTG_API bool operator==(std::default_sentinel_t, const cursor& c) noexcept;
 
    private:
     friend class trajectory;
-    explicit cursor(const class trajectory* traj);
+    VIAM_TRAJEX_TOTG_HIDDEN explicit cursor(const class trajectory* traj);
 
     // Helper to update path cursor position after time hint is updated
-    void update_path_cursor_position_(seconds t);
+    VIAM_TRAJEX_TOTG_HIDDEN void update_path_cursor_position_(seconds t);
 
     const class trajectory* traj_;
     seconds time_{seconds{0.0}};

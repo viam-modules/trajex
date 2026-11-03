@@ -4,11 +4,10 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
-#include <utility>
 #include <vector>
 
+#include <viam/trajex/totg/export.hpp>
 #include <viam/trajex/totg/path.hpp>
-#include <viam/trajex/totg/streaming/private/waypoint_store.hpp>
 #include <viam/trajex/totg/trajectory.hpp>
 #include <viam/trajex/totg/uniform_sampler.hpp>
 #include <viam/trajex/totg/waypoint_accumulator.hpp>
@@ -39,7 +38,7 @@ namespace viam::trajex::totg::streaming {
 /// assumes single-threaded ownership; sampling and extending from different threads
 /// is unsupported.
 ///
-class session {
+class VIAM_TRAJEX_TOTG_API session {
    public:
     ///
     /// What one `extend()` call did with the batch it was given, and the timing it computed
@@ -117,6 +116,20 @@ class session {
     ///                    change if a sampler factory is added later.
     ///
     session(path::options path_options, trajectory::options trajectory_options, types::hertz sample_rate);
+
+    ///
+    /// Sessions are neither copyable nor movable, because the sampling state points into the
+    /// active trajectory, which lives inside the session.
+    ///
+    session(const session&) = delete;
+    session& operator=(const session&) = delete;
+    session(session&&) = delete;
+    session& operator=(session&&) = delete;
+
+    ///
+    /// Destroys a session.
+    ///
+    ~session();
 
     ///
     /// Adds a batch of waypoints to the session.
@@ -269,12 +282,16 @@ class session {
     std::size_t trajectory_generation_count() const noexcept;
 
    private:
+    // Waypoints the session owns. It's defined in the source file, so that the private
+    // waypoint store type stays out of this public header.
+    struct VIAM_TRAJEX_TOTG_HIDDEN waypoint_store_impl;
+
     // While staging, the waypoints of the staged motion and the trajectory built from them,
     // which follows the active trajectory once it has been sampled through. The waypoints start
     // with the active trajectory's last waypoint, so the staged trajectory begins where the
     // active one ends. Both stay empty until the first batch is staged.
     struct staging_state {
-        std::unique_ptr<waypoint_store> waypoints;
+        std::unique_ptr<waypoint_store_impl> waypoints;
         std::optional<trajectory> next;
     };
 
@@ -282,26 +299,26 @@ class session {
     // trajectory::options. Throws on validation failure inside path::create or
     // trajectory::create, leaving every member it does not touch alone. A caller that has
     // already appended to a waypoint store is responsible for winding that back.
-    trajectory build_trajectory_from_(const waypoint_accumulator& waypoints) const;
+    VIAM_TRAJEX_TOTG_HIDDEN trajectory build_trajectory_from_(const waypoint_accumulator& waypoints) const;
 
     // Appends `batch` past its seam to the staged waypoints and rebuilds the staged trajectory
     // from them. Returns the growth in duration over the staged trajectory it replaced, or the
     // whole of the new duration if there was none. If the build throws, `staging` is left as
     // it was.
-    trajectory::seconds stage_(staging_state& staging, const waypoint_accumulator& batch);
+    VIAM_TRAJEX_TOTG_HIDDEN trajectory::seconds stage_(staging_state& staging, const waypoint_accumulator& batch);
 
     // Emits a single sample, advancing the cursor. Installs the staged trajectory when the
     // active trajectory is about to emit its terminal, or already has. Returns nullopt when
     // the session is fully drained.
-    std::optional<struct trajectory::sample> sample_one_();
+    VIAM_TRAJEX_TOTG_HIDDEN std::optional<struct trajectory::sample> sample_one_();
 
     // Makes the staged trajectory active, starts sampling it `start` into its own time,
     // advances the epoch by the prior active's duration, ends staging, and increments the
     // generation count. Preconditions: active_ holds a value, and a staged trajectory exists.
-    void install_staged_(trajectory::seconds start);
+    VIAM_TRAJEX_TOTG_HIDDEN void install_staged_(trajectory::seconds start);
 
     // The staged trajectory, or null if nothing has been staged.
-    const trajectory* staged_trajectory_() const noexcept;
+    VIAM_TRAJEX_TOTG_HIDDEN const trajectory* staged_trajectory_() const noexcept;
 
     // Construction-time configuration. Reused for every trajectory the session builds.
     path::options path_options_;
@@ -319,7 +336,7 @@ class session {
     // A store cannot be moved, because its accumulator views its own storage, so it is held by
     // pointer. That lets the staged waypoints take over by handing over the pointer when the
     // staged trajectory becomes active, rather than by copying them across.
-    std::unique_ptr<waypoint_store> waypoints_;
+    std::unique_ptr<waypoint_store_impl> waypoints_;
 
     // The currently active trajectory, or nullopt before the first successful extend.
     // Storage in std::optional is in-place, so `&*active_` is a stable address across

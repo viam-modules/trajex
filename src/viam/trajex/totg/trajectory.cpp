@@ -1359,12 +1359,12 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
         throw std::invalid_argument{"max_acceleration must be finite and non-negative"};
     }
 
-    if (opt.delta <= seconds{0.0}) {
-        throw std::invalid_argument{"delta must be positive"};
+    if (!std::isfinite(opt.delta.count()) || opt.delta <= seconds{0.0}) {
+        throw std::invalid_argument{"delta must be finite and positive"};
     }
 
-    if (opt.epsilon <= 0.0) {
-        throw std::invalid_argument{"epsilon must be positive"};
+    if (!std::isfinite(static_cast<double>(opt.epsilon)) || opt.epsilon <= 0.0) {
+        throw std::invalid_argument{"epsilon must be finite and positive"};
     }
 
     if (opt.tcp.has_value()) {

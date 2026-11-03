@@ -36,7 +36,7 @@ waypoint_accumulator& waypoint_accumulator::operator=(const waypoint_accumulator
 waypoint_accumulator& waypoint_accumulator::operator=(waypoint_accumulator&&) noexcept = default;
 
 waypoint_accumulator& waypoint_accumulator::add_waypoints(const xmatrix<>& waypoints) {
-    require_matching_dof_(waypoints.shape()[1]);
+    require_matching_dof_(waypoints);
     append_rows_(waypoints);
     return *this;
 }
