@@ -31,10 +31,9 @@ vec3 normalized(const vec3& a) {
     return {a[0] / n, a[1] / n, a[2] / n};
 }
 
-// The FK walk holds its running rigid transform as a unit quaternion and a translation rather
-// than a 4x4 matrix. That is the form joint origins arrive in, and it makes the per-joint
-// rotation cheap to build and to compose, which matters because the walk runs once or twice per
-// integration step.
+// The FK walk holds its running rigid transform as a unit quaternion and a translation. That is
+// the form joint origins arrive in, and it makes each joint's rotation cheap to build and to
+// compose, which matters because the walk runs once or twice per integration step.
 //
 // Quaternions are w, x, y, z in the Hamilton convention, and rotate a vector actively,
 // v' = q v q*.
@@ -72,8 +71,7 @@ struct rigid_transform {
     vec3 translation{0.0, 0.0, 0.0};
 };
 
-// The transform `parent` followed by (rotation, translation) expressed in parent's frame, which
-// is what the matrix product parent * [R t; 0 1] gives.
+// The transform `parent` followed by (rotation, translation) given in parent's frame.
 rigid_transform compose(const rigid_transform& parent, const quat& rotation, const vec3& translation) {
     const vec3 moved = rotate(parent.rotation, translation);
     return {
@@ -101,9 +99,9 @@ vec3 linear_column(const auto& joint, const vec3& p_e) {
 // Evaluate the forward kinematics joint by joint from the base through last_joint, accumulating
 // the running transform. For each moving joint we capture its world-frame axis and origin before
 // applying its motion, which is safe because a joint neither rotates nor translates its own axis.
-// The origin transforms and unit axes do not depend on q, so they were computed once at
-// construction. Joints after last_joint cannot move anything before them, so we stop there, but q
-// is still checked against the whole chain, because callers always hand us a full joint vector.
+// The normalized origin rotations and the unit axes do not depend on q, so they were computed once
+// at construction. Joints after last_joint cannot move anything before them, so we stop there, but
+// q is still checked against the whole chain, because callers always hand us a full joint vector.
 //
 // Clearing keeps the capacity, so a reused workspace allocates only on its first call, or when it
 // is next used with a longer chain than before.

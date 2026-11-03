@@ -358,12 +358,21 @@ phase_plane_slope compute_velocity_limit_slope(const limit_curves& curves, const
         return compute_joint_velocity_limit_slope(curves.limiting, opt.max_velocity, opt.epsilon);
     }
 
-    // The TCP limit is the lower of the two here, so it is finite, and it is finite only where the
-    // evaluator returned a ratio g of at least epsilon. Its slope is d/ds s_dot_max_TCP =
-    // -v_TCP * (dg/ds) / g^2.
+    // We only get here when the TCP limit is below the joint limit, because the joint limit is never
+    // NaN: compute_joint_velocity_limit takes its minimum with a strict comparison, which a NaN
+    // candidate always loses. That makes the TCP limit finite, and compute_limit_curves only
+    // produces a finite TCP limit when one is configured, together with the ratio it came from. The
+    // assertion guards that reasoning against a later change.
     assert(opt.tcp.has_value() && curves.tcp_ratio.has_value());
     const auto& r = curves.tcp_ratio;
-    const double slope = -opt.tcp->max_linear_speed * r->arc_length_derivative / (r->value * r->value);
+
+    // The TCP moves at g * s_dot, where g is the ratio the evaluator reported in r->value, so
+    // holding the TCP to max_linear_speed holds s_dot to max_linear_speed / g. That quotient is the
+    // TCP limit curve, and its slope is the quotient's derivative with respect to arc length.
+    // max_linear_speed does not vary along the path, so of the quotient rule's two terms only the
+    // one in dg/ds survives, which the evaluator reported in r->arc_length_derivative. It carries a
+    // minus sign because the curve falls where g rises.
+    const auto slope = -opt.tcp->max_linear_speed * r->arc_length_derivative / (r->value * r->value);
 
     if (!std::isfinite(slope)) {
         throw std::runtime_error{
@@ -1125,7 +1134,8 @@ std::optional<switching_point> find_continuous_velocity_switching_point(path::cu
     const auto below_acceleration_curve = [&](const switching_point& sp) {
         auto at = cursor;
         at.seek(sp.point.s);
-        return opt.epsilon.wrap(sp.point.s_dot) <= opt.epsilon.wrap(compute_limit_curves(at, opt).s_dot_max_acc);
+        return opt.epsilon.wrap(sp.point.s_dot) <=
+               opt.epsilon.wrap(compute_acceleration_limit(at.tangent(), at.curvature(), opt.max_acceleration, opt.epsilon));
     };
 
     auto search_position = cursor.position();
