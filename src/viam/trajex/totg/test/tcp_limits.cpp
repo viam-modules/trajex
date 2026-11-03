@@ -198,7 +198,7 @@ BOOST_AUTO_TEST_CASE(loose_tcp_matches_joint_only_baseline) {
 // This path has a genuine joint<->TCP crossing with TCP active and falling steeply after it.
 // The crossing itself is a concave corner, not a switching point; the cap is held because the
 // breach-handling step rides the combined min(joint, TCP) curve (its slope comes from
-// compute_velocity_limit_derivative_with_tcp) and forces the trajectory to follow the steep
+// compute_velocity_limit_slope) and forces the trajectory to follow the steep
 // drop. So the steep-falling crossing is respected end-to-end with no crossover-specific
 // handling.
 BOOST_AUTO_TEST_CASE(steep_falling_crossing_respects_tcp_limit) {

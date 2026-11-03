@@ -849,9 +849,10 @@ class path::cursor {
 /// A plain cursor allocates a fresh array on every geometry query. This one allocates once and
 /// refills in place, which over a trajectory is three allocations rather than a million.
 ///
-/// **Two sets of accessors**: `tangent()` and its siblings are the plain cursor's, inherited
-/// unchanged, and recompute into an owned array. `tangent_ref()` and its siblings hand back the
-/// cache, so taking the cheap one is visible at the call.
+/// **Two sets of accessors, one cache**: `tangent()` and its siblings return a copy, and
+/// `tangent_ref()` and its siblings a reference, but every one of them reads the cache, so each
+/// component is computed at most once per position however it is asked for. Taking the reference
+/// saves the copy and is visible at the call.
 ///
 /// **The _ref accessors go stale**. The reference stays valid, but what you read through it
 /// follows the cursor. After a seek you keep seeing the old values until something asks for
@@ -882,9 +883,59 @@ class path::cursor::rich : private path::cursor {
     using cursor::position;
     using cursor::operator*;
 
-    using cursor::configuration;
-    using cursor::curvature;
-    using cursor::tangent;
+    ///
+    /// Gets configuration at current position, computing it if not already cached.
+    ///
+    /// @return Copy of the cached configuration
+    /// @throws std::out_of_range if cursor is at sentinel position or before start
+    ///
+    [[nodiscard]] xvector<> configuration() const;
+
+    ///
+    /// Gets tangent at current position, computing it if not already cached.
+    ///
+    /// @return Copy of the cached unit tangent vector
+    /// @throws std::out_of_range if cursor is at sentinel position or before start
+    ///
+    [[nodiscard]] xvector<> tangent() const;
+
+    ///
+    /// Gets curvature at current position, computing it if not already cached.
+    ///
+    /// @return Copy of the cached curvature vector
+    /// @throws std::out_of_range if cursor is at sentinel position or before start
+    ///
+    [[nodiscard]] xvector<> curvature() const;
+
+    ///
+    /// Writes configuration at current position into caller-provided storage, computing it if
+    /// not already cached.
+    ///
+    /// @param out Destination, sized to the path's degrees of freedom
+    /// @throws std::out_of_range if cursor is at sentinel position or before start
+    /// @throws std::invalid_argument if out is not sized to the degrees of freedom
+    ///
+    void configuration(std::span<double> out) const;
+
+    ///
+    /// Writes tangent at current position into caller-provided storage, computing it if not
+    /// already cached.
+    ///
+    /// @param out Destination, sized to the path's degrees of freedom
+    /// @throws std::out_of_range if cursor is at sentinel position or before start
+    /// @throws std::invalid_argument if out is not sized to the degrees of freedom
+    ///
+    void tangent(std::span<double> out) const;
+
+    ///
+    /// Writes curvature at current position into caller-provided storage, computing it if not
+    /// already cached.
+    ///
+    /// @param out Destination, sized to the path's degrees of freedom
+    /// @throws std::out_of_range if cursor is at sentinel position or before start
+    /// @throws std::invalid_argument if out is not sized to the degrees of freedom
+    ///
+    void curvature(std::span<double> out) const;
 
     ///
     /// Gets an independent plain cursor at this cursor's position.
@@ -896,7 +947,8 @@ class path::cursor::rich : private path::cursor {
     [[nodiscard]] cursor plain() const;
 
     ///
-    /// Seeks to specific arc length position, discarding cached geometry.
+    /// Seeks to specific arc length position, discarding cached geometry unless the position is
+    /// unchanged.
     ///
     /// @param s Target arc length position
     /// @return Reference to this cursor for method chaining
@@ -904,7 +956,8 @@ class path::cursor::rich : private path::cursor {
     rich& seek(arc_length s) noexcept;
 
     ///
-    /// Seeks along path by arc length delta, discarding cached geometry.
+    /// Seeks along path by arc length delta, discarding cached geometry unless the position is
+    /// unchanged.
     ///
     /// @param delta Arc length offset
     /// @return Reference to this cursor for method chaining

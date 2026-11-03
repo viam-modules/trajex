@@ -56,6 +56,7 @@ struct workload {
 constexpr workload k_workloads[] = {
     {"lab_sander", "lab_sander_backward_integration_exceeded-20260507.trajex-totg-replay.json"},
     {"VIK-182-stall", "VIK-182-stall.trajex-totg-replay.json"},
+    {"xarm850-tcp-bound", "orbsanding-xarm850-tcp-bound-20261022.trajex-totg-replay.json"},
 };
 
 // Representative of what the universal-robots module samples at, whose configured range is
