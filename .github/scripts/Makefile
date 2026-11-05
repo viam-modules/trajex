@@ -2,6 +2,9 @@
 	module.tar.gz \
 	format-check \
 	test \
+	configure-sanitize \
+	build-sanitize \
+	test-sanitize \
 	verify-headers \
 	verify-package \
 	run-clang-tidy \
@@ -13,7 +16,7 @@ help:
 	@echo "Please use CMake for local development."
 	@echo ""
 	@echo "Available CI targets:"
-	@echo "  make -f .github/scripts/Makefile [format-check,configure,build,verify-headers,verify-package,install,test,module.tar.gz,run-clang-tidy[-parallel],run-clang-check]"
+	@echo "  make -f .github/scripts/Makefile [format-check,configure,build,test-sanitize,verify-headers,verify-package,install,test,module.tar.gz,run-clang-tidy[-parallel],run-clang-check]"
 
 SOURCE_FILES := $(shell find src/viam -type f \( -name '*.cpp' -o -name '*.c' -o -name '*.h' -o -name '*.hpp' \))
 
@@ -47,6 +50,28 @@ install: build
 
 test: build
 	CTEST_OUTPUT_ON_FAILURE=1 cmake --build build --target test
+
+# Builds and tests under AddressSanitizer and UndefinedBehaviorSanitizer, in a separate build directory so the
+# sanitizer flags never reach the lint, packaging, or regular test builds. UBSan findings are made fatal, since
+# by default it only prints them and the test still passes. Benchmarks are skipped because nothing runs them here.
+SANITIZE_FLAGS := -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
+
+configure-sanitize:
+	cmake -S . -B build-sanitize -DCMAKE_BUILD_TYPE=RelWithDebInfo -G Ninja \
+		-DVIAM_TRAJEX_BUILD_BENCHMARKS=OFF \
+		-DCMAKE_C_FLAGS="$(SANITIZE_FLAGS)" \
+		-DCMAKE_CXX_FLAGS="$(SANITIZE_FLAGS)" \
+		-DCMAKE_EXE_LINKER_FLAGS="$(SANITIZE_FLAGS)" \
+		-DCMAKE_SHARED_LINKER_FLAGS="$(SANITIZE_FLAGS)"
+
+build-sanitize: configure-sanitize
+	cmake --build build-sanitize --target all
+
+test-sanitize: build-sanitize
+	CTEST_OUTPUT_ON_FAILURE=1 \
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:strict_string_checks=1:detect_stack_use_after_return=1 \
+	UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+		cmake --build build-sanitize --target test
 
 module.tar.gz: format-check install
 	cmake --build build --target package

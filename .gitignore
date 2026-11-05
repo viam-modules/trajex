@@ -1,3 +1,4 @@
 /build/
+/build-sanitize/
 /go/artifacts/
 module.tar.gz

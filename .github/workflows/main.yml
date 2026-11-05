@@ -73,6 +73,21 @@ jobs:
       - name: Verify Package
         run: make -f .github/scripts/Makefile verify-package
 
+  sanitize:
+    name: Test under ASan and UBSan
+    # amd64 only: the instrumented code paths are architecture-independent, so a second arch
+    # would double the cost without finding a different class of bug.
+    runs-on: ubuntu-latest
+    container: ghcr.io/viam-modules/universal-robots@sha256:b2edd28b4f1a17ff48c286216df137cb6e79b85abcd46f9580c5d7caca1591a8
+    steps:
+      - name: Checkout
+        # actions/checkout@v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          submodules: true
+      - name: Build and Test
+        run: make -f .github/scripts/Makefile test-sanitize
+
   build-release-artifacts:
     name: Build Trajex Release Artifacts
     needs: [check-recent-commits, build-test-lint]
