@@ -21,7 +21,7 @@ class trajex_service(ConanFile):
     }
 
     def export_sources(self):
-        for pat in ["CMakeLists.txt", "src/*", "meta.json*"]:
+        for pat in ["CMakeLists.txt", "cmake/*", "src/*", "meta.json*"]:
             copy(self, pat, self.recipe_folder, self.export_sources_folder)
 
     def set_version(self):
