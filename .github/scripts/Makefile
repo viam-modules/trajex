@@ -54,18 +54,23 @@ test: build
 # Builds and tests under AddressSanitizer and UndefinedBehaviorSanitizer, in a separate build directory so the
 # sanitizer flags never reach the lint, packaging, or regular test builds. UBSan findings are made fatal, since
 # by default it only prints them and the test still passes. Benchmarks are skipped because nothing runs them here.
+#
+# The instrumentation hides from gcc's flow analysis that a variable is always assigned before use, so
+# -Wmaybe-uninitialized reports false positives that -Werror makes fatal. The regular build keeps the warning.
 SANITIZE_FLAGS := -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
+SANITIZE_COMPILE_FLAGS := $(SANITIZE_FLAGS) -Wno-maybe-uninitialized
 
 configure-sanitize:
 	cmake -S . -B build-sanitize -DCMAKE_BUILD_TYPE=RelWithDebInfo -G Ninja \
 		-DVIAM_TRAJEX_BUILD_BENCHMARKS=OFF \
-		-DCMAKE_C_FLAGS="$(SANITIZE_FLAGS)" \
-		-DCMAKE_CXX_FLAGS="$(SANITIZE_FLAGS)" \
+		-DCMAKE_C_FLAGS="$(SANITIZE_COMPILE_FLAGS)" \
+		-DCMAKE_CXX_FLAGS="$(SANITIZE_COMPILE_FLAGS)" \
 		-DCMAKE_EXE_LINKER_FLAGS="$(SANITIZE_FLAGS)" \
 		-DCMAKE_SHARED_LINKER_FLAGS="$(SANITIZE_FLAGS)"
 
+# -k 0 keeps ninja going past failed compiles, so one run reports every sanitizer-only diagnostic.
 build-sanitize: configure-sanitize
-	cmake --build build-sanitize --target all
+	cmake --build build-sanitize --target all -- -k 0
 
 test-sanitize: build-sanitize
 	CTEST_OUTPUT_ON_FAILURE=1 \
