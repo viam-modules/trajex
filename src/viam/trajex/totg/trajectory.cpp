@@ -6,11 +6,13 @@
 #include <cstddef>
 #include <exception>
 #include <functional>
+#include <iomanip>
 #include <iterator>
 #include <limits>
 #include <numbers>
 #include <optional>
 #include <ranges>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -447,6 +449,24 @@ trajectory::phase_point euler_step(
 
 auto euler_step(trajectory::phase_point where, arc_acceleration s_ddot, trajectory::seconds dt, class epsilon epsilon) {
     return euler_step(where.s, where.s_dot, s_ddot, dt, epsilon);
+}
+
+// Returns the point at arc length `target` on the constant acceleration step through `start` and
+// `end`, interpolating or extrapolating along it. Under constant acceleration it is s_dot squared,
+// not s_dot, that is linear in s, so interpolating the square keeps every point on the same step. A
+// target past the point where s_dot reaches zero is not on the step at all, and that is an error.
+trajectory::phase_point point_on_step(trajectory::phase_point start, trajectory::phase_point end, arc_length target) {
+    const auto start_s_dot = static_cast<double>(start.s_dot);
+    const auto end_s_dot = static_cast<double>(end.s_dot);
+    const auto interpolated = std::lerp(start_s_dot * start_s_dot, end_s_dot * end_s_dot, (target - start.s) / (end.s - start.s));
+    if (interpolated < 0.0) [[unlikely]] {
+        std::ostringstream message;
+        message << std::setprecision(17) << "TOTG algorithm error: the constant acceleration step from (s=" << start.s
+                << ", s_dot=" << start.s_dot << ") to (s=" << end.s << ", s_dot=" << end.s_dot << ") does not reach s=" << target
+                << ": s_dot reaches zero before that point";
+        throw std::runtime_error{message.str()};
+    }
+    return {target, arc_velocity{std::sqrt(interpolated)}};
 }
 
 // Validates if a segment boundary is a valid acceleration switching point per
@@ -1496,17 +1516,13 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                 }
 
                 // Quantize to segment boundaries. If the step crossed or landed within epsilon of
-                // the segment end, snap to it and lerp the velocity proportionally. When the step
-                // fell just short, this is a mild extrapolation (t > 1), which
-                // std::lerp handles correctly. This prevents leaving tiny slivers of segments that
-                // cause geometry mismatches at the boundary. We use a doubled epsilon here because we want
-                // a residual segment to have a length greater than epsilon.
+                // the segment end, re-end the step there under the same acceleration. When the step
+                // fell just short, this extends it slightly. This prevents leaving tiny slivers of
+                // segments that cause geometry mismatches at the boundary. We use a doubled epsilon here
+                // because we want a residual segment to have a length greater than epsilon.
                 const auto double_epsilon = traj.options_.epsilon * 2.0;
                 if (const auto segment = *cache.path_cursor; double_epsilon.wrap(next_point.s) >= double_epsilon.wrap(segment.end())) {
-                    const auto delta_s_desired = next_point.s - current_point.s;
-                    const auto delta_s_achieved = segment.end() - current_point.s;
-                    next_point.s = segment.end();
-                    next_point.s_dot = lerp(current_point.s_dot, next_point.s_dot, delta_s_achieved / delta_s_desired);
+                    next_point = point_on_step(current_point, next_point, segment.end());
                 }
 
                 // Advance the path cursor to the arc length we just computed above. Note that this intentionally
@@ -1584,8 +1600,9 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     next_s_dot_max_vel = reset_curves.s_dot_max_vel;
 
                     while (traj.options_.epsilon.wrap(next_point.s) != traj.options_.epsilon.wrap(breach_point.s)) {
-                        const phase_point mid = {.s = midpoint(next_point.s, breach_point.s),
-                                                 .s_dot = midpoint(next_point.s_dot, breach_point.s_dot)};
+                        // Bisect along the step itself, which current_point and breach_point anchor, so
+                        // that every point bisection accepts carries the step's acceleration.
+                        const auto mid = point_on_step(current_point, breach_point, midpoint(next_point.s, breach_point.s));
 
                         cache.path_cursor.seek(mid.s);
                         const auto& mid_q_prime = cache.path_cursor.tangent_ref();
@@ -1861,6 +1878,16 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                 const auto& current_point = backwards_points.back();
                 backwards_cursor.seek(current_point.s);
 
+                // The segment this step integrates into. Standing on the start of a segment (possibly because
+                // backward integration got clamped to it), the cursor's natural resolution names the segment to
+                // our right, which we are leaving; the step goes into the one on our left.
+                auto into_segment_iter = backwards_cursor.base();
+                if (current_point.s == (*into_segment_iter).start()) {
+                    assert(into_segment_iter != traj.path().begin());
+                    --into_segment_iter;
+                }
+                const auto into_segment = *into_segment_iter;
+
                 // Compute the acceleration we should use at this phase point..
                 const auto [s_ddot_desired, s_ddot_mandated] = [&] {
                     // If this is the first point in the backwards trajectory, then this is a switching point. If it has
@@ -1869,17 +1896,9 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                         return std::make_tuple(*where.backward_accel, true);
                     }
 
-                    // If we are standing at the beginning of a segment (possibly because backward integration got
-                    // clamped to it), use the min acceleration in the segment we are integrating into, rather than the
-                    // one we are leaving.
-                    auto current_segment_iter = backwards_cursor.base();
-                    if (current_point.s == (*current_segment_iter).start()) {
-                        assert(current_segment_iter != traj.path().begin());
-                        --current_segment_iter;
-                    }
-
-                    const auto q_prime = (*current_segment_iter).tangent(current_point.s);
-                    const auto q_double_prime = (*current_segment_iter).curvature(current_point.s);
+                    // Use the min acceleration in the segment we are integrating into.
+                    const auto q_prime = into_segment.tangent(current_point.s);
+                    const auto q_double_prime = into_segment.curvature(current_point.s);
 
                     const auto [s_ddot_min, _1] = compute_acceleration_bounds(
                         q_prime, q_double_prime, current_point.s_dot, traj.options_.max_acceleration, traj.options_.epsilon);
@@ -1893,17 +1912,13 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                 auto next_point =
                     euler_step(current_point.s, current_point.s_dot, s_ddot_desired, -traj.options_.delta, traj.options_.epsilon);
 
-                // Quantize to segment boundaries, just like we do for forward integration. However,
-                // don't snap if we are already at the segment start: the backward cursor's natural
-                // segment resolution keeps us on the segment we just stopped at, so without this
-                // guard the next iteration would re-snap to the same boundary and stall.
+                // Quantize to segment boundaries, just like we do for forward integration, against the start of
+                // the segment we are integrating into. Snapping against the cursor's segment instead is a no-op
+                // when we stand on its start, and a step longer than the segment to our left would then cross
+                // that segment whole.
                 const auto double_epsilon = traj.options_.epsilon * 2.0;
-                if (const auto seg = *backwards_cursor;
-                    current_point.s != seg.start() && double_epsilon.wrap(next_point.s) <= double_epsilon.wrap(seg.start())) {
-                    const auto ds_desired = next_point.s - current_point.s;
-                    const auto ds_achieved = seg.start() - current_point.s;
-                    next_point.s = seg.start();
-                    next_point.s_dot = lerp(current_point.s_dot, next_point.s_dot, ds_achieved / ds_desired);
+                if (double_epsilon.wrap(next_point.s) <= double_epsilon.wrap(into_segment.start())) {
+                    next_point = point_on_step({current_point.s, current_point.s_dot}, next_point, into_segment.start());
                 }
 
                 // Backward integration must decrease s.
@@ -2060,7 +2075,6 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                 while (next_point.s < std::next(forward_window)->s) {
                     const auto& fwd_left = *forward_window;
                     const auto& fwd_right = *std::next(forward_window);
-                    const auto fwd_range = fwd_right.s - fwd_left.s;
 
                     if (next_point.s >= fwd_left.s) {
                         // The backward step's left end is within this forward segment. Interpolate
@@ -2068,7 +2082,8 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                         // catches both genuine crossings (backward rose above forward during this step)
                         // and the gap case (backward entered the overlap already above forward because
                         // it descended from the limit curve into the gap left by forward bisection).
-                        const auto fwd_interp = lerp(fwd_left.s_dot, fwd_right.s_dot, (next_point.s - fwd_left.s) / fwd_range);
+                        const auto fwd_interp =
+                            point_on_step({fwd_left.s, fwd_left.s_dot}, {fwd_right.s, fwd_right.s_dot}, next_point.s).s_dot;
                         if (next_point.s_dot > fwd_interp) {
                             intersection = forward_window;
                         }
@@ -2080,8 +2095,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     // The backward step extends past this forward segment to the left. Check if
                     // backward is above forward at the segment's left boundary before sliding past.
                     if (current_point.s > fwd_left.s) {
-                        const auto bwd_range = current_point.s - next_point.s;
-                        const auto bwd_interp = lerp(next_point.s_dot, current_point.s_dot, (fwd_left.s - next_point.s) / bwd_range);
+                        const auto bwd_interp = point_on_step(next_point, {current_point.s, current_point.s_dot}, fwd_left.s).s_dot;
                         if (bwd_interp > fwd_left.s_dot) {
                             intersection = forward_window;
                             break;
