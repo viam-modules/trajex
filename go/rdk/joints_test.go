@@ -20,9 +20,9 @@ import (
 	"github.com/viam-modules/trajex/go/rdk"
 )
 
-// RDK's own forward kinematics is the reference throughout. The end position
-// of the chain against RDK's, at many joint positions, checks composition
-// order, the quaternion convention, each axis and the units at once.
+// These tests compare the chain's end position with RDK's forward kinematics
+// at many joint positions. One comparison covers composition order, the
+// quaternion convention, the axes and the units.
 
 func loadModel(t *testing.T, file, name string) referenceframe.Model {
 	t.Helper()
@@ -31,8 +31,8 @@ func loadModel(t *testing.T, file, name string) referenceframe.Model {
 	return m
 }
 
-// jointsFromModel builds the chain from the message RDK would serve for m,
-// which is how a caller holding a Model rather than a reply gets there.
+// jointsFromModel serializes m with ModelToProto and builds the chain from the
+// result, as a caller holding a Model rather than a GetKinematics reply would.
 func jointsFromModel(t *testing.T, m referenceframe.Model, outputFrame string) ([]kinematics.Joint, error) {
 	t.Helper()
 	pb, err := referenceframe.ModelToProto(m)
@@ -55,10 +55,10 @@ func newChain(t *testing.T, joints []kinematics.Joint) *kinematics.Chain {
 	return chain
 }
 
-// randomPositions draws joint positions within each joint's limits. Continuous
-// joints have infinite limits, so for those we draw from two full turns
-// either side of zero, which is enough to show that the angle wraps the same
-// way in both.
+// randomPositions draws joint positions within each joint's limits. A
+// continuous joint has infinite limits, so for those we draw from two full
+// turns either side of zero, which is enough to show that both sides wrap the
+// angle the same way.
 func randomPositions(m referenceframe.Model, rng *rand.Rand) []float64 {
 	limits := m.DoF()
 	q := make([]float64, len(limits))
@@ -86,8 +86,8 @@ func endWithin(t *testing.T, chain *kinematics.Chain, q []float64, want r3.Vecto
 	test.That(t, got[2], test.ShouldAlmostEqual, want.Z, tolerance)
 }
 
-// Every arm model RDK ships, plus a URDF, a DH model and a gantry from its
-// test files, so that each file format and joint type is covered.
+// The models are every arm RDK ships plus a URDF, a DH model and a gantry
+// from its test files, so each file format and joint type is covered.
 func TestJointsFromKinematicModelMatchesRDKForwardKinematics(t *testing.T) {
 	arms, err := filepath.Glob(utils.ResolveFile("components/arm/kinematics/*.json"))
 	test.That(t, err, test.ShouldBeNil)
@@ -114,9 +114,10 @@ func TestJointsFromKinematicModelMatchesRDKForwardKinematics(t *testing.T) {
 	}
 }
 
-// Every run of links here turns and then moves, so composing a run backwards
-// moves the end, which none of RDK's own models would show. The tool link
-// past the output frame is for the test that caps a named frame.
+// Each run of links in this model both rotates and translates, so composing a
+// run in the wrong order moves the end. The models RDK ships would not catch
+// that. The tool link past the output frame is used by the test that caps a
+// named frame.
 const orderSensitiveModel = `{
 	"name": "order_sensitive",
 	"output_frames": ["tip_move"],
@@ -154,9 +155,9 @@ func TestJointsFromKinematicModelComposesLinksInOrder(t *testing.T) {
 }
 
 // Naming a link past the model's output frame caps the point that link stands
-// for, which is how a tool on a flange gets its own cap. The tool link sits at
-// a turned offset from the output frame, so composing it on the wrong side
-// would move the point.
+// for, which is how a tool on a flange gets its own cap. The tool link here
+// sits at a rotated offset from the output frame, so composing it on the wrong
+// side would move the point.
 func TestJointsFromKinematicModelCapsANamedFrame(t *testing.T) {
 	m, err := referenceframe.UnmarshalModelJSON([]byte(orderSensitiveModel), "")
 	test.That(t, err, test.ShouldBeNil)
@@ -178,9 +179,9 @@ func TestJointsFromKinematicModelRefusesAMimicJointOnThePath(t *testing.T) {
 	test.That(t, err.Error(), test.ShouldContainSubstring, "mimics")
 }
 
-// In both gripper models the output frame hangs directly off the base, while
-// a finger elsewhere in the model still takes an input. Positions meant for
-// the model would then drive a chain that has no joint for them.
+// In both gripper models the output frame hangs directly off the base while a
+// finger elsewhere in the model still takes an input, so positions meant for
+// the model would drive a chain that has no joint for them.
 func TestJointsFromKinematicModelRefusesMovingJointsOffThePath(t *testing.T) {
 	for _, file := range []string{
 		"referenceframe/testfiles/test_gripper.json",
@@ -194,10 +195,10 @@ func TestJointsFromKinematicModelRefusesMovingJointsOffThePath(t *testing.T) {
 	}
 }
 
-// A model assembled from frames in code has no configuration, and RDK
-// describes it from its frames instead. Every frame here turns and moves at
-// once and the joint axes are off the grid, so a wrong composition or an
-// unnormalized axis shows as a moved end.
+// A model assembled from frames in code has no configuration, so RDK
+// describes it from its frames instead. Every frame here both rotates and
+// translates and no joint axis is aligned with an axis of the frame, so a
+// wrong composition or an unnormalized axis moves the end.
 func TestJointsFromKinematicModelBuiltFromFramesMatchesRDK(t *testing.T) {
 	static := func(name string, pose spatialmath.Pose) referenceframe.Frame {
 		f, err := referenceframe.NewStaticFrame(name, pose)
@@ -230,10 +231,10 @@ func TestJointsFromKinematicModelBuiltFromFramesMatchesRDK(t *testing.T) {
 	test.That(t, err, test.ShouldNotBeNil)
 }
 
-// The message allows four spellings of a link's orientation, and RDK reads
-// each of them for us. What is left to check is that composing the poses it
-// hands back puts the end where RDK's own forward kinematics puts it, for
-// every form and on both sides of the orientation vector's pole.
+// A link's orientation can be given in four forms, and RDK parses each of
+// them. What remains to check is that composing the poses RDK hands back puts
+// the end where its forward kinematics puts it, for every form and on both
+// sides of the orientation vector's pole.
 func TestOrientationFormsReadAsRDKReadsThem(t *testing.T) {
 	rng := rand.New(rand.NewSource(4))
 	angle := func() float64 { return rng.Float64()*720 - 360 }
@@ -290,8 +291,9 @@ func TestOrientationFormsReadAsRDKReadsThem(t *testing.T) {
 }
 
 // A server older than FrameSystemConfig.model sends the deprecated kinematics
-// field only, which RDK still fills beside the model, so dropping the model
-// gives that reply. The part is refused rather than read as a fixed transform.
+// field only. RDK still fills that field beside the model, so clearing the
+// model from its reply reproduces what such a server sends. The part has to be
+// refused rather than read as a fixed transform.
 func TestJointsFromFrameSystemConfigRefusesTheDeprecatedKinematicsField(t *testing.T) {
 	part := &referenceframe.FrameSystemPart{
 		FrameConfig: referenceframe.NewLinkInFrame(referenceframe.World, spatialmath.NewZeroPose(), "arm", nil),
@@ -307,8 +309,8 @@ func TestJointsFromFrameSystemConfigRefusesTheDeprecatedKinematicsField(t *testi
 	test.That(t, err.Error(), test.ShouldContainSubstring, `part "arm" carries its model in the deprecated kinematics field only`)
 }
 
-// partsToProtobuf writes parts the way a machine serves them, with the typed
-// model beside the frame.
+// partsToProtobuf serializes parts the way a machine serves them, with the
+// typed model beside the frame.
 func partsToProtobuf(t *testing.T, parts []*referenceframe.FrameSystemPart) []*robotpb.FrameSystemConfig {
 	t.Helper()
 	var out []*robotpb.FrameSystemConfig
@@ -320,10 +322,10 @@ func partsToProtobuf(t *testing.T, parts []*referenceframe.FrameSystemPart) []*r
 	return out
 }
 
-// A gantry on the floor, a mount turned and tilted on its carriage, and an
-// arm on the mount. RDK's frame system places each part on its parent, and
-// the chain built from the parts' messages has to put the arm's end in the
-// same place for the same positions.
+// The frame system is a gantry on the floor, a mount rotated and tilted on
+// its carriage, and an arm on the mount. The chain built from the parts'
+// messages has to put the arm's end where RDK's frame system puts it for the
+// same positions.
 func TestJointsFromFrameSystemConfigMatchesRDK(t *testing.T) {
 	gantry := loadModel(t, "referenceframe/testfiles/example_gantry.json", "gantry")
 	arm := loadModel(t, "components/arm/kinematics/ur5e.json", "arm")

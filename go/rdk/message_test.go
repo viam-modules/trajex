@@ -18,7 +18,7 @@ import (
 // The messages here are small enough to work out by hand, which pins down
 // which way links compose, where a joint's origin sits, and how each
 // orientation form turns into a rotation. joints_test.go checks the same
-// against RDK's own forward kinematics.
+// things against RDK's forward kinematics.
 
 func link(id, parent string, x, y, z float64, orientation any) *commonpb.KinematicLink {
 	pose := &commonpb.LinkPose{Translation: &commonpb.Vector3{X: x, Y: y, Z: z}}
@@ -143,8 +143,8 @@ func TestRootIsWhereParentsStop(t *testing.T) {
 	}
 }
 
-// Every orientation form is checked by what it does to a link placed after
-// it, against the rotation the values spell out, so a change in how RDK reads
+// Each orientation form is checked by what it does to a link placed after it,
+// compared with the rotation its values describe, so a change in how RDK reads
 // a form shows up here as a moved end.
 func TestOrientationForms(t *testing.T) {
 	r := 1 / math.Sqrt2
@@ -165,7 +165,7 @@ func TestOrientationForms(t *testing.T) {
 		{"zero quaternion", &commonpb.LinkPose_Quaternion{Quaternion: &commonpb.Quaternion{}}, r3.Vector{X: 10}, r3.Vector{X: 10}},
 		// pointing z along x is a turn of 90 about y, which sends x to minus z
 		{"orientation vector along x", &commonpb.LinkPose_OrientationVector{OrientationVector: &commonpb.Orientation{OX: 5}}, r3.Vector{X: 10}, r3.Vector{Z: -10}},
-		// within the pole radius theta is measured without the vector's longitude, so a vector a hair off
+		// within the pole radius theta is measured without the vector's longitude, so a vector slightly off
 		// z at 45 degrees of longitude with theta 30 is still a turn of 30 about z, not 75
 		{"orientation vector near the pole", &commonpb.LinkPose_OrientationVector{OrientationVector: &commonpb.Orientation{OX: 1e-7, OY: 1e-7, OZ: 1, Theta: 30}}, r3.Vector{X: 10}, r3.Vector{X: 10 * math.Cos(math.Pi/6), Y: 10 * math.Sin(math.Pi/6)}},
 	} {
@@ -287,8 +287,8 @@ func TestInputOrder(t *testing.T) {
 	})
 }
 
-// Each refusal stands in for a chain that would be wrong rather than missing,
-// most of them RDK's own.
+// Each of these messages would give a wrong chain rather than no chain, so
+// each has to be refused. Most of the refusals come from RDK.
 func TestRefusals(t *testing.T) {
 	cyclic := planarArm()
 	cyclic.Links[0].Parent = "fore"
