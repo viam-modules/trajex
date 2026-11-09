@@ -31,9 +31,18 @@ func loadModel(t *testing.T, file, name string) referenceframe.Model {
 	return m
 }
 
+// jointsFromModel builds the chain from the message RDK would serve for m,
+// which is how a caller holding a Model rather than a reply gets there.
+func jointsFromModel(t *testing.T, m referenceframe.Model, outputFrame string) ([]kinematics.Joint, error) {
+	t.Helper()
+	pb, err := referenceframe.ModelToProto(m)
+	test.That(t, err, test.ShouldBeNil)
+	return rdk.JointsFromKinematicModel(pb, outputFrame)
+}
+
 func chainFromModel(t *testing.T, m referenceframe.Model, outputFrame string) *kinematics.Chain {
 	t.Helper()
-	joints, err := rdk.JointsFromModel(m, outputFrame)
+	joints, err := jointsFromModel(t, m, outputFrame)
 	test.That(t, err, test.ShouldBeNil)
 	return newChain(t, joints)
 }
@@ -79,7 +88,7 @@ func endWithin(t *testing.T, chain *kinematics.Chain, q []float64, want r3.Vecto
 
 // Every arm model RDK ships, plus a URDF, a DH model and a gantry from its
 // test files, so that each file format and joint type is covered.
-func TestJointsFromModelMatchesRDKForwardKinematics(t *testing.T) {
+func TestJointsFromKinematicModelMatchesRDKForwardKinematics(t *testing.T) {
 	arms, err := filepath.Glob(utils.ResolveFile("components/arm/kinematics/*.json"))
 	test.That(t, err, test.ShouldBeNil)
 	test.That(t, len(arms), test.ShouldBeGreaterThan, 5)
@@ -130,7 +139,7 @@ const orderSensitiveModel = `{
 	]
 }`
 
-func TestJointsFromModelComposesLinksInOrder(t *testing.T) {
+func TestJointsFromKinematicModelComposesLinksInOrder(t *testing.T) {
 	m, err := referenceframe.UnmarshalModelJSON([]byte(orderSensitiveModel), "")
 	test.That(t, err, test.ShouldBeNil)
 	chain := chainFromModel(t, m, "")
@@ -148,7 +157,7 @@ func TestJointsFromModelComposesLinksInOrder(t *testing.T) {
 // for, which is how a tool on a flange gets its own cap. The tool link sits at
 // a turned offset from the output frame, so composing it on the wrong side
 // would move the point.
-func TestJointsFromModelCapsANamedFrame(t *testing.T) {
+func TestJointsFromKinematicModelCapsANamedFrame(t *testing.T) {
 	m, err := referenceframe.UnmarshalModelJSON([]byte(orderSensitiveModel), "")
 	test.That(t, err, test.ShouldBeNil)
 	chain := chainFromModel(t, m, "tool")
@@ -163,8 +172,8 @@ func TestJointsFromModelCapsANamedFrame(t *testing.T) {
 	}
 }
 
-func TestJointsFromModelRefusesAMimicJointOnThePath(t *testing.T) {
-	_, err := rdk.JointsFromModel(loadModel(t, "referenceframe/testfiles/test_mimic_serial.json", "test"), "")
+func TestJointsFromKinematicModelRefusesAMimicJointOnThePath(t *testing.T) {
+	_, err := jointsFromModel(t, loadModel(t, "referenceframe/testfiles/test_mimic_serial.json", "test"), "")
 	test.That(t, err, test.ShouldNotBeNil)
 	test.That(t, err.Error(), test.ShouldContainSubstring, "mimics")
 }
@@ -172,13 +181,13 @@ func TestJointsFromModelRefusesAMimicJointOnThePath(t *testing.T) {
 // In both gripper models the output frame hangs directly off the base, while
 // a finger elsewhere in the model still takes an input. Positions meant for
 // the model would then drive a chain that has no joint for them.
-func TestJointsFromModelRefusesMovingJointsOffThePath(t *testing.T) {
+func TestJointsFromKinematicModelRefusesMovingJointsOffThePath(t *testing.T) {
 	for _, file := range []string{
 		"referenceframe/testfiles/test_gripper.json",
 		"referenceframe/testfiles/test_mimic_gripper.json",
 	} {
 		t.Run(file, func(t *testing.T) {
-			_, err := rdk.JointsFromModel(loadModel(t, file, "test"), "")
+			_, err := jointsFromModel(t, loadModel(t, file, "test"), "")
 			test.That(t, err, test.ShouldNotBeNil)
 			test.That(t, err.Error(), test.ShouldContainSubstring, "takes inputs for joints")
 		})
@@ -189,7 +198,7 @@ func TestJointsFromModelRefusesMovingJointsOffThePath(t *testing.T) {
 // describes it from its frames instead. Every frame here turns and moves at
 // once and the joint axes are off the grid, so a wrong composition or an
 // unnormalized axis shows as a moved end.
-func TestJointsFromModelBuiltFromFramesMatchesRDK(t *testing.T) {
+func TestJointsFromKinematicModelBuiltFromFramesMatchesRDK(t *testing.T) {
 	static := func(name string, pose spatialmath.Pose) referenceframe.Frame {
 		f, err := referenceframe.NewStaticFrame(name, pose)
 		test.That(t, err, test.ShouldBeNil)
@@ -217,31 +226,8 @@ func TestJointsFromModelBuiltFromFramesMatchesRDK(t *testing.T) {
 		endMatches(t, chain, q, want.Point())
 	}
 
-	_, err = rdk.JointsFromModel(nil, "")
+	_, err = rdk.JointsFromKinematicModel(nil, "")
 	test.That(t, err, test.ShouldNotBeNil)
-}
-
-// A gantry carrying an arm, built with NewModel over the frame system, is
-// refused by RDK's ModelToProto: it keeps each nested model as a frame under
-// the part's name beside the flattened frames, and its walker refuses that
-// frame. This pins the refusal until RDK's walker skips a flattened model.
-func TestJointsFromModelRefusesACompositeOfNestedModels(t *testing.T) {
-	gantry := loadModel(t, "referenceframe/testfiles/example_gantry.json", "gantry")
-	arm := loadModel(t, "components/arm/kinematics/ur5e.json", "arm")
-	parts := []*referenceframe.FrameSystemPart{
-		{FrameConfig: referenceframe.NewLinkInFrame(referenceframe.World, spatialmath.NewZeroPose(), "gantry", nil), ModelFrame: gantry},
-		{FrameConfig: referenceframe.NewLinkInFrame("gantry", spatialmath.NewPose(r3.Vector{X: 120, Y: -40, Z: 25}, &spatialmath.EulerAngles{Roll: 0.4}), "mount", nil)},
-		{FrameConfig: referenceframe.NewLinkInFrame("mount", spatialmath.NewZeroPose(), "arm", nil), ModelFrame: arm},
-		{FrameConfig: referenceframe.NewLinkInFrame("arm", spatialmath.NewPoseFromPoint(r3.Vector{Z: 90}), "tool", nil)},
-	}
-	fs, err := referenceframe.NewFrameSystem("machine", parts, nil)
-	test.That(t, err, test.ShouldBeNil)
-	m, err := referenceframe.NewModel("composite", fs, "tool")
-	test.That(t, err, test.ShouldBeNil)
-
-	_, err = rdk.JointsFromModel(m, "")
-	test.That(t, err, test.ShouldNotBeNil)
-	test.That(t, err.Error(), test.ShouldContainSubstring, "has no kinematics file form")
 }
 
 // The message allows four spellings of a link's orientation, and RDK reads

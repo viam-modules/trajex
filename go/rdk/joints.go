@@ -1,11 +1,9 @@
 //go:build !windows && cgo
 
-// Package rdk turns the kinematic messages of the Viam API, KinematicModel
-// and FrameSystemConfig, and RDK's own models into trajex joints. RDK loads
-// each message here the way it loads one it receives itself, so a chain
-// never reads a message differently from the model RDK drives. Lengths are
-// millimetres and angles radians throughout, as in RDK, so a TCP speed cap
-// for a chain is in millimetres per second.
+// Package rdk builds trajex kinematic chains from the KinematicModel and
+// FrameSystemConfig messages of the Viam API. The messages are parsed by
+// RDK's referenceframe package, so a chain built here agrees with the model
+// RDK itself drives. Units follow RDK: millimetres and radians.
 package rdk
 
 import (
@@ -20,64 +18,121 @@ import (
 	"github.com/viam-modules/trajex/go/kinematics"
 )
 
-// JointsFromModel is JointsFromKinematicModel for the message RDK serves for
-// m. It returns an error for a model RDK cannot write out as a message.
-func JointsFromModel(m referenceframe.Model, outputFrame string) ([]kinematics.Joint, error) {
-	arm, err := ArmFromModel(m, outputFrame)
-	if err != nil {
-		return nil, err
-	}
-	return arm.Joints, nil
-}
-
 // JointsFromKinematicModel describes the serial chain from the base of model
-// out to outputFrame, which is where a TCP speed cap applies, for
-// kinematics.NewChain. The chain always ends in a fixed joint.
+// out to outputFrame, for kinematics.NewChain. The chain always ends in a
+// fixed joint.
 //
 // outputFrame names a link or joint of the model, or is empty for the model's
-// own output frame. A point past that, such as a tool on a flange, is a link
-// the model names or a kinematics.FixedJoint the caller appends. Lengths are
-// in millimetres, as in the message. ArmFromKinematicModel carries the
-// limits and properties beside the chain.
+// own output frame. The chain takes positions in the order RDK's model does,
+// so the moving joints on the path to outputFrame must be exactly the model's
+// moving joints. A mimic joint on the path, a moving joint off it such as a
+// gripper finger, and anything RDK refuses to load are errors.
 //
-// The chain takes the positions RDK's model takes, in the same order, so the
-// moving joints on the path to outputFrame must be exactly the model's
-// moving joints. A model with a mimic joint on the path or a moving joint off
-// it, such as a gripper's finger, is refused, as is anything RDK refuses to
-// load.
+// Joint limits are not part of the chain. They are the DoF of the model that
+// referenceframe.ModelFromProto builds from the same message, in the same
+// order.
 func JointsFromKinematicModel(model *commonpb.KinematicModel, outputFrame string) ([]kinematics.Joint, error) {
-	arm, err := ArmFromKinematicModel(model, outputFrame)
-	if err != nil {
+	if model == nil {
+		return nil, errors.New("trajex/rdk: kinematic model is nil")
+	}
+	b := &chainBuilder{origin: spatialmath.NewZeroPose()}
+	if err := b.appendModel(model, model.GetName(), outputFrame); err != nil {
 		return nil, err
 	}
-	return arm.Joints, nil
+	return b.finish(), nil
 }
 
-// JointsFromFrameSystemConfig describes the serial chain from the world
-// frame of a machine out to the output frame of the part named tip, for a
-// caller holding a machine's FrameSystemConfig reply rather than one
-// component's model. Each part on the path contributes the fixed transform
-// that places it on its parent, then the joints of its model as
-// JointsFromKinematicModel builds them. Positions run part by part from the
-// one nearest world out to tip. Parts off the path take none.
-// ArmFromFrameSystemConfig carries the limits and properties beside the chain.
+// JointsFromFrameSystemConfig describes the serial chain from the world frame
+// out to the output frame of the part named tip, for a caller holding a
+// robot's FrameSystemConfig reply. Each part on the path contributes the fixed
+// transform that places it on its parent, then the joints of its model as
+// JointsFromKinematicModel builds them, so positions run from the part
+// nearest world out to tip. Parts off the path contribute nothing.
 //
 // A parent has to be world or another part of the reply. A part whose model
-// arrives in the deprecated kinematics field only, which a server older than
-// FrameSystemConfig.model sends, is refused rather than read as a fixed
-// transform.
+// arrives only in the deprecated kinematics field, which a server older than
+// FrameSystemConfig.model sends, is refused.
 func JointsFromFrameSystemConfig(parts []*robotpb.FrameSystemConfig, tip string) ([]kinematics.Joint, error) {
-	arm, err := ArmFromFrameSystemConfig(parts, tip)
-	if err != nil {
-		return nil, err
+	if tip == "" {
+		return nil, errors.New("trajex/rdk: the tip of the chain is not named")
 	}
-	return arm.Joints, nil
+	type placed struct {
+		link  *referenceframe.LinkInFrame
+		model *commonpb.KinematicModel
+		// legacy is set when the model came in the deprecated kinematics field,
+		// which holds RDK's file format rather than a KinematicModel
+		legacy bool
+	}
+	byName := map[string]placed{}
+	for i, part := range parts {
+		// rdk reads the pose without a nil check, so refuse a missing one rather than let it panic
+		if part.GetFrame().GetPoseInObserverFrame().GetPose() == nil {
+			return nil, errors.Errorf("trajex/rdk: part %d of the frame system has no pose", i)
+		}
+		link, err := referenceframe.LinkInFrameFromTransformProtobuf(part.GetFrame())
+		if err != nil {
+			return nil, errors.Wrapf(err, "trajex/rdk: part %d of the frame system", i)
+		}
+		if _, dup := byName[link.Name()]; dup {
+			return nil, errors.Errorf("trajex/rdk: the frame system names part %q more than once", link.Name())
+		}
+		// an empty model is no model, which is how RDK reads it too
+		model := part.GetModel()
+		if len(model.GetLinks())+len(model.GetJoints()) == 0 {
+			model = nil
+		}
+		byName[link.Name()] = placed{
+			link:   link,
+			model:  model,
+			legacy: model == nil && len(part.GetKinematics().GetFields()) > 0,
+		}
+	}
+	if _, ok := byName[tip]; !ok {
+		return nil, errors.Errorf("trajex/rdk: the frame system has no part %q", tip)
+	}
+
+	var path []placed
+	seen := map[string]bool{}
+	for name, child := tip, ""; name != referenceframe.World; {
+		part, ok := byName[name]
+		if !ok {
+			return nil, errors.Errorf("trajex/rdk: part %q hangs from %q, which is not a part of the frame system", child, name)
+		}
+		if seen[name] {
+			return nil, errors.Errorf("trajex/rdk: the path from %q to the world frame is a cycle", tip)
+		}
+		seen[name] = true
+		path = append(path, part)
+		name, child = part.link.Parent(), name
+	}
+	slices.Reverse(path)
+
+	b := &chainBuilder{origin: spatialmath.NewZeroPose()}
+	for _, part := range path {
+		b.fixed(part.link.Pose())
+		if part.legacy {
+			return nil, errors.Errorf(
+				"trajex/rdk: part %q carries its model in the deprecated kinematics field only, which a server older than FrameSystemConfig.model sends and this reader does not read",
+				part.link.Name())
+		}
+		if part.model == nil {
+			continue
+		}
+		label := part.model.GetName()
+		if label == "" {
+			label = part.link.Name()
+		}
+		if err := b.appendModel(part.model, label, ""); err != nil {
+			return nil, err
+		}
+	}
+	return b.finish(), nil
 }
 
-// chainBuilder collects joints base first. A trajex joint carries the static
-// transform that precedes its motion as its origin, while RDK gives links as
-// static poses of their own, so we compose the links between one joint and
-// the next into origin and hand it to the next joint.
+// chainBuilder accumulates joints from the base outward. trajex attaches the
+// fixed transform ahead of a joint to that joint as its origin, whereas RDK
+// models fixed transforms as links of their own, so the links between two
+// joints are composed into origin and attached to the next joint.
 type chainBuilder struct {
 	joints []kinematics.Joint
 	origin spatialmath.Pose
@@ -104,35 +159,22 @@ func (b *chainBuilder) finish() []kinematics.Joint {
 	return append(b.joints, kinematics.FixedJoint(xyz, wxyz))
 }
 
-// appendModel adds the model's chain to outputFrame. label names the model in
-// errors, since a model inside a frame system part may carry no name.
+// appendModel adds the model's path to outputFrame to the chain. label names
+// the model in errors, since a model inside a frame system part may have no
+// name of its own.
 func (b *chainBuilder) appendModel(model *commonpb.KinematicModel, label, outputFrame string) error {
-	sm, err := load(model, label)
-	if err != nil {
-		return err
-	}
-	return b.appendLoaded(sm, label, outputFrame)
-}
-
-// load has RDK read the message, which refuses what it cannot drive and leaves
-// us the configuration it built, with each link's pose parsed and the order
-// it takes positions in.
-func load(model *commonpb.KinematicModel, label string) (*referenceframe.SimpleModel, error) {
 	if err := checkMessage(model, label); err != nil {
-		return nil, err
+		return err
 	}
 	loaded, err := referenceframe.ModelFromProto(model, label)
 	if err != nil {
-		return nil, errors.Wrapf(err, "trajex/rdk: model %q", label)
+		return errors.Wrapf(err, "trajex/rdk: model %q", label)
 	}
+	// only a SimpleModel exposes the parsed config and the order it takes inputs in
 	sm, ok := loaded.(*referenceframe.SimpleModel)
 	if !ok {
-		return nil, errors.Errorf("trajex/rdk: model %q loaded as a %T, which does not report its moving joints", label, loaded)
+		return errors.Errorf("trajex/rdk: model %q loaded as a %T, which does not report its moving joints", label, loaded)
 	}
-	return sm, nil
-}
-
-func (b *chainBuilder) appendLoaded(sm *referenceframe.SimpleModel, label, outputFrame string) error {
 	cfg := sm.ModelConfig()
 
 	elements := index(cfg)
@@ -171,6 +213,7 @@ func (b *chainBuilder) appendLoaded(sm *referenceframe.SimpleModel, label, outpu
 		moving = append(moving, id)
 	}
 
+	// the chain is indexed like the model's inputs, so the path must move exactly those joints in that order
 	if want := sm.MoveableFrameNames(); !slices.Equal(moving, want) {
 		return errors.Errorf(
 			"trajex/rdk: model %q takes inputs for joints %v, but the path to its output frame %q moves joints %v",
@@ -179,18 +222,17 @@ func (b *chainBuilder) appendLoaded(sm *referenceframe.SimpleModel, label, outpu
 	return nil
 }
 
-// element is one link or joint of the configuration RDK built from the
-// message. Exactly one of link and joint is set.
+// element is one link or joint of the parsed model. Exactly one of link and
+// joint is set.
 type element struct {
 	parent string
 	link   *referenceframe.LinkConfig
 	joint  *referenceframe.JointConfig
 }
 
-// checkMessage refuses what RDK would not refuse clearly: an empty model, an
+// checkMessage catches what RDK does not report well: an empty model, an
 // element with no id, a duplicate id, which RDK silently merges, and a zero
-// axis on a joint or in an axis angle orientation, which makes RDK panic
-// rather than return an error.
+// axis on a joint or in an axis angle orientation, which makes RDK panic.
 func checkMessage(model *commonpb.KinematicModel, label string) error {
 	if len(model.GetLinks()) == 0 && len(model.GetJoints()) == 0 {
 		return errors.Errorf("trajex/rdk: model %q has no links or joints", label)
@@ -227,13 +269,12 @@ func checkMessage(model *commonpb.KinematicModel, label string) error {
 	return nil
 }
 
-// zeroLength is the test RDK's normalization applies, a sum of squares that
-// is zero, so components small enough to underflow it count as zero here too.
+// zeroLength matches the test RDK's normalization applies, so a vector whose
+// squared length underflows to zero is zero here too.
 func zeroLength(x, y, z float64) bool {
 	return x*x+y*y+z*z == 0
 }
 
-// index maps the links and joints of the configuration RDK built by id.
 func index(cfg *referenceframe.ModelConfigJSON) map[string]*element {
 	elements := map[string]*element{}
 	for i := range cfg.Links {
@@ -247,9 +288,10 @@ func index(cfg *referenceframe.ModelConfigJSON) map[string]*element {
 	return elements
 }
 
-// outputFrameOf picks the frame the chain ends at: the caller's, else the
-// model's, else its single leaf. RDK has already refused the other shapes, so
-// only the caller's name can fail here.
+// outputFrameOf picks the frame the chain ends at: the caller's if named,
+// else the model's declared output frame, else its single leaf. RDK has
+// already refused models with more than one leaf, so only the caller's name
+// can fail here.
 func outputFrameOf(cfg *referenceframe.ModelConfigJSON, elements map[string]*element, label, requested string) (string, error) {
 	if requested != "" {
 		if _, ok := elements[requested]; !ok {
@@ -273,8 +315,8 @@ func outputFrameOf(cfg *referenceframe.ModelConfigJSON, elements map[string]*ele
 }
 
 // pathToRoot lists the elements from the model's root, the first whose parent
-// is not an element, down to output. RDK has refused cycles, so the bound is
-// only a guard.
+// is not an element, down to output. RDK has already refused cycles, so the
+// bound only guards against a bug.
 func pathToRoot(elements map[string]*element, output string) ([]string, error) {
 	var path []string
 	id := output
@@ -290,7 +332,7 @@ func pathToRoot(elements map[string]*element, output string) ([]string, error) {
 	return nil, errors.Errorf("trajex/rdk: the path from %q to the root of the model is a cycle", output)
 }
 
-// components splits a pose into the translation and w, x, y, z quaternion
+// components splits a pose into the translation and the w, x, y, z quaternion
 // that trajex takes as a joint's origin.
 func components(p spatialmath.Pose) ([3]float64, [4]float64) {
 	t := p.Point()
