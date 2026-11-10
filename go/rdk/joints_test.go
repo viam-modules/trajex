@@ -322,6 +322,36 @@ func partsToProtobuf(t *testing.T, parts []*referenceframe.FrameSystemPart) []*r
 	return out
 }
 
+// RDK lets a part hang from a frame inside another part's model, named
+// part:frame once the model is flattened into the frame system. The probe
+// here hangs from the tool link past the arm's output frame, so the chain has
+// to follow the arm's model out to that link rather than to its output.
+func TestJointsFromFrameSystemConfigHangsAPartInsideAModel(t *testing.T) {
+	arm, err := referenceframe.UnmarshalModelJSON([]byte(orderSensitiveModel), "arm")
+	test.That(t, err, test.ShouldBeNil)
+	probePose := spatialmath.NewPose(r3.Vector{X: 5, Y: -8, Z: 30}, &spatialmath.EulerAngles{Roll: 0.2, Yaw: 1.3})
+	parts := []*referenceframe.FrameSystemPart{
+		{FrameConfig: referenceframe.NewLinkInFrame(referenceframe.World, spatialmath.NewZeroPose(), "arm", nil), ModelFrame: arm},
+		{FrameConfig: referenceframe.NewLinkInFrame("arm:tool", probePose, "probe", nil)},
+	}
+	fs, err := referenceframe.NewFrameSystem("machine", parts, nil)
+	test.That(t, err, test.ShouldBeNil)
+
+	joints, err := rdk.JointsFromFrameSystemConfig(partsToProtobuf(t, parts), "probe")
+	test.That(t, err, test.ShouldBeNil)
+	chain := newChain(t, joints)
+
+	rng := rand.New(rand.NewSource(7))
+	for i := 0; i < 50; i++ {
+		q := randomPositions(arm, rng)
+		inputs := referenceframe.NewLinearInputs()
+		inputs.Put("arm", q)
+		want, err := fs.Transform(inputs, referenceframe.NewPoseInFrame("probe", spatialmath.NewZeroPose()), referenceframe.World)
+		test.That(t, err, test.ShouldBeNil)
+		endMatches(t, chain, q, want.(*referenceframe.PoseInFrame).Pose().Point())
+	}
+}
+
 // The frame system is a gantry on the floor, a mount rotated and tilted on
 // its carriage, and an arm on the mount. The chain built from the parts'
 // messages has to put the arm's end where RDK's frame system puts it for the

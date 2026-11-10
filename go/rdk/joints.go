@@ -9,15 +9,16 @@
 package rdk
 
 import (
-	"math"
 	"slices"
 	"sort"
+	"strings"
 
 	"github.com/golang/geo/r3"
 	"github.com/pkg/errors"
 	commonpb "go.viam.com/api/common/v1"
 	robotpb "go.viam.com/api/robot/v1"
 	"go.viam.com/rdk/spatialmath"
+	"go.viam.com/rdk/utils"
 
 	"github.com/viam-modules/trajex/go/kinematics"
 )
@@ -57,9 +58,13 @@ func JointsFromKinematicModel(model *commonpb.KinematicModel, outputFrame string
 // JointsFromKinematicModel builds them, so positions run from the part
 // nearest world out to tip. Parts off the path contribute nothing.
 //
-// A parent has to be world or another part of the reply. A part whose model
-// arrives only in the deprecated kinematics field, which a server older than
-// FrameSystemConfig.model sends, is refused.
+// A parent is world, another part of the reply, or a frame inside another
+// part's model written the way RDK names it, part:frame, in which case that
+// part's model is followed to the frame rather than to its output frame. A
+// part whose model arrives only in the deprecated kinematics field is
+// refused, which is every model from a server older than
+// FrameSystemConfig.model and a model a current server cannot describe as a
+// KinematicModel.
 func JointsFromFrameSystemConfig(parts []*robotpb.FrameSystemConfig, tip string) ([]kinematics.Joint, error) {
 	if tip == "" {
 		return nil, errors.New("trajex/rdk: the tip of the chain is not named")
@@ -108,28 +113,41 @@ func JointsFromFrameSystemConfig(parts []*robotpb.FrameSystemConfig, tip string)
 		return nil, errors.Errorf("trajex/rdk: the frame system has no part %q", tip)
 	}
 
-	var path []placed
+	// a step is a part on the path and the frame of its model the next part hangs from,
+	// empty for the model's own output frame
+	type step struct {
+		part  placed
+		frame string
+	}
+	var path []step
 	seen := map[string]bool{}
 	for name, child := tip, ""; name != world; {
-		part, ok := byName[name]
+		// RDK flattens a part's model into the frame system as part:frame, and a part may
+		// hang from one of those frames rather than from the part itself
+		owner, frame, _ := strings.Cut(name, ":")
+		part, ok := byName[owner]
 		if !ok {
 			return nil, errors.Errorf("trajex/rdk: part %q hangs from %q, which is not a part of the frame system", child, name)
 		}
-		if seen[name] {
+		if frame != "" && part.model == nil {
+			return nil, errors.Errorf("trajex/rdk: part %q hangs from frame %q of part %q, which has no model", child, frame, owner)
+		}
+		if seen[owner] {
 			return nil, errors.Errorf("trajex/rdk: the path from %q to the world frame is a cycle", tip)
 		}
-		seen[name] = true
-		path = append(path, part)
-		name, child = part.parent, name
+		seen[owner] = true
+		path = append(path, step{part, frame})
+		name, child = part.parent, owner
 	}
 	slices.Reverse(path)
 
 	b := &chainBuilder{origin: spatialmath.NewZeroPose()}
-	for _, part := range path {
+	for _, s := range path {
+		part := s.part
 		b.fixed(part.pose)
 		if part.legacy {
 			return nil, errors.Errorf(
-				"trajex/rdk: part %q carries its model in the deprecated kinematics field only, which a server older than FrameSystemConfig.model sends and this reader does not read",
+				"trajex/rdk: part %q carries its model in the deprecated kinematics field only, which this reader does not read. A server older than FrameSystemConfig.model sends every model that way, and a current server sends a model it cannot describe as a KinematicModel that way",
 				part.name)
 		}
 		if part.model == nil {
@@ -139,7 +157,7 @@ func JointsFromFrameSystemConfig(parts []*robotpb.FrameSystemConfig, tip string)
 		if label == "" {
 			label = part.name
 		}
-		if err := b.appendModel(part.model, label, ""); err != nil {
+		if err := b.appendModel(part.model, label, s.frame); err != nil {
 			return nil, err
 		}
 	}
@@ -159,15 +177,11 @@ func (b *chainBuilder) fixed(p spatialmath.Pose) {
 	b.origin = spatialmath.Compose(b.origin, p)
 }
 
-func (b *chainBuilder) rotational(axis [3]float64) {
+// moving appends a joint built by make, kinematics.RotationalJoint or
+// kinematics.TranslationalJoint, with the accumulated origin ahead of it.
+func (b *chainBuilder) moving(make func(xyz [3]float64, wxyz [4]float64, axis [3]float64) kinematics.Joint, axis [3]float64) {
 	xyz, wxyz := components(b.origin)
-	b.joints = append(b.joints, kinematics.RotationalJoint(xyz, wxyz, axis))
-	b.origin = spatialmath.NewZeroPose()
-}
-
-func (b *chainBuilder) translational(axis [3]float64) {
-	xyz, wxyz := components(b.origin)
-	b.joints = append(b.joints, kinematics.TranslationalJoint(xyz, wxyz, axis))
+	b.joints = append(b.joints, make(xyz, wxyz, axis))
 	b.origin = spatialmath.NewZeroPose()
 }
 
@@ -203,12 +217,12 @@ func (b *chainBuilder) appendModel(model *commonpb.KinematicModel, label, output
 		if e.joint.GetMimic() != nil {
 			return errors.Errorf("trajex/rdk: joint %q of model %q mimics another joint, which trajex cannot express", id, label)
 		}
-		axis := e.joint.GetAxis()
+		axis := [3]float64{e.joint.GetAxis().GetX(), e.joint.GetAxis().GetY(), e.joint.GetAxis().GetZ()}
 		switch e.joint.GetType() {
 		case commonpb.JointType_JOINT_TYPE_REVOLUTE, commonpb.JointType_JOINT_TYPE_CONTINUOUS:
-			b.rotational([3]float64{axis.GetX(), axis.GetY(), axis.GetZ()})
+			b.moving(kinematics.RotationalJoint, axis)
 		case commonpb.JointType_JOINT_TYPE_PRISMATIC:
-			b.translational([3]float64{axis.GetX(), axis.GetY(), axis.GetZ()})
+			b.moving(kinematics.TranslationalJoint, axis)
 		default:
 			return errors.Errorf("trajex/rdk: joint %q of model %q has type %q, which trajex does not support", id, label, e.joint.GetType())
 		}
@@ -242,9 +256,10 @@ type element struct {
 
 // index maps the model's links and joints by id and refuses what RDK refuses
 // to load, plus what it does not refuse cleanly: an element with no id, a
-// duplicate id, which RDK silently merges, and a zero joint axis, on which RDK
-// panics. A joint of a type trajex cannot drive is refused here too, wherever
-// it sits in the model, since RDK would not load the model at all.
+// duplicate id, which RDK silently merges, and a zero revolute axis, on which
+// RDK panics. A joint of a type trajex cannot drive, a mimic of something
+// that is not a joint, and a cycle of mimics are refused wherever they sit in
+// the model, since RDK would not load the model at all.
 func index(model *commonpb.KinematicModel, label string) (map[string]*element, error) {
 	if len(model.GetLinks()) == 0 && len(model.GetJoints()) == 0 {
 		return nil, errors.Errorf("trajex/rdk: model %q has no links or joints", label)
@@ -274,7 +289,14 @@ func index(model *commonpb.KinematicModel, label string) (map[string]*element, e
 		default:
 			return nil, errors.Errorf("trajex/rdk: joint %q of model %q has type %q, which trajex does not support", joint.GetId(), label, joint.GetType())
 		}
-		if axis := joint.GetAxis(); zeroLength(axis.GetX(), axis.GetY(), axis.GetZ()) {
+		// RDK refuses a prismatic axis within 1e-8 of zero and normalizes a revolute one,
+		// which panics only at exactly zero, so the two thresholds differ the same way
+		axis := r3.Vector{X: joint.GetAxis().GetX(), Y: joint.GetAxis().GetY(), Z: joint.GetAxis().GetZ()}
+		short := zeroLength(axis.X, axis.Y, axis.Z)
+		if joint.GetType() == commonpb.JointType_JOINT_TYPE_PRISMATIC {
+			short = spatialmath.R3VectorAlmostEqual(r3.Vector{}, axis, 1e-8)
+		}
+		if short {
 			return nil, errors.Errorf("trajex/rdk: joint %q of model %q has no axis", joint.GetId(), label)
 		}
 		if err := add(joint.GetId(), &element{parent: joint.GetParent(), joint: joint}); err != nil {
@@ -284,7 +306,36 @@ func index(model *commonpb.KinematicModel, label string) (map[string]*element, e
 	if err := checkTree(elements, label); err != nil {
 		return nil, err
 	}
+	if err := checkMimics(model, elements, label); err != nil {
+		return nil, err
+	}
 	return elements, nil
+}
+
+// checkMimics refuses a mimic joint whose source, followed through any
+// mimics in between, is not a joint of the model or comes back to itself.
+func checkMimics(model *commonpb.KinematicModel, elements map[string]*element, label string) error {
+	for _, joint := range model.GetJoints() {
+		if joint.GetMimic() == nil {
+			continue
+		}
+		seen := map[string]bool{joint.GetId(): true}
+		for source := joint.GetMimic().GetJoint(); ; {
+			e := elements[source]
+			if e == nil || e.joint == nil {
+				return errors.Errorf("trajex/rdk: joint %q of model %q mimics %q, which is not a joint of the model", joint.GetId(), label, source)
+			}
+			if seen[source] {
+				return errors.Errorf("trajex/rdk: joint %q of model %q mimics in a cycle", joint.GetId(), label)
+			}
+			seen[source] = true
+			if e.joint.GetMimic() == nil {
+				break
+			}
+			source = e.joint.GetMimic().GetJoint()
+		}
+	}
+	return nil
 }
 
 // checkTree refuses a cycle of parents anywhere in the model, on or off the
@@ -292,16 +343,16 @@ func index(model *commonpb.KinematicModel, label string) (map[string]*element, e
 func checkTree(elements map[string]*element, label string) error {
 	rooted := map[string]bool{}
 	for start := range elements {
-		var trail []string
+		trail := map[string]bool{}
 		id := start
 		for elements[id] != nil && !rooted[id] {
-			if slices.Contains(trail, id) {
+			if trail[id] {
 				return errors.Errorf("trajex/rdk: model %q has a cycle of parents through %q", label, id)
 			}
-			trail = append(trail, id)
+			trail[id] = true
 			id = elements[id].parent
 		}
-		for _, id := range trail {
+		for id := range trail {
 			rooted[id] = true
 		}
 	}
@@ -317,23 +368,21 @@ func zeroLength(x, y, z float64) bool {
 // outputFrameOf picks the frame the chain ends at the way RDK picks a model's
 // output frame: the caller's if named, else the one the model declares, else
 // its single leaf. More than one declared output frame, or no declared frame
-// and more than one leaf, is refused as RDK refuses it.
+// and more than one leaf, is refused as RDK refuses it, whatever the caller
+// named.
 func outputFrameOf(model *commonpb.KinematicModel, elements map[string]*element, label, requested string) (string, error) {
+	declared := model.GetOutputFrames()
+	if len(declared) > 1 {
+		return "", errors.Errorf("trajex/rdk: model %q declares %d output frames %v, and a chain ends at one", label, len(declared), declared)
+	}
+	if requested == "" && len(declared) == 1 {
+		requested = declared[0]
+	}
 	if requested != "" {
 		if _, ok := elements[requested]; !ok {
 			return "", errors.Errorf("trajex/rdk: output frame %q is not a link or joint of model %q", requested, label)
 		}
 		return requested, nil
-	}
-	switch declared := model.GetOutputFrames(); len(declared) {
-	case 0:
-	case 1:
-		if _, ok := elements[declared[0]]; !ok {
-			return "", errors.Errorf("trajex/rdk: output frame %q is not a link or joint of model %q", declared[0], label)
-		}
-		return declared[0], nil
-	default:
-		return "", errors.Errorf("trajex/rdk: model %q declares %d output frames %v, and a chain ends at one", label, len(declared), declared)
 	}
 	hasChild := map[string]bool{}
 	for _, e := range elements {
@@ -391,21 +440,17 @@ func linkPose(link *commonpb.KinematicLink, label string) (spatialmath.Pose, err
 		o = ovd
 	case *commonpb.LinkPose_EulerAngles:
 		e := v.EulerAngles
-		o = &spatialmath.EulerAngles{Roll: radians(e.GetRoll()), Pitch: radians(e.GetPitch()), Yaw: radians(e.GetYaw())}
+		o = &spatialmath.EulerAngles{Roll: utils.DegToRad(e.GetRoll()), Pitch: utils.DegToRad(e.GetPitch()), Yaw: utils.DegToRad(e.GetYaw())}
 	case *commonpb.LinkPose_AxisAngles:
 		aa := v.AxisAngles
 		if zeroLength(aa.GetRx(), aa.GetRy(), aa.GetRz()) {
 			return nil, errors.Errorf("trajex/rdk: link %q of model %q turns about a zero axis", link.GetId(), label)
 		}
-		o = &spatialmath.R4AA{Theta: radians(aa.GetTheta()), RX: aa.GetRx(), RY: aa.GetRy(), RZ: aa.GetRz()}
+		o = &spatialmath.R4AA{Theta: utils.DegToRad(aa.GetTheta()), RX: aa.GetRx(), RY: aa.GetRy(), RZ: aa.GetRz()}
 	default:
 		return nil, errors.Errorf("trajex/rdk: link %q of model %q has an orientation of type %T, which this reader does not know", link.GetId(), label, v)
 	}
 	return spatialmath.NewPose(point, o), nil
-}
-
-func radians(degrees float64) float64 {
-	return degrees * math.Pi / 180
 }
 
 // components splits a pose into the translation and the w, x, y, z quaternion

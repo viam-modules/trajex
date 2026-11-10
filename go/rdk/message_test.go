@@ -225,6 +225,10 @@ func TestOutputFrameChoice(t *testing.T) {
 		_, err := rdk.JointsFromKinematicModel(forked("fore", "spur"), "")
 		test.That(t, err, test.ShouldNotBeNil)
 		test.That(t, err.Error(), test.ShouldContainSubstring, "declares 2 output frames [fore spur], and a chain ends at one")
+		// RDK refuses to load the model however the caller means to use it
+		_, err = rdk.JointsFromKinematicModel(forked("fore", "spur"), "spur")
+		test.That(t, err, test.ShouldNotBeNil)
+		test.That(t, err.Error(), test.ShouldContainSubstring, "and a chain ends at one")
 	})
 	t.Run("two leaves and none named", func(t *testing.T) {
 		_, err := rdk.JointsFromKinematicModel(forked(), "")
@@ -321,6 +325,29 @@ func TestRefusals(t *testing.T) {
 	reserved.Links[0].Id = "world"
 	reserved.Joints[0].Parent = "world"
 
+	// RDK refuses a prismatic axis within 1e-8 of zero, where a revolute one only has to be nonzero
+	shortSlide := &commonpb.KinematicModel{
+		Name:   "slide",
+		Links:  []*commonpb.KinematicLink{link("base", "world", 0, 0, 0, nil), link("tip", "slide", 10, 0, 0, nil)},
+		Joints: []*commonpb.KinematicJoint{joint("slide", "base", prismatic, 1e-9, 0, 0)},
+	}
+
+	mimicOfNothing := planarArm()
+	mimicOfNothing.Joints = append(mimicOfNothing.Joints, &commonpb.KinematicJoint{
+		Id: "follower", Parent: "base", Type: revolute, Axis: &commonpb.Vector3{Z: 1}, Mimic: &commonpb.MimicJoint{Joint: "nope"},
+	})
+
+	mimicOfLink := planarArm()
+	mimicOfLink.Joints = append(mimicOfLink.Joints, &commonpb.KinematicJoint{
+		Id: "follower", Parent: "base", Type: revolute, Axis: &commonpb.Vector3{Z: 1}, Mimic: &commonpb.MimicJoint{Joint: "upper"},
+	})
+
+	mimicCycle := planarArm()
+	mimicCycle.Joints = append(mimicCycle.Joints,
+		&commonpb.KinematicJoint{Id: "ring_a", Parent: "base", Type: revolute, Axis: &commonpb.Vector3{Z: 1}, Mimic: &commonpb.MimicJoint{Joint: "ring_b"}},
+		&commonpb.KinematicJoint{Id: "ring_b", Parent: "base", Type: revolute, Axis: &commonpb.Vector3{Z: 1}, Mimic: &commonpb.MimicJoint{Joint: "ring_a"}},
+	)
+
 	for _, tc := range []struct {
 		name  string
 		model *commonpb.KinematicModel
@@ -336,6 +363,10 @@ func TestRefusals(t *testing.T) {
 		{"mimic on the path", mimicOnPath, `joint "elbow" of model "planar" mimics another joint`},
 		{"joint without an axis", noAxis, `joint "elbow" of model "planar" has no axis`},
 		{"joint axis too small to normalize", tinyAxis, `joint "elbow" of model "planar" has no axis`},
+		{"prismatic axis shorter than RDK accepts", shortSlide, `joint "slide" of model "slide" has no axis`},
+		{"mimic of a joint the model lacks", mimicOfNothing, `joint "follower" of model "planar" mimics "nope", which is not a joint of the model`},
+		{"mimic of a link", mimicOfLink, `mimics "upper", which is not a joint of the model`},
+		{"mimics in a cycle", mimicCycle, "mimics in a cycle"},
 		{"joint of an unknown type", unknownType, `joint "elbow" of model "planar" has type "JOINT_TYPE_UNSPECIFIED", which trajex does not support`},
 		{"zero orientation vector", zeroOrientationVector, "has a normal of 0"},
 		{"zero axis in axis angles", zeroAxisAngles, `link "base" of model "planar" turns about a zero axis`},
@@ -418,6 +449,21 @@ func TestFrameSystemConfig(t *testing.T) {
 		p := planarEnd(0.3, -1.1)
 		endMatches(t, c, []float64{40, 0.3, -1.1}, r3.Vector{X: 40 + p.X, Y: p.Y, Z: 50})
 	})
+	// RDK flattens a part's model into the frame system as part:frame, and a part may hang
+	// from one of those frames, here a tool link past the arm's own output frame
+	armWithTool := planarArm()
+	armWithTool.OutputFrames = []string{"fore"}
+	armWithTool.Links = append(armWithTool.Links, link("tool", "fore", 0, 0, 25, nil))
+	armOnFloor := part("arm", "world", 0, 0, 0, 0, armWithTool)
+	t.Run("a part hung from a frame inside another part's model", func(t *testing.T) {
+		probe := part("probe", "arm:tool", 0, 0, 10, 0, nil)
+		joints, err := rdk.JointsFromFrameSystemConfig([]*robotpb.FrameSystemConfig{probe, armOnFloor}, "probe")
+		test.That(t, err, test.ShouldBeNil)
+		test.That(t, len(joints), test.ShouldEqual, 3)
+		p := planarEnd(0.3, -1.1)
+		endMatches(t, newChain(t, joints), []float64{0.3, -1.1}, r3.Vector{X: p.X, Y: p.Y, Z: 35})
+	})
+
 	t.Run("a model with no name is named after its part", func(t *testing.T) {
 		m := planarArm()
 		m.Name = ""
@@ -444,6 +490,12 @@ func TestFrameSystemConfig(t *testing.T) {
 		{"duplicate part", []*robotpb.FrameSystemConfig{mount, mount}, "mount", `names part "mount" more than once`},
 		{"parent that is not a part", []*robotpb.FrameSystemConfig{arm}, "arm", `part "arm" hangs from "mount", which is not a part`},
 		{"cycle", []*robotpb.FrameSystemConfig{part("a", "b", 0, 0, 0, 0, nil), part("b", "a", 0, 0, 0, 0, nil)}, "a", "is a cycle"},
+		{"hung from a frame short of the model's last joint", []*robotpb.FrameSystemConfig{part("probe", "arm:upper", 0, 0, 0, 0, nil), armOnFloor}, "probe",
+			`moving joints [elbow] off the path to its output frame "upper"`},
+		{"hung from a frame the model lacks", []*robotpb.FrameSystemConfig{part("probe", "arm:nowhere", 0, 0, 0, 0, nil), armOnFloor}, "probe",
+			`output frame "nowhere" is not a link or joint of model "planar"`},
+		{"hung from a frame of a part with no model", []*robotpb.FrameSystemConfig{part("probe", "mount:top", 0, 0, 0, 0, nil), mount}, "probe",
+			`part "probe" hangs from frame "top" of part "mount", which has no model`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := rdk.JointsFromFrameSystemConfig(tc.parts, tc.tip)
