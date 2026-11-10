@@ -208,7 +208,7 @@ func TestOutputFrameChoice(t *testing.T) {
 		// the elbow still takes a position, which a chain ending at the upper link has no joint for
 		_, err := rdk.JointsFromKinematicModel(planarArm(), "upper")
 		test.That(t, err, test.ShouldNotBeNil)
-		test.That(t, err.Error(), test.ShouldContainSubstring, `output frame "upper" moves joints [shoulder]`)
+		test.That(t, err.Error(), test.ShouldContainSubstring, `moving joints [elbow] off the path to its output frame "upper"`)
 	})
 	t.Run("a frame past the model's output", func(t *testing.T) {
 		m := planarArm()
@@ -224,12 +224,12 @@ func TestOutputFrameChoice(t *testing.T) {
 	t.Run("several output frames", func(t *testing.T) {
 		_, err := rdk.JointsFromKinematicModel(forked("fore", "spur"), "")
 		test.That(t, err, test.ShouldNotBeNil)
-		test.That(t, err.Error(), test.ShouldContainSubstring, "multiple output frames are not yet supported")
+		test.That(t, err.Error(), test.ShouldContainSubstring, "declares 2 output frames [fore spur], and a chain ends at one")
 	})
 	t.Run("two leaves and none named", func(t *testing.T) {
 		_, err := rdk.JointsFromKinematicModel(forked(), "")
 		test.That(t, err, test.ShouldNotBeNil)
-		test.That(t, err.Error(), test.ShouldContainSubstring, "need exactly one end effector")
+		test.That(t, err.Error(), test.ShouldContainSubstring, "has 2 leaves [fore spur] rather than one")
 	})
 	t.Run("a frame the model lacks", func(t *testing.T) {
 		_, err := rdk.JointsFromKinematicModel(planarArm(), "nowhere")
@@ -239,30 +239,21 @@ func TestOutputFrameChoice(t *testing.T) {
 		m.OutputFrames = []string{"nowhere"}
 		_, err = rdk.JointsFromKinematicModel(m, "")
 		test.That(t, err, test.ShouldNotBeNil)
-		test.That(t, err.Error(), test.ShouldContainSubstring, `output frame "nowhere" not found`)
+		test.That(t, err.Error(), test.ShouldContainSubstring, `output frame "nowhere" is not a link or joint`)
 	})
 }
 
-// RDK orders a model's positions breadth first with siblings sorted by id, not
-// by the order joints appear in the message, so a message that lists them the
-// other way round still gives a chain, and a moving joint off the path to the
-// output frame, which RDK would also take a position for, is refused.
+// RDK orders a model's positions breadth first from the root, not by the
+// order joints appear in the message, so a message that lists them the other
+// way round still gives a chain. Along one path that order is base to tip,
+// and a moving joint off the path, which RDK would also take a position for,
+// is refused.
 func TestInputOrder(t *testing.T) {
 	t.Run("message order does not matter", func(t *testing.T) {
 		m := planarArm()
 		m.Joints[0], m.Joints[1] = m.Joints[1], m.Joints[0]
 		c := modelChain(t, m, "")
 		endMatches(t, c, []float64{0.3, -1.1}, planarEnd(0.3, -1.1))
-	})
-	t.Run("siblings are ordered by id, not by the message", func(t *testing.T) {
-		// aardvark is listed after elbow but sorts before it, so RDK takes its position first
-		m := planarArm()
-		m.Joints = append(m.Joints, joint("aardvark", "upper", revolute, 0, 1, 0))
-		m.Links = append(m.Links, link("aardvark_tip", "aardvark", 0, 0, 5, nil))
-		m.OutputFrames = []string{"fore"}
-		_, err := rdk.JointsFromKinematicModel(m, "")
-		test.That(t, err, test.ShouldNotBeNil)
-		test.That(t, err.Error(), test.ShouldContainSubstring, "takes inputs for joints [shoulder aardvark elbow]")
 	})
 	t.Run("a moving joint off the path", func(t *testing.T) {
 		m := planarArm()
@@ -271,8 +262,7 @@ func TestInputOrder(t *testing.T) {
 		m.OutputFrames = []string{"fore"}
 		_, err := rdk.JointsFromKinematicModel(m, "")
 		test.That(t, err, test.ShouldNotBeNil)
-		test.That(t, err.Error(), test.ShouldContainSubstring, "takes inputs for joints [finger shoulder elbow]")
-		test.That(t, err.Error(), test.ShouldContainSubstring, "moves joints [shoulder elbow]")
+		test.That(t, err.Error(), test.ShouldContainSubstring, `model "planar" has moving joints [finger] off the path to its output frame "fore"`)
 	})
 	t.Run("a mimic joint off the path takes no position", func(t *testing.T) {
 		m := planarArm()
@@ -288,7 +278,8 @@ func TestInputOrder(t *testing.T) {
 }
 
 // Each of these messages would give a wrong chain rather than no chain, so
-// each has to be refused. Most of the refusals come from RDK.
+// each has to be refused. RDK refuses to load every one of them, by an error
+// or in two cases by a panic, and the reader has to refuse them on its own.
 func TestRefusals(t *testing.T) {
 	cyclic := planarArm()
 	cyclic.Links[0].Parent = "fore"
@@ -326,6 +317,10 @@ func TestRefusals(t *testing.T) {
 	unnamed := planarArm()
 	unnamed.Links[2].Id = ""
 
+	reserved := planarArm()
+	reserved.Links[0].Id = "world"
+	reserved.Joints[0].Parent = "world"
+
 	for _, tc := range []struct {
 		name  string
 		model *commonpb.KinematicModel
@@ -335,12 +330,13 @@ func TestRefusals(t *testing.T) {
 		{"empty", &commonpb.KinematicModel{Name: "hollow"}, `model "hollow" has no links or joints`},
 		{"duplicate id", duplicate, `names "upper" more than once`},
 		{"missing id", unnamed, "with no id"},
-		{"cycle on the path", cyclic, "infinite loop finding path"},
-		{"cycle off the path", strayCycle, "infinite loop finding path"},
+		{"world as an id", reserved, `named "world", which RDK keeps for the root`},
+		{"cycle on the path", cyclic, "has a cycle of parents"},
+		{"cycle off the path", strayCycle, "has a cycle of parents"},
 		{"mimic on the path", mimicOnPath, `joint "elbow" of model "planar" mimics another joint`},
 		{"joint without an axis", noAxis, `joint "elbow" of model "planar" has no axis`},
 		{"joint axis too small to normalize", tinyAxis, `joint "elbow" of model "planar" has no axis`},
-		{"joint of an unknown type", unknownType, `unsupported joint type detected: "JOINT_TYPE_UNSPECIFIED"`},
+		{"joint of an unknown type", unknownType, `joint "elbow" of model "planar" has type "JOINT_TYPE_UNSPECIFIED", which trajex does not support`},
 		{"zero orientation vector", zeroOrientationVector, "has a normal of 0"},
 		{"zero axis in axis angles", zeroAxisAngles, `link "base" of model "planar" turns about a zero axis`},
 		{"axis angles too small to normalize", tinyAxisAngles, `link "base" of model "planar" turns about a zero axis`},
@@ -429,7 +425,7 @@ func TestFrameSystemConfig(t *testing.T) {
 		m.OutputFrames = []string{"fore"}
 		_, err := rdk.JointsFromFrameSystemConfig([]*robotpb.FrameSystemConfig{part("gripper", "world", 0, 0, 0, 0, m)}, "gripper")
 		test.That(t, err, test.ShouldNotBeNil)
-		test.That(t, err.Error(), test.ShouldContainSubstring, `model "gripper" takes inputs`)
+		test.That(t, err.Error(), test.ShouldContainSubstring, `model "gripper" has moving joints [finger] off the path`)
 	})
 
 	for _, tc := range []struct {

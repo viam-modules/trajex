@@ -190,7 +190,7 @@ func TestJointsFromKinematicModelRefusesMovingJointsOffThePath(t *testing.T) {
 		t.Run(file, func(t *testing.T) {
 			_, err := jointsFromModel(t, loadModel(t, file, "test"), "")
 			test.That(t, err, test.ShouldNotBeNil)
-			test.That(t, err.Error(), test.ShouldContainSubstring, "takes inputs for joints")
+			test.That(t, err.Error(), test.ShouldContainSubstring, "off the path to its output frame")
 		})
 	}
 }
@@ -231,10 +231,10 @@ func TestJointsFromKinematicModelBuiltFromFramesMatchesRDK(t *testing.T) {
 	test.That(t, err, test.ShouldNotBeNil)
 }
 
-// A link's orientation can be given in four forms, and RDK parses each of
-// them. What remains to check is that composing the poses RDK hands back puts
-// the end where its forward kinematics puts it, for every form and on both
-// sides of the orientation vector's pole.
+// A link's orientation can be given in four forms. The reader maps each onto
+// the spatialmath type RDK uses for it, and this checks the result against
+// RDK's own reading of the same message, for every form and on both sides of
+// the orientation vector's pole.
 func TestOrientationFormsReadAsRDKReadsThem(t *testing.T) {
 	rng := rand.New(rand.NewSource(4))
 	angle := func() float64 { return rng.Float64()*720 - 360 }
