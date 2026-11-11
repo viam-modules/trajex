@@ -5,7 +5,6 @@ go 1.26.10
 require (
 	github.com/golang/geo v0.0.0-20230421003525-6adc56603217
 	github.com/pkg/errors v0.9.1
-	go.viam.com/api v0.1.603
 	go.viam.com/rdk v1.14.0-rc0.0.20261102173140-79bfca346816
 	go.viam.com/test v1.2.4
 	gorgonia.org/tensor v0.9.24
@@ -185,6 +184,7 @@ require (
 	go.uber.org/goleak v1.3.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.28.0 // indirect
+	go.viam.com/api v0.1.603 // indirect
 	go.viam.com/utils v0.17.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	go4.org/unsafe/assume-no-moving-gc v0.0.0-20230525183740-e7c30c78aeb2 // indirect
@@ -215,4 +215,4 @@ require (
 	nhooyr.io/websocket v1.8.7 // indirect
 )
 
-replace go.viam.com/rdk => github.com/JohnN193/rdk v0.0.0-20261111193905-0a9f5f069cb7
+replace go.viam.com/rdk => github.com/JohnN193/rdk v0.0.0-20261111201206-35f9a5800eae

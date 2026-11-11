@@ -55,8 +55,8 @@ github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/cloudmock v0
 github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/cloudmock v0.55.0/go.mod h1:vB2GH9GAYYJTO3mEn8oYwzEdhlayZIdQz6zdzgUIRvA=
 github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.55.0 h1:0s6TxfCu2KHkkZPnBfsQ2y5qia0jl3MMrmBhu3nCOYk=
 github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.55.0/go.mod h1:Mf6O40IAyB9zR/1J8nGDDPirZQQPbYJni8Yisy7NTMc=
-github.com/JohnN193/rdk v0.0.0-20261111193905-0a9f5f069cb7 h1:9hPB8CZjdeK5UR9Nu8P4lPmZ8wfJS6MKJU8Ug0smx8A=
-github.com/JohnN193/rdk v0.0.0-20261111193905-0a9f5f069cb7/go.mod h1:OQp8LaIxHAMRAxWC+WmJr/O88+RxWUxBXD/zhkO89/U=
+github.com/JohnN193/rdk v0.0.0-20261111201206-35f9a5800eae h1:7NY6jRd/moKlG2pN8h/JbHBR7RGnsgsihMZaUj/mgAY=
+github.com/JohnN193/rdk v0.0.0-20261111201206-35f9a5800eae/go.mod h1:OQp8LaIxHAMRAxWC+WmJr/O88+RxWUxBXD/zhkO89/U=
 github.com/Knetic/govaluate v3.0.1-0.20171022003610-9aa49832a739+incompatible/go.mod h1:r7JcOSlj0wfOMncg0iLm8Leh48TZaKVeNIfJntJ2wa0=
 github.com/Masterminds/semver v1.5.0 h1:H65muMkzWKEuNDnfl9d70GUjFniHKHRbFPGBuZ3QEww=
 github.com/Masterminds/semver/v3 v3.3.1 h1:QtNSWtVZ3nBfk8mAOu/B6v7FMJ+NHTIgUPi7rj+4nv4=

@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/golang/geo/r3"
-	robotpb "go.viam.com/api/robot/v1"
 	"go.viam.com/rdk/referenceframe"
 	"go.viam.com/rdk/spatialmath"
 	"go.viam.com/rdk/utils"
@@ -219,51 +218,45 @@ func TestJointsFromModelRefusesAFrameTrajexCannotExpress(t *testing.T) {
 	test.That(t, err.Error(), test.ShouldContainSubstring, `frame "free" of model "free" takes 7 positions`)
 }
 
-// partsToProtobuf serializes parts the way a machine serves them, with the
-// typed model beside the frame.
-func partsToProtobuf(t *testing.T, parts []*referenceframe.FrameSystemPart) []*robotpb.FrameSystemConfig {
-	t.Helper()
-	var out []*robotpb.FrameSystemConfig
-	for _, part := range parts {
-		pb, err := part.ToProtobuf()
-		test.That(t, err, test.ShouldBeNil)
-		out = append(out, pb)
-	}
-	return out
-}
-
-// A server older than FrameSystemConfig.model sends the deprecated kinematics
-// field only. RDK still fills that field beside the model, so clearing the
-// model from its reply reproduces what such a server sends, and the part has
-// to build the same chain either way.
-func TestJointsFromFrameSystemConfigReadsTheDeprecatedKinematicsField(t *testing.T) {
+// A caller holding a machine's frame system builds a model over it with RDK and
+// hands that in. The frame system is a gantry on the floor, a mount rotated and
+// tilted on its carriage, and an arm on the mount, and the chain has to put the
+// arm's end where RDK's frame system puts it for the same positions, which run
+// from the part nearest world outward as the model's inputs do.
+func TestJointsFromModelOverFrameSystemPartsMatchesRDK(t *testing.T) {
+	gantry := loadModel(t, "referenceframe/testfiles/example_gantry.json", "gantry")
 	arm := loadModel(t, "components/arm/kinematics/ur5e.json", "arm")
-	part := &referenceframe.FrameSystemPart{
-		FrameConfig: referenceframe.NewLinkInFrame(referenceframe.World, spatialmath.NewZeroPose(), "arm", nil),
-		ModelFrame:  arm,
+	mountPose := spatialmath.NewPose(r3.Vector{X: 120, Y: -40, Z: 25}, &spatialmath.EulerAngles{Roll: 0.4, Pitch: -0.2, Yaw: 2.1})
+	armPose := spatialmath.NewPose(r3.Vector{X: 0, Y: 15, Z: 60}, &spatialmath.OrientationVectorDegrees{OX: 0.3, OY: -0.5, OZ: 0.8, Theta: 35})
+	parts := []*referenceframe.FrameSystemPart{
+		{FrameConfig: referenceframe.NewLinkInFrame(referenceframe.World, spatialmath.NewZeroPose(), "gantry", nil), ModelFrame: gantry},
+		{FrameConfig: referenceframe.NewLinkInFrame("gantry", mountPose, "mount", nil)},
+		{FrameConfig: referenceframe.NewLinkInFrame("mount", armPose, "arm", nil), ModelFrame: arm},
 	}
-	pb, err := part.ToProtobuf()
+	fs, err := referenceframe.NewFrameSystem("machine", parts, nil)
 	test.That(t, err, test.ShouldBeNil)
-	test.That(t, len(pb.GetKinematics().GetFields()), test.ShouldBeGreaterThan, 0)
-	pb.Model = nil
+	machine, err := referenceframe.NewModel("machine", fs, "arm")
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, len(machine.DoF()), test.ShouldEqual, len(gantry.DoF())+len(arm.DoF()))
+	chain := chainFromModel(t, machine, spatialmath.NewZeroPose())
 
-	joints, err := rdk.JointsFromFrameSystemConfig([]*robotpb.FrameSystemConfig{pb}, "arm")
-	test.That(t, err, test.ShouldBeNil)
-	chain := newChain(t, joints)
-	rng := rand.New(rand.NewSource(8))
+	rng := rand.New(rand.NewSource(5))
 	for range 50 {
-		q := randomPositions(arm, rng)
-		want, err := arm.Transform(q)
+		q := randomPositions(machine, rng)
+		inputs := referenceframe.NewLinearInputs()
+		inputs.Put("gantry", q[:len(gantry.DoF())])
+		inputs.Put("arm", q[len(gantry.DoF()):])
+		want, err := fs.Transform(inputs, referenceframe.NewPoseInFrame("arm", spatialmath.NewZeroPose()), referenceframe.World)
 		test.That(t, err, test.ShouldBeNil)
-		endMatches(t, chain, q, want.Point())
+		endMatches(t, chain, q, want.(*referenceframe.PoseInFrame).Pose().Point())
 	}
 }
 
 // RDK lets a part hang from a frame inside another part's model, named
 // part:frame once the model is flattened into the frame system. The probe
-// here hangs from the tool link past the arm's output frame, so the chain has
-// to follow the arm's model out to that link rather than to its output.
-func TestJointsFromFrameSystemConfigHangsAPartInsideAModel(t *testing.T) {
+// here hangs from the tool link past the arm's output frame, and a model
+// whose output is the probe follows the arm's model out to that link.
+func TestJointsFromModelFollowsAPartHungInsideAModel(t *testing.T) {
 	arm, err := referenceframe.UnmarshalModelJSON([]byte(orderSensitiveModel), "arm")
 	test.That(t, err, test.ShouldBeNil)
 	probePose := spatialmath.NewPose(r3.Vector{X: 5, Y: -8, Z: 30}, &spatialmath.EulerAngles{Roll: 0.2, Yaw: 1.3})
@@ -273,10 +266,9 @@ func TestJointsFromFrameSystemConfigHangsAPartInsideAModel(t *testing.T) {
 	}
 	fs, err := referenceframe.NewFrameSystem("machine", parts, nil)
 	test.That(t, err, test.ShouldBeNil)
-
-	joints, err := rdk.JointsFromFrameSystemConfig(partsToProtobuf(t, parts), "probe")
+	machine, err := referenceframe.NewModel("machine", fs, "probe")
 	test.That(t, err, test.ShouldBeNil)
-	chain := newChain(t, joints)
+	chain := chainFromModel(t, machine, spatialmath.NewZeroPose())
 
 	rng := rand.New(rand.NewSource(7))
 	for range 50 {
@@ -289,50 +281,22 @@ func TestJointsFromFrameSystemConfigHangsAPartInsideAModel(t *testing.T) {
 	}
 }
 
-// The frame system is a gantry on the floor, a mount rotated and tilted on
-// its carriage, and an arm on the mount. The chain built from the parts'
-// messages has to put the arm's end where RDK's frame system puts it for the
-// same positions.
-func TestJointsFromFrameSystemConfigMatchesRDK(t *testing.T) {
-	gantry := loadModel(t, "referenceframe/testfiles/example_gantry.json", "gantry")
+// A part off the path to the output frame still takes positions in a model
+// built over the whole frame system, so such a model is refused like a
+// gripper with a finger. A caller builds the frame system from the parts on
+// the path instead.
+func TestJointsFromModelRefusesAPartOffThePath(t *testing.T) {
 	arm := loadModel(t, "components/arm/kinematics/ur5e.json", "arm")
-	mountPose := spatialmath.NewPose(r3.Vector{X: 120, Y: -40, Z: 25}, &spatialmath.EulerAngles{Roll: 0.4, Pitch: -0.2, Yaw: 2.1})
-	armPose := spatialmath.NewPose(r3.Vector{X: 0, Y: 15, Z: 60}, &spatialmath.OrientationVectorDegrees{OX: 0.3, OY: -0.5, OZ: 0.8, Theta: 35})
+	other := loadModel(t, "components/arm/kinematics/xarm6.json", "other")
 	parts := []*referenceframe.FrameSystemPart{
-		{FrameConfig: referenceframe.NewLinkInFrame(referenceframe.World, spatialmath.NewZeroPose(), "gantry", nil), ModelFrame: gantry},
-		{FrameConfig: referenceframe.NewLinkInFrame("gantry", mountPose, "mount", nil)},
-		{FrameConfig: referenceframe.NewLinkInFrame("mount", armPose, "arm", nil), ModelFrame: arm},
+		{FrameConfig: referenceframe.NewLinkInFrame(referenceframe.World, spatialmath.NewZeroPose(), "arm", nil), ModelFrame: arm},
+		{FrameConfig: referenceframe.NewLinkInFrame(referenceframe.World, spatialmath.NewPoseFromPoint(r3.Vector{X: 1000}), "other", nil), ModelFrame: other},
 	}
 	fs, err := referenceframe.NewFrameSystem("machine", parts, nil)
 	test.That(t, err, test.ShouldBeNil)
-	pbParts := partsToProtobuf(t, parts)
-
-	for _, tc := range []struct {
-		tip    string
-		models []referenceframe.Model
-	}{
-		{"gantry", []referenceframe.Model{gantry}},
-		{"mount", []referenceframe.Model{gantry}},
-		{"arm", []referenceframe.Model{gantry, arm}},
-	} {
-		t.Run(tc.tip, func(t *testing.T) {
-			joints, err := rdk.JointsFromFrameSystemConfig(pbParts, tc.tip)
-			test.That(t, err, test.ShouldBeNil)
-			chain := newChain(t, joints)
-
-			rng := rand.New(rand.NewSource(5))
-			for range 50 {
-				inputs := referenceframe.NewLinearInputs()
-				var q []float64
-				for _, m := range tc.models {
-					positions := randomPositions(m, rng)
-					inputs.Put(m.Name(), positions)
-					q = append(q, positions...)
-				}
-				want, err := fs.Transform(inputs, referenceframe.NewPoseInFrame(tc.tip, spatialmath.NewZeroPose()), referenceframe.World)
-				test.That(t, err, test.ShouldBeNil)
-				endMatches(t, chain, q, want.(*referenceframe.PoseInFrame).Pose().Point())
-			}
-		})
-	}
+	machine, err := referenceframe.NewModel("machine", fs, "arm")
+	test.That(t, err, test.ShouldBeNil)
+	_, err = rdk.JointsFromModel(machine, spatialmath.NewZeroPose())
+	test.That(t, err, test.ShouldNotBeNil)
+	test.That(t, err.Error(), test.ShouldContainSubstring, `model "machine" takes 12 positions`)
 }
