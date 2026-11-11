@@ -3,6 +3,7 @@
 #include <bitset>
 #include <concepts>
 #include <cstddef>
+#include <optional>
 #include <ranges>
 #include <span>
 #include <utility>
@@ -90,23 +91,29 @@ class VIAM_TRAJEX_TOTG_API path {
         ///
         /// Circular blend segment in configuration space.
         ///
+        /// The arc is described from its apex, the midpoint of the arc, rather than from its center.
+        /// With phi running over [-angle_rads / 2, angle_rads / 2], the arc is
+        /// `apex + radius * (sin(phi) * t + (1 - cos(phi)) * n)`. Every term is bounded by the arc's
+        /// length, so positions on the arc are accurate to a few ULPs of the coordinates no matter how
+        /// large the radius is. A center would sit a radius away, and carry an error proportional to it.
+        ///
         struct circular {
             ///
             /// Constructs circular arc with validation.
             ///
-            /// @param center Center of arc in configuration space
-            /// @param x First basis vector (must be unit length)
-            /// @param y Second basis vector (must be unit length and perpendicular to x)
+            /// @param apex Midpoint of the arc in configuration space
+            /// @param t Unit tangent at the apex
+            /// @param n Unit normal at the apex, pointing toward the center of the arc
             /// @param radius Radius of the circular arc
             /// @param angle_rads Total angle swept by arc (radians)
-            /// @throws std::invalid_argument if x,y are not orthonormal
+            /// @throws std::invalid_argument if t,n are not orthonormal to within rounding
             ///
             circular(
-                xrank_checked<xvector<>> center, xrank_checked<xvector<>> x, xrank_checked<xvector<>> y, double radius, double angle_rads);
+                xrank_checked<xvector<>> apex, xrank_checked<xvector<>> t, xrank_checked<xvector<>> n, double radius, double angle_rads);
 
-            xvector<> center;   ///< Center of arc in configuration space
-            xvector<> x;        ///< First basis vector (defines rotation plane)
-            xvector<> y;        ///< Second basis vector (perpendicular to x)
+            xvector<> apex;     ///< Midpoint of the arc in configuration space
+            xvector<> t;        ///< Unit tangent at the apex
+            xvector<> n;        ///< Unit normal at the apex, toward the center (perpendicular to t)
             double radius;      ///< Radius of the circular arc (units: configuration space distance)
             double angle_rads;  ///< Total angle swept by arc (units: radians)
         };
@@ -235,6 +242,24 @@ class VIAM_TRAJEX_TOTG_API path {
             /// @throws std::invalid_argument if out is not sized to the degrees of freedom
             ///
             void curvature(arc_length s, std::span<double> out) const;
+
+            ///
+            /// Finds where one coordinate of a circular segment's configuration is extremal.
+            ///
+            /// A coordinate is extremal where its component of the tangent is zero. A linear
+            /// segment's tangent is constant, so it has no such point. For a blend arc, the root is
+            /// taken on the arc's circle within a quarter turn either side of the apex, where it is
+            /// unique; a blend arc turns by less than pi, so any root on the arc itself is this one.
+            /// The root is reported wherever it falls, which may be off this segment: rounding can
+            /// place a root that belongs at a boundary just outside it, and the caller decides what
+            /// an off-segment root means. The geometry accessors throw for an off-segment arc length.
+            ///
+            /// @param joint Index of the coordinate
+            /// @return Global arc length of the root, possibly outside [start(), end()], or nullopt if
+            ///         there is none
+            /// @throws std::out_of_range if joint is not less than the degrees of freedom
+            ///
+            std::optional<arc_length> coordinate_extremum(std::size_t joint) const;
 
            private:
             // Recovered from the segment's stored vectors. Only the value-returning accessors

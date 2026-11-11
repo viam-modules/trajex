@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
+#include <numbers>
 #include <optional>
 #include <ranges>
 #include <stdexcept>
@@ -94,20 +96,35 @@ path::segment::linear::linear(xrank_checked<xvector<>> start, xrank_checked<xvec
 }
 
 path::segment::circular::circular(
-    xrank_checked<xvector<>> center, xrank_checked<xvector<>> x, xrank_checked<xvector<>> y, double radius, double angle_rads)
-    : center{std::move(center).take()}, x{std::move(x).take()}, y{std::move(y).take()}, radius{radius}, angle_rads{angle_rads} {
-    const double x_norm = xt::norm_l2(this->x)();
-    const double y_norm = xt::norm_l2(this->y)();
-
-    // TODO(RSDK-12761): Use machine epsilon based tolerance for unit vector check
-    if (std::abs(x_norm - 1.0) > 1e-6 || std::abs(y_norm - 1.0) > 1e-6) {
-        throw std::invalid_argument{"Circular segment: x and y must be unit vectors"};
+    xrank_checked<xvector<>> apex, xrank_checked<xvector<>> t, xrank_checked<xvector<>> n, double radius, double angle_rads)
+    : apex{std::move(apex).take()}, t{std::move(t).take()}, n{std::move(n).take()}, radius{radius}, angle_rads{angle_rads} {
+    // The comparisons below are false for NaN, so non-finite input must be rejected first.
+    if (!xt::all(xt::isfinite(this->apex)) || !xt::all(xt::isfinite(this->t)) || !xt::all(xt::isfinite(this->n)) ||
+        !std::isfinite(radius) || !std::isfinite(angle_rads)) {
+        throw std::invalid_argument{"Circular segment: geometry must be finite"};
     }
 
-    const double dot_product = xt::sum(this->x * this->y)();
-    // TODO(RSDK-12761): Consider tighter tolerance for orthogonality
-    if (std::abs(dot_product) > 1e-6) {
-        throw std::invalid_argument{"Circular segment: x and y must be perpendicular"};
+    // A blend turns by less than pi, which is what leaves each joint at most one extremum on it.
+    if (radius <= 0.0 || angle_rads <= 0.0 || angle_rads >= std::numbers::pi) {
+        throw std::invalid_argument{"Circular segment: radius must be positive and angle must lie in (0, pi)"};
+    }
+
+    // Normalizing a vector rounds once per coordinate, as does summing its squares again here to
+    // check it, and the residual a Gram-Schmidt step leaves in a dot product is of the same kind.
+    // So the bound is a few ULPs per coordinate, not a tolerance on the geometry.
+    constexpr std::size_t k_rounding_ulps_per_coordinate = 4;
+    const auto rounding_ulps = k_rounding_ulps_per_coordinate * this->t.size();
+    const auto rounding_bound = static_cast<double>(rounding_ulps) * std::numeric_limits<double>::epsilon();
+
+    const auto t_norm = xt::norm_l2(this->t)();
+    const auto n_norm = xt::norm_l2(this->n)();
+    if (std::abs(t_norm - 1.0) > rounding_bound || std::abs(n_norm - 1.0) > rounding_bound) {
+        throw std::invalid_argument{"Circular segment: t and n must be unit vectors"};
+    }
+
+    const auto dot_product = xt::sum(this->t * this->n)();
+    if (std::abs(dot_product) > rounding_bound) {
+        throw std::invalid_argument{"Circular segment: t and n must be perpendicular"};
     }
 }
 
@@ -151,7 +168,7 @@ std::size_t path::segment::view::dof_() const {
             if constexpr (std::is_same_v<T, segment::linear>) {
                 return seg_data.start.shape(0);
             } else if constexpr (std::is_same_v<T, segment::circular>) {
-                return seg_data.center.shape(0);
+                return seg_data.apex.shape(0);
             }
         },
         seg_.get().data_);
@@ -179,15 +196,18 @@ void path::segment::view::configuration(arc_length s, std::span<double> out) con
                     out[i] = seg_data.start(i) + (distance * seg_data.unit_direction(i));
                 }
             } else if constexpr (std::is_same_v<T, segment::circular>) {
-                require_dof(out, seg_data.center.shape(0));
+                require_dof(out, seg_data.apex.shape(0));
 
-                // Circular arc configuration - Kunz & Stilman equation 7:
-                const double angle = static_cast<double>(local_s) / seg_data.radius;
-                const double cos_angle = std::cos(angle);
-                const double sin_angle = std::sin(angle);
+                // Circular arc configuration - Kunz & Stilman equation 7, measured from the apex, so
+                // that phi runs over [-angle / 2, angle / 2]. The 1 - cos(phi) term is written as
+                // 2 sin^2(phi / 2), which keeps its digits when phi is small.
+                const auto phi = (static_cast<double>(local_s) / seg_data.radius) - (seg_data.angle_rads / 2.0);
+                const auto sin_half_phi = std::sin(phi / 2.0);
+                const auto along_t = seg_data.radius * std::sin(phi);
+                const auto along_n = seg_data.radius * 2.0 * sin_half_phi * sin_half_phi;
 
                 for (std::size_t i = 0; i < out.size(); ++i) {
-                    out[i] = seg_data.center(i) + (seg_data.radius * ((seg_data.x(i) * cos_angle) + (seg_data.y(i) * sin_angle)));
+                    out[i] = seg_data.apex(i) + (along_t * seg_data.t(i)) + (along_n * seg_data.n(i));
                 }
             }
         },
@@ -214,15 +234,15 @@ void path::segment::view::tangent(arc_length s, std::span<double> out) const {
                     out[i] = seg_data.unit_direction(i);
                 }
             } else if constexpr (std::is_same_v<T, segment::circular>) {
-                require_dof(out, seg_data.center.shape(0));
+                require_dof(out, seg_data.apex.shape(0));
 
-                // Circular arc unit tangent - Kunz & Stilman equation 8:
-                const double angle = static_cast<double>(local_s) / seg_data.radius;
-                const double cos_angle = std::cos(angle);
-                const double sin_angle = std::sin(angle);
+                // Circular arc unit tangent - Kunz & Stilman equation 8, measured from the apex:
+                const auto phi = (static_cast<double>(local_s) / seg_data.radius) - (seg_data.angle_rads / 2.0);
+                const auto cos_phi = std::cos(phi);
+                const auto sin_phi = std::sin(phi);
 
                 for (std::size_t i = 0; i < out.size(); ++i) {
-                    out[i] = (-seg_data.x(i) * sin_angle) + (seg_data.y(i) * cos_angle);
+                    out[i] = (seg_data.t(i) * cos_phi) + (seg_data.n(i) * sin_phi);
                 }
             }
         },
@@ -247,17 +267,56 @@ void path::segment::view::curvature(arc_length s, std::span<double> out) const {
                 // Linear segment: zero curvature vector
                 std::ranges::fill(out, 0.0);
             } else if constexpr (std::is_same_v<T, segment::circular>) {
-                require_dof(out, seg_data.center.shape(0));
+                require_dof(out, seg_data.apex.shape(0));
 
-                // Circular arc curvature vector - Kunz & Stilman equation 9:
-                const double angle = static_cast<double>(local_s) / seg_data.radius;
-                const double cos_angle = std::cos(angle);
-                const double sin_angle = std::sin(angle);
-                const double negative_inverse_radius = -(1.0 / seg_data.radius);
+                // Circular arc curvature vector - Kunz & Stilman equation 9, measured from the apex:
+                const auto phi = (static_cast<double>(local_s) / seg_data.radius) - (seg_data.angle_rads / 2.0);
+                const auto cos_phi = std::cos(phi);
+                const auto sin_phi = std::sin(phi);
+                const auto inverse_radius = 1.0 / seg_data.radius;
 
                 for (std::size_t i = 0; i < out.size(); ++i) {
-                    out[i] = negative_inverse_radius * ((seg_data.x(i) * cos_angle) + (seg_data.y(i) * sin_angle));
+                    out[i] = inverse_radius * ((seg_data.n(i) * cos_phi) - (seg_data.t(i) * sin_phi));
                 }
+            }
+        },
+        seg_.get().data_);
+}
+
+std::optional<arc_length> path::segment::view::coordinate_extremum(std::size_t joint) const {
+    return std::visit(
+        [this, joint](const auto& seg_data) -> std::optional<arc_length> {
+            using T = std::decay_t<decltype(seg_data)>;
+
+            if constexpr (std::is_same_v<T, segment::linear>) {
+                if (joint >= seg_data.start.shape(0)) [[unlikely]] {
+                    throw std::out_of_range{"Joint index exceeds path degrees of freedom"};
+                }
+                return std::nullopt;
+            } else if constexpr (std::is_same_v<T, segment::circular>) {
+                if (joint >= seg_data.apex.shape(0)) [[unlikely]] {
+                    throw std::out_of_range{"Joint index exceeds path degrees of freedom"};
+                }
+
+                // The joint's component of the tangent, cos(phi) t_i + sin(phi) n_i, is zero where
+                // tan(phi) = -t_i / n_i, which within (-pi/2, pi/2) has the single root atan(-t_i / n_i).
+                // The arc turns by less than pi, so it lies within that interval too, and any root on
+                // the arc is this one. With n_i zero there is no root inside the interval, or, if t_i
+                // is zero too, the joint does not move on the arc at all.
+                //
+                // The quotient is safe: t and n are unit vectors, so it is finite unless n_i is so small
+                // that it overflows, and atan takes an infinity to +-pi/2, where the root then is.
+                const auto t_i = seg_data.t(joint);
+                const auto n_i = seg_data.n(joint);
+                if (n_i == 0.0) {
+                    return std::nullopt;
+                }
+                const auto phi = std::atan(-t_i / n_i);
+
+                // Report the root wherever it falls, on the arc or on the circle beyond it. Whether one
+                // just off the arc should count is the caller's to decide, and it needs to know how far
+                // off it is to do that.
+                return start_ + arc_length{seg_data.radius * (phi + (seg_data.angle_rads / 2.0))};
             }
         },
         seg_.get().data_);
@@ -384,8 +443,8 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         const auto angle = std::acos(dot_clamped);
         const auto half_angle = angle / 2.0;
 
-        // At this point angle is strictly in (0, pi). trajectory.cpp relies on this guarantee
-        // when searching for Case 2 switching points within circular segments.
+        // At this point angle is strictly in (0, pi). segment::view::coordinate_extremum relies on
+        // this guarantee to find at most one extremum per joint on the arc.
 
         // Compute trim following Kunz & Stilman equations 3-4. Three constraints apply: can't
         // trim more than half of either segment, and the deviation at the blend must stay within
@@ -411,38 +470,56 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
 
         // Near-collinear: cap trim at tan(alpha/2)/kmin. The capped radius is exactly
         // 1/kmin with no rounding; the arc retains exact C1 continuity at both boundaries.
+        // Between the two curvature checks the radius lies in [1/kmax, 1/kmin], so dividing by
+        // tan(alpha/2) here can neither blow up nor vanish.
         const auto trim_distance = std::min(natural_trim, tan_half / opts.min_blend_curvature());
         const auto radius = trim_distance / tan_half;
 
-        // Construct the circular arc geometry following Kunz & Stilman equation 5-6.
-        // The center lies along the angle bisector, and the x/y basis vectors define
-        // the plane of the circular arc with x pointing toward the blend start point.
-        const auto bisector = outgoing_unit - incoming_unit;
-        const auto bisector_norm = xt::norm_l2(bisector)();
-        const auto bisector_unit = bisector / bisector_norm;
+        // Construct the arc from its apex rather than from its center as Kunz & Stilman equations
+        // 5-6 do. The paper puts the center on the bisector at radius / cos(alpha/2) from the corner,
+        // but the bisector is the difference of two unit vectors, which at a shallow corner are
+        // nearly equal, so its direction has few correct digits, and at the min_blend_curvature
+        // radius cap that error carries the center, and the whole arc with it, far off the path
+        // (RSDK-14911). Everything about the apex is bounded by the arc's length instead.
+        //
+        // The frame comes from the sum and the difference of the two unit directions: the tangent
+        // at the apex lies along the sum, and the normal, toward the inside of the corner, along
+        // the difference. Their lengths are 2 cos(alpha/2) and 2 sin(alpha/2), so the longer is at
+        // least sqrt(2), while the shorter cancels nearly equal or nearly opposite vectors and has a
+        // direction good only to about eps over its length: the difference at a shallow corner, the
+        // sum at a near reversal. So normalize the longer and project it out of the shorter. Within
+        // the plane, the shorter's direction then follows from the longer's, and what error remains
+        // tilts the plane, which the ends of the arc see scaled by the shorter's length, so they
+        // meet the incoming and outgoing directions to rounding at any angle. Normalizing introduces
+        // no scale, since a vector's direction does not depend on its length, but if the shorter
+        // cancels completely there is no plane to put an arc in, and no blend.
+        const xvector<> sum = incoming_unit + outgoing_unit;
+        const xvector<> difference = outgoing_unit - incoming_unit;
+        const auto sum_norm = xt::norm_l2(sum)();
+        const auto difference_norm = xt::norm_l2(difference)();
+        const bool sum_is_longer = (sum_norm >= difference_norm);
 
-        const auto center_offset = radius / std::cos(half_angle);
-        const auto center = corner + (center_offset * bisector_unit);
+        const xvector<> longer_unit = sum_is_longer ? xvector<>{sum / sum_norm} : xvector<>{difference / difference_norm};
+        const auto& shorter = sum_is_longer ? difference : sum;
+        const xvector<> shorter_perpendicular = shorter - (xt::sum(shorter * longer_unit)() * longer_unit);
+        const auto shorter_perpendicular_norm = xt::norm_l2(shorter_perpendicular)();
+        if (shorter_perpendicular_norm == 0.0) {
+            return std::nullopt;
+        }
+        const xvector<> shorter_unit = shorter_perpendicular / shorter_perpendicular_norm;
 
-        // x_hat runs from the center to the blend start; y_hat is the incoming direction. Kunz &
-        // Stilman equations 7-9 need these orthonormal for the arc to be parameterized by arc
-        // length. They are perpendicular in exact arithmetic, but the bisector above is a
-        // difference of two unit vectors, and at shallow corners those two are nearly equal, so
-        // cancellation leaves its direction with few significant digits and the center offset
-        // multiplies that error by the blend radius. One Gram-Schmidt step restores the invariant:
-        // project y_hat out of x_vec before normalizing. y_hat is a normalized segment direction,
-        // so the projection is well-conditioned, and perpendicularity stops depending on the
-        // bisector's accuracy.
-        const auto& y_unit = incoming_unit;
-        const auto blend_start = corner - (trim_distance * incoming_unit);
-        const auto x_vec_raw = blend_start - center;
-        const auto x_vec = x_vec_raw - (xt::sum(x_vec_raw * y_unit)() * y_unit);
-        const auto x_unit = x_vec / xt::norm_l2(x_vec)();
+        const auto& apex_tangent = sum_is_longer ? longer_unit : shorter_unit;
+        const auto& apex_normal = sum_is_longer ? shorter_unit : longer_unit;
+
+        // The apex is the point of the arc nearest the corner, at the blend's deviation from it,
+        // which is trim * tan(alpha/4) by the relation the trim was computed from above. This needs
+        // no cosine of the half angle, which vanishes at a reversal.
+        const auto apex = corner + ((trim_distance * tan_quarter) * apex_normal);
 
         // Report which halves the trim took, by the same expressions that capped it. Halving is exact,
         // so these are equalities between identically computed values, not tolerances. The construction
         // loop uses them to recognize a segment that two blends consume completely.
-        return blend_geometry{.circular_seg = segment::circular{center, x_unit, y_unit, radius, angle},
+        return blend_geometry{.circular_seg = segment::circular{apex, apex_tangent, apex_normal, radius, angle},
                               .trim_distance = trim_distance,
                               .takes_half_incoming = (trim_distance == incoming_norm / 2.0),
                               .takes_half_outgoing = (trim_distance == outgoing_norm / 2.0)};
