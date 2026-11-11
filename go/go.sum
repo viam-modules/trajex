@@ -55,8 +55,6 @@ github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/cloudmock v0
 github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/cloudmock v0.55.0/go.mod h1:vB2GH9GAYYJTO3mEn8oYwzEdhlayZIdQz6zdzgUIRvA=
 github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.55.0 h1:0s6TxfCu2KHkkZPnBfsQ2y5qia0jl3MMrmBhu3nCOYk=
 github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.55.0/go.mod h1:Mf6O40IAyB9zR/1J8nGDDPirZQQPbYJni8Yisy7NTMc=
-github.com/JohnN193/rdk v0.0.0-20261111201206-35f9a5800eae h1:7NY6jRd/moKlG2pN8h/JbHBR7RGnsgsihMZaUj/mgAY=
-github.com/JohnN193/rdk v0.0.0-20261111201206-35f9a5800eae/go.mod h1:OQp8LaIxHAMRAxWC+WmJr/O88+RxWUxBXD/zhkO89/U=
 github.com/Knetic/govaluate v3.0.1-0.20171022003610-9aa49832a739+incompatible/go.mod h1:r7JcOSlj0wfOMncg0iLm8Leh48TZaKVeNIfJntJ2wa0=
 github.com/Masterminds/semver v1.5.0 h1:H65muMkzWKEuNDnfl9d70GUjFniHKHRbFPGBuZ3QEww=
 github.com/Masterminds/semver/v3 v3.3.1 h1:QtNSWtVZ3nBfk8mAOu/B6v7FMJ+NHTIgUPi7rj+4nv4=
@@ -849,6 +847,8 @@ go.uber.org/zap v1.28.0 h1:IZzaP1Fv73/T/pBMLk4VutPl36uNC+OSUh3JLG3FIjo=
 go.uber.org/zap v1.28.0/go.mod h1:rDLpOi171uODNm/mxFcuYWxDsqWSAVkFdX4XojSKg/Q=
 go.viam.com/api v0.1.603 h1:fVc6ITt9W2Oyv85ZBBOLVNlvjg0ElyS7OmfehSw0w2w=
 go.viam.com/api v0.1.603/go.mod h1:KCJHm/hGRAa3kQlJNXMq6MipEpU1QhAe7/SutP/PHuc=
+go.viam.com/rdk v1.16.1-0.20261111211446-99913089d50f h1:gYs9ofN2GAY5TLP5qEOytnBk4CEicp9LtagZ3h7MgMI=
+go.viam.com/rdk v1.16.1-0.20261111211446-99913089d50f/go.mod h1:OQp8LaIxHAMRAxWC+WmJr/O88+RxWUxBXD/zhkO89/U=
 go.viam.com/test v1.2.4 h1:JYgZhsuGAQ8sL9jWkziAXN9VJJiKbjoi9BsO33TW3ug=
 go.viam.com/test v1.2.4/go.mod h1:zI2xzosHdqXAJ/kFqcN+OIF78kQuTV2nIhGZ8EzvaJI=
 go.viam.com/utils v0.17.0 h1:u1/NpzZdP/FYodjtSHaIPg+eSm4qzxrPWwQ1aTqRang=

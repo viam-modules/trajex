@@ -34,33 +34,66 @@ import (
 // asks for is the caller's policy. The limits are m.DoF(), in the order the
 // chain's moving joints take their positions.
 //
-// A model built over a frame system of parts, which referenceframe.NewModel
-// gives, works the same way, since its chain expands the parts. Its inputs
-// are every part's, so a part off the path to the output frame makes the
-// model one trajex cannot drive, as a gripper's finger does.
-//
-// It returns an error for a model trajex cannot drive with the positions RDK
-// drives it with: one with a joint on the path that follows another joint,
-// one that takes a position for a joint off the path, and one with a frame
-// that moves but is neither a revolute nor a prismatic joint.
+// The chain takes the model's positions as they are, so every input of the
+// model has to be a joint on the path to its output frame, in order. A model
+// that takes a position for a joint off the path, such as a gripper's finger
+// or another part of a machine, is an error. A caller holding such a model
+// cuts a chain out of it with Model.ChainFrom and uses JointsFromChain, which
+// says where each position comes from instead.
 func JointsFromModel(m referenceframe.Model, tcp spatialmath.Pose) ([]kinematics.Joint, error) {
 	if m == nil {
 		return nil, errors.New("trajex/rdk: model is nil")
 	}
-	if tcp == nil {
-		return nil, errors.New("trajex/rdk: tcp pose is nil; pass spatialmath.NewZeroPose() to cap the end of the arm itself")
-	}
 	chain, err := m.Chain("")
 	if err != nil {
 		return nil, errors.Wrapf(err, "trajex/rdk: model %q", m.Name())
+	}
+	joints, inputs, err := jointsFromChain(chain, tcp)
+	if err != nil {
+		return nil, errors.Wrapf(err, "trajex/rdk: model %q", m.Name())
+	}
+	inOrder := len(inputs) == len(m.DoF())
+	for i, input := range inputs {
+		inOrder = inOrder && input == i
+	}
+	if !inOrder {
+		return nil, errors.Errorf(
+			"trajex/rdk: model %q takes %d positions, but the path to its output frame moves joints %v at positions %v, so positions meant for the model would drive the wrong joints",
+			m.Name(), len(m.DoF()), movingNames(chain), inputs)
+	}
+	return joints, nil
+}
+
+// JointsFromChain describes a chain of RDK frames, as Model.Chain or
+// Model.ChainFrom returns it, as trajex joints for kinematics.NewChain, ending
+// in a fixed joint that carries tcp past the chain's last frame as
+// JointsFromModel does.
+//
+// The chain's positions are its moving joints in order, and the second result
+// says for each of them which input of the model feeds it, so a caller holding
+// a chain cut out of a larger model, an arm on a gantry seen from its mount,
+// gathers a waypoint's positions from the model's inputs through it.
+//
+// A joint that follows another joint, and a frame that moves but is neither a
+// revolute nor a prismatic joint, are errors, since trajex cannot drive them.
+func JointsFromChain(chain []referenceframe.ChainFrame, tcp spatialmath.Pose) ([]kinematics.Joint, []int, error) {
+	joints, inputs, err := jointsFromChain(chain, tcp)
+	if err != nil {
+		return nil, nil, errors.Wrap(err, "trajex/rdk")
+	}
+	return joints, inputs, nil
+}
+
+func jointsFromChain(chain []referenceframe.ChainFrame, tcp spatialmath.Pose) ([]kinematics.Joint, []int, error) {
+	if tcp == nil {
+		return nil, nil, errors.New("tcp pose is nil; pass spatialmath.NewZeroPose() to cap the end of the chain itself")
 	}
 
 	// trajex attaches the fixed transform ahead of a joint to that joint as its
 	// origin, whereas RDK models fixed transforms as frames of their own, so the
 	// static frames between two joints are composed and handed to the second
 	var joints []kinematics.Joint
-	var names []string
-	var offsets []int
+	var inputs []int
 	origin := spatialmath.NewZeroPose()
 	moving := func(make func(xyz [3]float64, wxyz [4]float64, axis [3]float64) kinematics.Joint, axis r3.Vector) {
 		xyz, wxyz := components(origin)
@@ -73,13 +106,13 @@ func JointsFromModel(m referenceframe.Model, tcp spatialmath.Pose) ([]kinematics
 		if dof == 0 {
 			pose, err := cf.Frame.Transform([]referenceframe.Input{})
 			if err != nil {
-				return nil, errors.Wrapf(err, "trajex/rdk: frame %q of model %q", name, m.Name())
+				return nil, nil, errors.Wrapf(err, "frame %q", name)
 			}
 			origin = spatialmath.Compose(origin, pose)
 			continue
 		}
 		if cf.Mimic != nil {
-			return nil, errors.Errorf("trajex/rdk: joint %q of model %q follows another joint, which trajex cannot express", name, m.Name())
+			return nil, nil, errors.Errorf("joint %q follows another joint, which trajex cannot express", name)
 		}
 		switch f := cf.Frame.(type) {
 		case referenceframe.RevoluteFrame:
@@ -87,33 +120,27 @@ func JointsFromModel(m referenceframe.Model, tcp spatialmath.Pose) ([]kinematics
 		case referenceframe.PrismaticFrame:
 			moving(kinematics.TranslationalJoint, f.TranslationAxis())
 		default:
-			return nil, errors.Errorf(
-				"trajex/rdk: frame %q of model %q takes %d positions and is neither a revolute nor a prismatic joint, which trajex cannot express",
-				name, m.Name(), dof)
+			return nil, nil, errors.Errorf(
+				"frame %q takes %d positions and is neither a revolute nor a prismatic joint, which trajex cannot express", name, dof)
 		}
-		names = append(names, name)
-		offsets = append(offsets, cf.Offset)
-	}
-
-	// RDK drives the model with one position per input, in the model's order,
-	// and a caller hands trajex those same positions, so the moving joints on
-	// the chain have to be exactly the model's inputs in order or the positions
-	// would drive the wrong joints
-	inOrder := len(offsets) == len(m.DoF())
-	for i, offset := range offsets {
-		inOrder = inOrder && offset == i
-	}
-	if !inOrder {
-		return nil, errors.Errorf(
-			"trajex/rdk: model %q takes %d positions, but the path to its output frame moves joints %v at positions %v, so positions meant for the model would drive the wrong joints",
-			m.Name(), len(m.DoF()), names, offsets)
+		inputs = append(inputs, cf.Offset)
 	}
 
 	// the tool center point extends whatever follows the last joint, and the two
 	// together become the chain's final fixed joint. It is added even when both
 	// are the identity, since it costs nothing and gives every chain the same shape
 	xyz, wxyz := components(spatialmath.Compose(origin, tcp))
-	return append(joints, kinematics.FixedJoint(xyz, wxyz)), nil
+	return append(joints, kinematics.FixedJoint(xyz, wxyz)), inputs, nil
+}
+
+func movingNames(chain []referenceframe.ChainFrame) []string {
+	var names []string
+	for _, cf := range chain {
+		if len(cf.Frame.DoF()) > 0 {
+			names = append(names, cf.Frame.Name())
+		}
+	}
+	return names
 }
 
 // components splits a pose into the translation and w, x, y, z quaternion

@@ -5,7 +5,7 @@ go 1.26.10
 require (
 	github.com/golang/geo v0.0.0-20230421003525-6adc56603217
 	github.com/pkg/errors v0.9.1
-	go.viam.com/rdk v1.14.0-rc0.0.20261102173140-79bfca346816
+	go.viam.com/rdk v1.16.1-0.20261111211446-99913089d50f
 	go.viam.com/test v1.2.4
 	gorgonia.org/tensor v0.9.24
 )
@@ -214,5 +214,3 @@ require (
 	gorgonia.org/vecf64 v0.9.0 // indirect
 	nhooyr.io/websocket v1.8.7 // indirect
 )
-
-replace go.viam.com/rdk => github.com/JohnN193/rdk v0.0.0-20261111201206-35f9a5800eae

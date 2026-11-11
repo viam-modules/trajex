@@ -155,7 +155,7 @@ func TestJointsFromModelCapsAToolCenterPoint(t *testing.T) {
 func TestJointsFromModelRefusesAMimicJointOnThePath(t *testing.T) {
 	_, err := rdk.JointsFromModel(loadModel(t, "referenceframe/testfiles/test_mimic_serial.json", "test"), spatialmath.NewZeroPose())
 	test.That(t, err, test.ShouldNotBeNil)
-	test.That(t, err.Error(), test.ShouldContainSubstring, `joint "joint3" of model "test" follows another joint`)
+	test.That(t, err.Error(), test.ShouldContainSubstring, `model "test": joint "joint3" follows another joint`)
 }
 
 // In both gripper models the output frame hangs directly off the base while a
@@ -202,6 +202,8 @@ func TestJointsFromModelBuiltFromFramesMatchesRDK(t *testing.T) {
 	test.That(t, err, test.ShouldNotBeNil)
 	_, err = rdk.JointsFromModel(m, nil)
 	test.That(t, err, test.ShouldNotBeNil)
+	_, _, err = rdk.JointsFromChain(nil, nil)
+	test.That(t, err, test.ShouldNotBeNil)
 }
 
 // A frame that moves in more than one way at once, like RDK's pose frame with
@@ -215,7 +217,7 @@ func TestJointsFromModelRefusesAFrameTrajexCannotExpress(t *testing.T) {
 	test.That(t, err, test.ShouldBeNil)
 	_, err = rdk.JointsFromModel(m, spatialmath.NewZeroPose())
 	test.That(t, err, test.ShouldNotBeNil)
-	test.That(t, err.Error(), test.ShouldContainSubstring, `frame "free" of model "free" takes 7 positions`)
+	test.That(t, err.Error(), test.ShouldContainSubstring, `model "free": frame "free" takes 7 positions`)
 }
 
 // A caller holding a machine's frame system builds a model over it with RDK and
@@ -299,4 +301,75 @@ func TestJointsFromModelRefusesAPartOffThePath(t *testing.T) {
 	_, err = rdk.JointsFromModel(machine, spatialmath.NewZeroPose())
 	test.That(t, err, test.ShouldNotBeNil)
 	test.That(t, err.Error(), test.ShouldContainSubstring, `model "machine" takes 12 positions`)
+}
+
+// linearInputsOf keys a machine model's flat positions by the parts of the
+// frame system it was built over, in the model's own order, which is what the
+// frame system takes.
+func linearInputsOf(t *testing.T, fs *referenceframe.FrameSystem, machine referenceframe.Model, q []float64) *referenceframe.LinearInputs {
+	t.Helper()
+	li := referenceframe.NewLinearInputs()
+	next := 0
+	for _, name := range machine.(*referenceframe.SimpleModel).MoveableFrameNames() {
+		n := len(fs.Frame(name).DoF())
+		li.Put(name, q[next:next+n])
+		next += n
+	}
+	test.That(t, next, test.ShouldEqual, len(q))
+	return li
+}
+
+// A chain cut out of the machine between two frames of the caller's choosing,
+// here the arm seen from its mount, takes only the arm's positions, and the
+// inputs JointsFromChain reports say where to gather them from. The composed
+// end has to land where RDK's frame system puts the arm relative to the mount,
+// whatever the gantry and the other arm are doing.
+func TestJointsFromChainBetweenTwoFrames(t *testing.T) {
+	gantry := loadModel(t, "referenceframe/testfiles/example_gantry.json", "gantry")
+	arm := loadModel(t, "components/arm/kinematics/ur5e.json", "arm")
+	mountPose := spatialmath.NewPose(r3.Vector{X: 120, Y: -40, Z: 25}, &spatialmath.EulerAngles{Roll: 0.4, Pitch: -0.2, Yaw: 2.1})
+	armPose := spatialmath.NewPose(r3.Vector{X: 0, Y: 15, Z: 60}, &spatialmath.OrientationVectorDegrees{OX: 0.3, OY: -0.5, OZ: 0.8, Theta: 35})
+	parts := []*referenceframe.FrameSystemPart{
+		{FrameConfig: referenceframe.NewLinkInFrame(referenceframe.World, spatialmath.NewZeroPose(), "gantry", nil), ModelFrame: gantry},
+		{FrameConfig: referenceframe.NewLinkInFrame("gantry", mountPose, "mount", nil)},
+		{FrameConfig: referenceframe.NewLinkInFrame("mount", armPose, "arm", nil), ModelFrame: arm},
+		{FrameConfig: referenceframe.NewLinkInFrame(referenceframe.World, spatialmath.NewPoseFromPoint(r3.Vector{X: 2000}), "other", nil), ModelFrame: arm},
+	}
+	fs, err := referenceframe.NewFrameSystem("machine", parts, nil)
+	test.That(t, err, test.ShouldBeNil)
+	machine, err := referenceframe.NewModel("machine", fs, "arm")
+	test.That(t, err, test.ShouldBeNil)
+
+	// the whole machine cannot be a chain, the other arm takes positions too
+	_, err = rdk.JointsFromModel(machine, spatialmath.NewZeroPose())
+	test.That(t, err, test.ShouldNotBeNil)
+	test.That(t, err.Error(), test.ShouldContainSubstring, "would drive the wrong joints")
+
+	for _, base := range []string{"mount", "gantry", referenceframe.World} {
+		t.Run(base, func(t *testing.T) {
+			chain, err := machine.ChainFrom(base, "")
+			test.That(t, err, test.ShouldBeNil)
+			joints, inputs, err := rdk.JointsFromChain(chain, spatialmath.NewZeroPose())
+			test.That(t, err, test.ShouldBeNil)
+			c := newChain(t, joints)
+			// a base at the gantry means the gantry's output frame, past its joint
+			if base == referenceframe.World {
+				test.That(t, len(inputs), test.ShouldEqual, len(gantry.DoF())+len(arm.DoF()))
+			} else {
+				test.That(t, len(inputs), test.ShouldEqual, len(arm.DoF()))
+			}
+
+			rng := rand.New(rand.NewSource(9))
+			for range 50 {
+				q := randomPositions(machine, rng)
+				positions := make([]float64, len(inputs))
+				for i, src := range inputs {
+					positions[i] = q[src]
+				}
+				want, err := fs.Transform(linearInputsOf(t, fs, machine, q), referenceframe.NewPoseInFrame("arm", spatialmath.NewZeroPose()), base)
+				test.That(t, err, test.ShouldBeNil)
+				endMatches(t, c, positions, want.(*referenceframe.PoseInFrame).Pose().Point())
+			}
+		})
+	}
 }
