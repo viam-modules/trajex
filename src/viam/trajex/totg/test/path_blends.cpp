@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <numbers>
+#include <type_traits>
 
 #include <viam/trajex/totg/path.hpp>
 #include <viam/trajex/totg/test/test_utils.hpp>
@@ -242,6 +243,64 @@ BOOST_AUTO_TEST_CASE(circular_blend_near_collinear_dense_waypoints_no_throw) {
     const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1));  // must not throw
 
     BOOST_CHECK_GT(static_cast<double>(p.length()), 0.0);
+}
+
+// Regression (RSDK-14911 field failure): three consecutive waypoints from a GP8 sanding move whose
+// corner turns by 1.467e-13 rad. In doubles the cosine of that angle rounds to 1 - 2^-53, so acos
+// reports its precision floor of 1.49e-8, and the bisector the arc's center was placed along is a
+// difference of two unit vectors equal to about 1e-16, so its direction is noise. With the radius
+// at the min_blend_curvature cap of 1e5, the center landed tens of units away, and orthogonalizing
+// the basis kept the arc constructible but carried it along its tangent with the center. Generation
+// never noticed, since integration reads only tangent and curvature, and a sample that landed on the
+// arc streamed a position 25 rad from the path.
+//
+// The expected geometry is what the bounds imply for the corner's true angle: the deviation budget
+// does not bind, so the trim is the min_blend_curvature cap, tan(angle / 2) / 1e-5, the radius is
+// exactly 1e5, and the arc sweeps the true angle. The angle and arc length carry a 1% tolerance,
+// which is how closely doubles can resolve a turn this small. Any change to which case these bounds
+// produce here should be a deliberate change to this test.
+BOOST_AUTO_TEST_CASE(circular_blend_at_min_curvature_cap_stays_on_path) {
+    using namespace viam::trajex::totg;
+    using viam::trajex::arc_length;
+
+    const xmatrix<> waypoints = {
+        {-0.13380480958993365, 1.0989793178952696, -0.15096002912280768, 3.29841079653297, 0.2920799930934756, -3.6821355908152187},
+        {-0.12555390621904083, 1.0971638332748608, -0.15472811893622324, 3.2964569348239867, 0.28958239753330123, -3.6891124956202073},
+        {-0.11730300284814804, 1.0953483486544517, -0.15849620874963882, 3.294503073115002, 0.28708480197312675, -3.696089400425196},
+    };
+
+    // The production config: blend tolerance 0.1, no colinearization, curvature limits 1e-5 and 1e5.
+    const path p =
+        path::create(waypoints, path::options{}.set_max_blend_deviation(0.1).set_min_blend_curvature(1e-5).set_max_blend_curvature(1e5));
+
+    BOOST_REQUIRE_EQUAL(path_type_sequence(p), "LCL");
+
+    // The trim is tan(angle / 2) / 1e-5 for the true angle, computed exactly from these waypoints.
+    constexpr double k_expected_angle = 1.46716194234704914e-13;
+    constexpr double k_expected_arc_length = 1.46716194234704914e-8;
+    constexpr double k_expected_first_linear_length = 1.20126797700223382e-2;
+    constexpr double k_expected_last_linear_length = 1.20126797700226734e-2;
+
+    auto it = p.begin();
+    const auto first = *it++;
+    const auto arc = *it++;
+    const auto last = *it;
+
+    BOOST_CHECK_SMALL(static_cast<double>(first.end() - first.start()) - k_expected_first_linear_length, 1e-10);
+    BOOST_CHECK_SMALL(static_cast<double>(last.end() - last.start()) - k_expected_last_linear_length, 1e-10);
+    BOOST_CHECK_CLOSE(static_cast<double>(arc.end() - arc.start()), k_expected_arc_length, 1.0);
+    arc.visit([&](const auto& data) {
+        if constexpr (std::is_same_v<std::decay_t<decltype(data)>, path::segment::circular>) {
+            BOOST_CHECK_CLOSE(data.radius, 1e5, 1e-10);
+            BOOST_CHECK_CLOSE(data.angle_rads, k_expected_angle, 1.0);
+        }
+    });
+
+    // Every segment meets its neighbours, and the path runs from the first waypoint to the last.
+    BOOST_CHECK(configs_close(first.configuration(first.end()), arc.configuration(arc.start()), 1e-12));
+    BOOST_CHECK(configs_close(arc.configuration(arc.end()), last.configuration(last.start()), 1e-12));
+    BOOST_CHECK(configs_close(p.configuration(arc_length{0.0}), xvector<>{xt::view(waypoints, 0, xt::all())}, 1e-12));
+    BOOST_CHECK(configs_close(p.configuration(p.length()), xvector<>{xt::view(waypoints, 2, xt::all())}, 1e-12));
 }
 
 BOOST_AUTO_TEST_CASE(circular_blend_very_sharp_angle) {
