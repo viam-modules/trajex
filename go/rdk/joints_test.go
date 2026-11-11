@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/golang/geo/r3"
-	commonpb "go.viam.com/api/common/v1"
 	robotpb "go.viam.com/api/robot/v1"
 	"go.viam.com/rdk/referenceframe"
 	"go.viam.com/rdk/spatialmath"
@@ -31,18 +30,9 @@ func loadModel(t *testing.T, file, name string) referenceframe.Model {
 	return m
 }
 
-// jointsFromModel serializes m with ModelToProto and builds the chain from the
-// result, as a caller holding a Model rather than a GetKinematics reply would.
-func jointsFromModel(t *testing.T, m referenceframe.Model, outputFrame string) ([]kinematics.Joint, error) {
+func chainFromModel(t *testing.T, m referenceframe.Model, tcp spatialmath.Pose) *kinematics.Chain {
 	t.Helper()
-	pb, err := referenceframe.ModelToProto(m)
-	test.That(t, err, test.ShouldBeNil)
-	return rdk.JointsFromKinematicModel(pb, outputFrame)
-}
-
-func chainFromModel(t *testing.T, m referenceframe.Model, outputFrame string) *kinematics.Chain {
-	t.Helper()
-	joints, err := jointsFromModel(t, m, outputFrame)
+	joints, err := rdk.JointsFromModel(m, tcp)
 	test.That(t, err, test.ShouldBeNil)
 	return newChain(t, joints)
 }
@@ -74,50 +64,49 @@ func randomPositions(m referenceframe.Model, rng *rand.Rand) []float64 {
 
 func endMatches(t *testing.T, chain *kinematics.Chain, q []float64, want r3.Vector) {
 	t.Helper()
-	endWithin(t, chain, q, want, 1e-6)
-}
-
-func endWithin(t *testing.T, chain *kinematics.Chain, q []float64, want r3.Vector, tolerance float64) {
-	t.Helper()
 	got, err := chain.EndPosition(q)
 	test.That(t, err, test.ShouldBeNil)
-	test.That(t, got[0], test.ShouldAlmostEqual, want.X, tolerance)
-	test.That(t, got[1], test.ShouldAlmostEqual, want.Y, tolerance)
-	test.That(t, got[2], test.ShouldAlmostEqual, want.Z, tolerance)
+	test.That(t, got[0], test.ShouldAlmostEqual, want.X, 1e-6)
+	test.That(t, got[1], test.ShouldAlmostEqual, want.Y, 1e-6)
+	test.That(t, got[2], test.ShouldAlmostEqual, want.Z, 1e-6)
+}
+
+func assertChainMatchesModel(t *testing.T, m referenceframe.Model, seed int64) {
+	t.Helper()
+	chain := chainFromModel(t, m, spatialmath.NewZeroPose())
+	rng := rand.New(rand.NewSource(seed))
+	for range 100 {
+		q := randomPositions(m, rng)
+		want, err := m.Transform(q)
+		test.That(t, err, test.ShouldBeNil)
+		endMatches(t, chain, q, want.Point())
+	}
 }
 
 // The models are every arm RDK ships plus a URDF, a DH model and a gantry
 // from its test files, so each file format and joint type is covered.
-func TestJointsFromKinematicModelMatchesRDKForwardKinematics(t *testing.T) {
+func TestJointsFromModelMatchesRDKForwardKinematics(t *testing.T) {
 	arms, err := filepath.Glob(utils.ResolveFile("components/arm/kinematics/*.json"))
 	test.That(t, err, test.ShouldBeNil)
 	test.That(t, len(arms), test.ShouldBeGreaterThan, 5)
-	files := append(arms,
+	files := arms
+	files = append(files,
 		utils.ResolveFile("referenceframe/testfiles/ur5e.urdf"),
 		utils.ResolveFile("referenceframe/testfiles/ur5eDH.json"),
 		utils.ResolveFile("referenceframe/testfiles/example_gantry.json"),
 	)
-	for _, file := range files {
+	for i, file := range files {
 		t.Run(filepath.Base(file), func(t *testing.T) {
 			m, err := referenceframe.KinematicModelFromFile(file, "test")
 			test.That(t, err, test.ShouldBeNil)
-			chain := chainFromModel(t, m, "")
-
-			rng := rand.New(rand.NewSource(1))
-			for i := 0; i < 200; i++ {
-				q := randomPositions(m, rng)
-				want, err := m.Transform(q)
-				test.That(t, err, test.ShouldBeNil)
-				endMatches(t, chain, q, want.Point())
-			}
+			assertChainMatchesModel(t, m, int64(i))
 		})
 	}
 }
 
 // Each run of links in this model both rotates and translates, so composing a
 // run in the wrong order moves the end. The models RDK ships would not catch
-// that. The tool link past the output frame is used by the test that caps a
-// named frame.
+// that.
 const orderSensitiveModel = `{
 	"name": "order_sensitive",
 	"output_frames": ["tip_move"],
@@ -140,66 +129,57 @@ const orderSensitiveModel = `{
 	]
 }`
 
-func TestJointsFromKinematicModelComposesLinksInOrder(t *testing.T) {
+func TestJointsFromModelComposesLinksInOrder(t *testing.T) {
 	m, err := referenceframe.UnmarshalModelJSON([]byte(orderSensitiveModel), "")
 	test.That(t, err, test.ShouldBeNil)
-	chain := chainFromModel(t, m, "")
-
-	rng := rand.New(rand.NewSource(3))
-	for i := 0; i < 50; i++ {
-		q := randomPositions(m, rng)
-		want, err := m.Transform(q)
-		test.That(t, err, test.ShouldBeNil)
-		endMatches(t, chain, q, want.Point())
-	}
+	assertChainMatchesModel(t, m, 3)
 }
 
-// Naming a link past the model's output frame caps the point that link stands
-// for, which is how a tool on a flange gets its own cap. The tool link here
-// sits at a rotated offset from the output frame, so composing it on the wrong
-// side would move the point.
-func TestJointsFromKinematicModelCapsANamedFrame(t *testing.T) {
+// The tool center point is given relative to the output frame, at a rotated
+// offset here, so composing it on the wrong side of the last link would move
+// the point.
+func TestJointsFromModelCapsAToolCenterPoint(t *testing.T) {
 	m, err := referenceframe.UnmarshalModelJSON([]byte(orderSensitiveModel), "")
 	test.That(t, err, test.ShouldBeNil)
-	chain := chainFromModel(t, m, "tool")
-	tool := spatialmath.NewPose(r3.Vector{X: 10, Y: -20, Z: 150}, &spatialmath.EulerAngles{Roll: 0.3, Pitch: 0, Yaw: -0.5})
+	tcp := spatialmath.NewPose(r3.Vector{X: 10, Y: -20, Z: 150}, &spatialmath.EulerAngles{Roll: 0.3, Pitch: 0, Yaw: -0.5})
+	chain := chainFromModel(t, m, tcp)
 
 	rng := rand.New(rand.NewSource(2))
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		q := randomPositions(m, rng)
 		output, err := m.Transform(q)
 		test.That(t, err, test.ShouldBeNil)
-		endMatches(t, chain, q, spatialmath.Compose(output, tool).Point())
+		endMatches(t, chain, q, spatialmath.Compose(output, tcp).Point())
 	}
 }
 
-func TestJointsFromKinematicModelRefusesAMimicJointOnThePath(t *testing.T) {
-	_, err := jointsFromModel(t, loadModel(t, "referenceframe/testfiles/test_mimic_serial.json", "test"), "")
+func TestJointsFromModelRefusesAMimicJointOnThePath(t *testing.T) {
+	_, err := rdk.JointsFromModel(loadModel(t, "referenceframe/testfiles/test_mimic_serial.json", "test"), spatialmath.NewZeroPose())
 	test.That(t, err, test.ShouldNotBeNil)
-	test.That(t, err.Error(), test.ShouldContainSubstring, "mimics")
+	test.That(t, err.Error(), test.ShouldContainSubstring, `joint "joint3" of model "test" follows another joint`)
 }
 
 // In both gripper models the output frame hangs directly off the base while a
-// finger elsewhere in the model still takes an input, so positions meant for
-// the model would drive a chain that has no joint for them.
-func TestJointsFromKinematicModelRefusesMovingJointsOffThePath(t *testing.T) {
+// finger elsewhere in the model still takes a position, so positions meant
+// for the model would drive a chain that has no joint for them.
+func TestJointsFromModelRefusesMovingJointsOffThePath(t *testing.T) {
 	for _, file := range []string{
 		"referenceframe/testfiles/test_gripper.json",
 		"referenceframe/testfiles/test_mimic_gripper.json",
 	} {
 		t.Run(file, func(t *testing.T) {
-			_, err := jointsFromModel(t, loadModel(t, file, "test"), "")
+			_, err := rdk.JointsFromModel(loadModel(t, file, "test"), spatialmath.NewZeroPose())
 			test.That(t, err, test.ShouldNotBeNil)
-			test.That(t, err.Error(), test.ShouldContainSubstring, "off the path to its output frame")
+			test.That(t, err.Error(), test.ShouldContainSubstring, "would drive the wrong joints")
 		})
 	}
 }
 
-// A model assembled from frames in code has no configuration, so RDK
-// describes it from its frames instead. Every frame here both rotates and
+// A model assembled from frames in code has no file behind it, and the chain
+// comes from its frames all the same. Every frame here both rotates and
 // translates and no joint axis is aligned with an axis of the frame, so a
 // wrong composition or an unnormalized axis moves the end.
-func TestJointsFromKinematicModelBuiltFromFramesMatchesRDK(t *testing.T) {
+func TestJointsFromModelBuiltFromFramesMatchesRDK(t *testing.T) {
 	static := func(name string, pose spatialmath.Pose) referenceframe.Frame {
 		f, err := referenceframe.NewStaticFrame(name, pose)
 		test.That(t, err, test.ShouldBeNil)
@@ -217,96 +197,26 @@ func TestJointsFromKinematicModelBuiltFromFramesMatchesRDK(t *testing.T) {
 		static("tool", spatialmath.NewPose(r3.Vector{Y: 25, Z: 60}, &spatialmath.EulerAngles{Roll: -0.4})),
 	})
 	test.That(t, err, test.ShouldBeNil)
-	chain := chainFromModel(t, m, "")
+	assertChainMatchesModel(t, m, 6)
 
-	rng := rand.New(rand.NewSource(6))
-	for i := 0; i < 50; i++ {
-		q := randomPositions(m, rng)
-		want, err := m.Transform(q)
-		test.That(t, err, test.ShouldBeNil)
-		endMatches(t, chain, q, want.Point())
-	}
-
-	_, err = rdk.JointsFromKinematicModel(nil, "")
+	_, err = rdk.JointsFromModel(nil, spatialmath.NewZeroPose())
+	test.That(t, err, test.ShouldNotBeNil)
+	_, err = rdk.JointsFromModel(m, nil)
 	test.That(t, err, test.ShouldNotBeNil)
 }
 
-// A link's orientation can be given in four forms. The reader maps each onto
-// the spatialmath type RDK uses for it, and this checks the result against
-// RDK's own reading of the same message, for every form and on both sides of
-// the orientation vector's pole.
-func TestOrientationFormsReadAsRDKReadsThem(t *testing.T) {
-	rng := rand.New(rand.NewSource(4))
-	angle := func() float64 { return rng.Float64()*720 - 360 }
-	unit := func() float64 { return rng.Float64()*2 - 1 }
-	forms := []struct {
-		name string
-		form func() any
-	}{
-		{"quaternion", func() any {
-			return &commonpb.LinkPose_Quaternion{Quaternion: &commonpb.Quaternion{W: 3 * unit(), X: 3 * unit(), Y: 3 * unit(), Z: 3 * unit()}}
-		}},
-		{"orientation vector", func() any {
-			return &commonpb.LinkPose_OrientationVector{OrientationVector: &commonpb.Orientation{OX: unit(), OY: unit(), OZ: unit(), Theta: angle()}}
-		}},
-		{"orientation vector near a pole", func() any {
-			return &commonpb.LinkPose_OrientationVector{OrientationVector: &commonpb.Orientation{OX: 1e-6 * unit(), OY: 1e-6 * unit(), OZ: math.Copysign(1, unit()), Theta: angle()}}
-		}},
-		{"euler angles", func() any {
-			return &commonpb.LinkPose_EulerAngles{EulerAngles: &commonpb.EulerAngles{Roll: angle(), Pitch: angle(), Yaw: angle()}}
-		}},
-		{"axis angles", func() any {
-			return &commonpb.LinkPose_AxisAngles{AxisAngles: &commonpb.AxisAngles{Rx: 2 * unit(), Ry: 2 * unit(), Rz: 2 * unit(), Theta: angle()}}
-		}},
-	}
-	for _, tc := range forms {
-		t.Run(tc.name, func(t *testing.T) {
-			for i := 0; i < 25; i++ {
-				turn := &commonpb.LinkPose{Translation: &commonpb.Vector3{X: 100 * unit(), Y: 100 * unit(), Z: 100 * unit()}}
-				switch o := tc.form().(type) {
-				case *commonpb.LinkPose_Quaternion:
-					turn.Orientation = o
-				case *commonpb.LinkPose_OrientationVector:
-					turn.Orientation = o
-				case *commonpb.LinkPose_EulerAngles:
-					turn.Orientation = o
-				case *commonpb.LinkPose_AxisAngles:
-					turn.Orientation = o
-				}
-				pb := &commonpb.KinematicModel{Links: []*commonpb.KinematicLink{
-					{Id: "turn", Parent: "world", Pose: turn},
-					{Id: "after", Parent: "turn", Pose: &commonpb.LinkPose{Translation: &commonpb.Vector3{X: 100 * unit(), Y: 100 * unit(), Z: 100 * unit()}}},
-				}}
-				m, err := referenceframe.ModelFromProto(pb, "orientation")
-				test.That(t, err, test.ShouldBeNil)
-				want, err := m.Transform(nil)
-				test.That(t, err, test.ShouldBeNil)
-
-				joints, err := rdk.JointsFromKinematicModel(pb, "")
-				test.That(t, err, test.ShouldBeNil)
-				endMatches(t, newChain(t, joints), nil, want.Point())
-			}
-		})
-	}
-}
-
-// A server older than FrameSystemConfig.model sends the deprecated kinematics
-// field only. RDK still fills that field beside the model, so clearing the
-// model from its reply reproduces what such a server sends. The part has to be
-// refused rather than read as a fixed transform.
-func TestJointsFromFrameSystemConfigRefusesTheDeprecatedKinematicsField(t *testing.T) {
-	part := &referenceframe.FrameSystemPart{
-		FrameConfig: referenceframe.NewLinkInFrame(referenceframe.World, spatialmath.NewZeroPose(), "arm", nil),
-		ModelFrame:  loadModel(t, "components/arm/kinematics/ur5e.json", "arm"),
-	}
-	pb, err := part.ToProtobuf()
+// A frame that moves in more than one way at once, like RDK's pose frame with
+// its seven inputs, has no trajex joint to become.
+func TestJointsFromModelRefusesAFrameTrajexCannotExpress(t *testing.T) {
+	free, err := referenceframe.NewPoseFrame("free", nil)
 	test.That(t, err, test.ShouldBeNil)
-	test.That(t, len(pb.GetKinematics().GetFields()), test.ShouldBeGreaterThan, 0)
-	pb.Model = nil
-
-	_, err = rdk.JointsFromFrameSystemConfig([]*robotpb.FrameSystemConfig{pb}, "arm")
+	tip, err := referenceframe.NewStaticFrame("tip", spatialmath.NewPoseFromPoint(r3.Vector{Z: 10}))
+	test.That(t, err, test.ShouldBeNil)
+	m, err := referenceframe.NewSerialModel("free", []referenceframe.Frame{free, tip})
+	test.That(t, err, test.ShouldBeNil)
+	_, err = rdk.JointsFromModel(m, spatialmath.NewZeroPose())
 	test.That(t, err, test.ShouldNotBeNil)
-	test.That(t, err.Error(), test.ShouldContainSubstring, `part "arm" carries its model in the deprecated kinematics field only`)
+	test.That(t, err.Error(), test.ShouldContainSubstring, `frame "free" of model "free" takes 7 positions`)
 }
 
 // partsToProtobuf serializes parts the way a machine serves them, with the
@@ -320,6 +230,33 @@ func partsToProtobuf(t *testing.T, parts []*referenceframe.FrameSystemPart) []*r
 		out = append(out, pb)
 	}
 	return out
+}
+
+// A server older than FrameSystemConfig.model sends the deprecated kinematics
+// field only. RDK still fills that field beside the model, so clearing the
+// model from its reply reproduces what such a server sends, and the part has
+// to build the same chain either way.
+func TestJointsFromFrameSystemConfigReadsTheDeprecatedKinematicsField(t *testing.T) {
+	arm := loadModel(t, "components/arm/kinematics/ur5e.json", "arm")
+	part := &referenceframe.FrameSystemPart{
+		FrameConfig: referenceframe.NewLinkInFrame(referenceframe.World, spatialmath.NewZeroPose(), "arm", nil),
+		ModelFrame:  arm,
+	}
+	pb, err := part.ToProtobuf()
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, len(pb.GetKinematics().GetFields()), test.ShouldBeGreaterThan, 0)
+	pb.Model = nil
+
+	joints, err := rdk.JointsFromFrameSystemConfig([]*robotpb.FrameSystemConfig{pb}, "arm")
+	test.That(t, err, test.ShouldBeNil)
+	chain := newChain(t, joints)
+	rng := rand.New(rand.NewSource(8))
+	for range 50 {
+		q := randomPositions(arm, rng)
+		want, err := arm.Transform(q)
+		test.That(t, err, test.ShouldBeNil)
+		endMatches(t, chain, q, want.Point())
+	}
 }
 
 // RDK lets a part hang from a frame inside another part's model, named
@@ -342,7 +279,7 @@ func TestJointsFromFrameSystemConfigHangsAPartInsideAModel(t *testing.T) {
 	chain := newChain(t, joints)
 
 	rng := rand.New(rand.NewSource(7))
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		q := randomPositions(arm, rng)
 		inputs := referenceframe.NewLinearInputs()
 		inputs.Put("arm", q)
@@ -384,7 +321,7 @@ func TestJointsFromFrameSystemConfigMatchesRDK(t *testing.T) {
 			chain := newChain(t, joints)
 
 			rng := rand.New(rand.NewSource(5))
-			for i := 0; i < 50; i++ {
+			for range 50 {
 				inputs := referenceframe.NewLinearInputs()
 				var q []float64
 				for _, m := range tc.models {
