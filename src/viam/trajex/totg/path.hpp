@@ -49,6 +49,32 @@ namespace viam::trajex::totg {
 class VIAM_TRAJEX_TOTG_API path {
    public:
     ///
+    /// Bound, in ULPs, on the error of every configuration a path or its segments report.
+    ///
+    /// Error is measured against the exact path that the waypoints and options describe, in ULPs of
+    /// the coordinates where the configuration is computed: the largest magnitude among the containing
+    /// segment's two ends, plus the segment's length, which bounds every term summed to form a
+    /// position. A query at global arc length s may err by an ULP of s more, since it is evaluated at s
+    /// less the segment's start, which rounds by up to that much and moves the position as far.
+    ///
+    /// This bound and the two that follow are a specification, set with margin over the errors
+    /// measured, rather than derived from the arithmetic.
+    ///
+    static constexpr std::size_t k_position_error_bound_ulps = 8;
+
+    ///
+    /// Bound, in ULPs of 1, on the error of every unit tangent a path or its segments report, against
+    /// the exact unit tangent.
+    ///
+    static constexpr std::size_t k_tangent_error_bound_ulps = 4;
+
+    ///
+    /// Bound, in ULPs, on the relative error of every curvature vector a path or its segments report,
+    /// against the exact curvature.
+    ///
+    static constexpr std::size_t k_curvature_error_bound_ulps = 4;
+
+    ///
     /// Geometric segment in configuration space.
     ///
     class segment {
@@ -377,7 +403,15 @@ class VIAM_TRAJEX_TOTG_API path {
         ///
         /// Blend arcs whose natural radius would exceed 1/curvature are capped at that
         /// radius. This prevents numerically fragile enormous-radius arcs at near-collinear
-        /// waypoints while retaining exact C1 continuity at every segment boundary.
+        /// waypoints while keeping tangents continuous at every segment boundary, to within
+        /// k_tangent_error_bound_ulps.
+        ///
+        /// Each arc's radius is then refit to the span the arc occupies on the path, which is its
+        /// length rounded into the path's arc length, so that the arc is traversed at unit speed.
+        /// The refit can carry an arc's curvature past either curvature bound, by a relative
+        /// amount of at most an ULP of the arc's end, divided by the arc's length, plus an ULP
+        /// for the division. The curvature the path reports may differ from that by
+        /// k_curvature_error_bound_ulps more.
         ///
         /// This is `Divergent Behavior 3`: the Kunz & Stilman paper uses no bounds on blend curvature.
         ///
@@ -391,7 +425,8 @@ class VIAM_TRAJEX_TOTG_API path {
         ///
         /// Waypoints whose blend arc would exceed this curvature (1/radius) are treated
         /// as unblended corners. This prevents near-degenerate tiny arcs at near-reversal
-        /// waypoints.
+        /// waypoints. An arc that is emitted can exceed this curvature by the refit described
+        /// for set_min_blend_curvature().
         ///
         /// This is `Divergent Behavior 3`: the Kunz & Stilman paper uses no bounds on blend curvature.
         ///

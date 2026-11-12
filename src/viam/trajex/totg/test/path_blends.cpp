@@ -27,6 +27,7 @@ using viam::trajex::xvector;
 using viam::trajex::totg::test::configs_close;
 using viam::trajex::totg::test::curvature_refit_bound;
 using viam::trajex::totg::test::path_type_sequence;
+using viam::trajex::totg::test::validate_path_quality;
 using viam::trajex::totg::test::verify_path_visits_waypoints;
 
 BOOST_AUTO_TEST_SUITE(path_tests)
@@ -805,6 +806,90 @@ BOOST_AUTO_TEST_CASE(blends_taking_half_of_the_same_leg_emit_adjacent_arcs) {
     };
     const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.008726646259971648));
     BOOST_CHECK_EQUAL(path_type_sequence(p), "LCCL");
+}
+
+// A corner whose arc would span less than the path can resolve where it falls. A turn of 1e-6 at the
+// radius a min_blend_curvature of 1e12 allows is an arc 1e-18 long, starting at arc length 1, where
+// adjacent doubles are 2.2e-16 apart. There is nowhere on the path to put that arc, so the corner
+// must be left unblended rather than emitted as a segment with no interior.
+BOOST_AUTO_TEST_CASE(corner_whose_arc_has_no_span_is_left_unblended) {
+    using namespace viam::trajex::totg;
+    constexpr auto k_turn = 1e-6;
+    constexpr auto k_curvature = 1e12;
+    const auto waypoints = xmatrix<>{{0.0, 0.0}, {1.0, 0.0}, {1.0 + std::cos(k_turn), std::sin(k_turn)}};
+    const auto opts =
+        path::options{}.set_max_blend_deviation(0.1).set_min_blend_curvature(k_curvature).set_max_blend_curvature(k_curvature);
+    const auto p = path::create(waypoints, opts);
+
+    BOOST_CHECK_EQUAL(path_type_sequence(p), "LL");
+    validate_path_quality(p, waypoint_accumulator{waypoints}, opts);
+}
+
+// Two corners joined by a short leg, whose blends leave a line of 1e-6 between them. That line starts
+// at the first blend's exit point, which is rounded, so a direction rebuilt from there to the next
+// corner, about half the leg away, is off by about eps |q| over half the leg: hundreds of eps for a
+// 1e-3 leg. The line's direction is the leg's, so path::k_tangent_error_bound_ulps holds it to within
+// that many ULPs, as it holds each arc's end, and the two sides of each join to twice that of each
+// other. The two corners turn by the same angle, so one deviation sets both trims.
+BOOST_AUTO_TEST_CASE(short_line_between_blends_meets_its_arcs) {
+    using namespace viam::trajex::totg;
+    using viam::trajex::totg::test::angle_between;
+    constexpr auto k_join_tangent_bound = 2.0 * path::k_tangent_error_bound_ulps * std::numeric_limits<double>::epsilon();
+    constexpr auto k_leg = 1e-3;
+    constexpr auto k_leftover = 1e-6;
+
+    // Directions off the axes so that every coordinate rounds. The third is the first reflected
+    // through the second, so both corners turn by the angle between the first two.
+    const xvector<> first_direction = xvector<>{1.0, 2.0, 3.0} / std::sqrt(14.0);
+    const xvector<> second_direction = xvector<>{3.0, 1.0, -1.0} / std::sqrt(11.0);
+    const xvector<> third_direction = (2.0 * xt::sum(first_direction * second_direction)() * second_direction) - first_direction;
+    const auto corner = xvector<>{0.3, -0.7, 1.1};
+
+    xmatrix<> waypoints = xt::zeros<double>({std::size_t{4}, std::size_t{3}});
+    xt::view(waypoints, 0, xt::all()) = corner - first_direction;
+    xt::view(waypoints, 1, xt::all()) = corner;
+    xt::view(waypoints, 2, xt::all()) = corner + (k_leg * second_direction);
+    xt::view(waypoints, 3, xt::all()) = corner + (k_leg * second_direction) + third_direction;
+
+    // Each blend trims deviation / tan(turn / 4) from the middle leg, and together they leave
+    // k_leftover of it.
+    const auto turn = angle_between(first_direction, second_direction);
+    const auto deviation = ((k_leg - k_leftover) / 2.0) * std::tan(turn / 4.0);
+    const auto opts = path::options{}.set_max_blend_deviation(deviation);
+    const auto p = path::create(waypoints, opts);
+    BOOST_REQUIRE_EQUAL(path_type_sequence(p), "LCLCL");
+
+    auto it = std::next(p.begin());
+    const auto first_arc = *it++;
+    const auto line = *it++;
+    const auto second_arc = *it;
+    BOOST_REQUIRE_LT(static_cast<double>(line.length()), 2 * k_leftover);
+
+    BOOST_CHECK(configs_close(first_arc.tangent(first_arc.end()), line.tangent(line.start()), k_join_tangent_bound));
+    BOOST_CHECK(configs_close(line.tangent(line.end()), second_arc.tangent(second_arc.start()), k_join_tangent_bound));
+    validate_path_quality(p, waypoint_accumulator{waypoints}, opts);
+}
+
+// A corner turning by 1e-9, which the dot product of its two directions cannot see: cos(1e-9) rounds
+// to exactly 1. Here the outgoing direction (1, 1e-9) is its own normalization, so the dot product is
+// exactly 1 although the directions differ. The corner turns, so it must be blended.
+// path::k_tangent_error_bound_ulps holds each side of a join to within that many ULPs of the tangent
+// they share, and so to twice that of each other.
+BOOST_AUTO_TEST_CASE(corner_turning_below_dot_product_resolution_is_blended) {
+    using namespace viam::trajex::totg;
+    constexpr auto k_join_tangent_bound = 2.0 * path::k_tangent_error_bound_ulps * std::numeric_limits<double>::epsilon();
+    const auto waypoints = xmatrix<>{{0.0, 0.0}, {1.0, 0.0}, {2.0, 1e-9}};
+    const auto opts = path::options{}.set_max_blend_deviation(0.1);
+    const auto p = path::create(waypoints, opts);
+    BOOST_REQUIRE_EQUAL(path_type_sequence(p), "LCL");
+
+    auto it = p.begin();
+    const auto first = *it++;
+    const auto arc = *it++;
+    const auto last = *it;
+    BOOST_CHECK(configs_close(first.tangent(first.end()), arc.tangent(arc.start()), k_join_tangent_bound));
+    BOOST_CHECK(configs_close(arc.tangent(arc.end()), last.tangent(last.start()), k_join_tangent_bound));
+    validate_path_quality(p, waypoint_accumulator{waypoints}, opts);
 }
 
 BOOST_AUTO_TEST_SUITE_END()  // extremal_path_construction_tests
