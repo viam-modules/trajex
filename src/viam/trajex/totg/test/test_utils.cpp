@@ -1,6 +1,8 @@
 // Test utility function implementations
 #include <viam/trajex/totg/test/test_utils.hpp>
 
+#include <cmath>
+#include <limits>
 #include <string>
 
 #include <viam/trajex/totg/path.hpp>
@@ -63,6 +65,26 @@ std::string path_type_sequence(const path& p) {
         result += seg.is<path::segment::linear>() ? 'L' : 'C';
     }
     return result;
+}
+
+double angle_between(const xvector<>& a, const xvector<>& b) {
+    // For unit vectors u and v at angle theta, |v - u| = 2 sin(theta / 2) and |v + u| = 2 cos(theta / 2),
+    // so theta is twice the arctangent of their ratio. Unlike the arccosine of u . v, which loses its
+    // digits where the cosine is flat near 0 and pi, both lengths are well determined there. Normalizing
+    // first means the vectors need not be unit already.
+    const xvector<> u = a / xt::norm_l2(a)();
+    const xvector<> v = b / xt::norm_l2(b)();
+    return 2.0 * std::atan2(xt::norm_l2(v - u)(), xt::norm_l2(v + u)());
+}
+
+double curvature_refit_bound(const path::segment::view& arc) {
+    // Path construction refits an arc's radius to the span the arc is given on the path, which is
+    // radius * angle rounded into the path's arc length. Rounding the arc's end moves that span by at
+    // most an ULP of the end, so the radius, and the curvature with it, by at most that relative to
+    // the arc's length, and the division that refits it rounds once more.
+    const auto end = static_cast<double>(arc.end());
+    const auto end_ulp = std::nextafter(end, std::numeric_limits<double>::infinity()) - end;
+    return (end_ulp / static_cast<double>(arc.length())) + std::numeric_limits<double>::epsilon();
 }
 
 }  // namespace viam::trajex::totg::test

@@ -23,6 +23,13 @@ void verify_path_visits_waypoints(const path& p, const xmatrix<>& waypoints, dou
 /// Example: a 3-waypoint path with a single circular blend yields "LCL".
 std::string path_type_sequence(const path& p);
 
+/// The angle between two nonzero vectors, in [0, pi], accurate at every angle including near 0 and pi.
+double angle_between(const xvector<>& a, const xvector<>& b);
+
+/// How far, relative to its value, an arc's curvature may sit from the one path construction chose
+/// for it, as a fraction of that value.
+double curvature_refit_bound(const path::segment::view& arc);
+
 /// The quaternion w, x, y, z for a URDF fixed-axis XYZ rpy, which composes as
 /// Rz(yaw) * Ry(pitch) * Rx(roll).
 inline std::array<double, 4> rpy_to_quaternion(double roll, double pitch, double yaw) {

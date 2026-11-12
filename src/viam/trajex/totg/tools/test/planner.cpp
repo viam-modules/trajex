@@ -1,6 +1,8 @@
 #include <viam/trajex/totg/tools/planner.hpp>
 
 #include <array>
+#include <memory>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <tuple>
@@ -282,6 +284,29 @@ BOOST_AUTO_TEST_CASE(stash_extends_data_lifetime) {
 
     BOOST_REQUIRE(result);
     BOOST_CHECK_EQUAL(result->segment_count, 1);
+}
+
+// An outcome shares the planner's stash, so data the planner stashed outlives the planner for as
+// long as an outcome does, and a receiver can keep the waypoint_accumulators its callbacks saw.
+BOOST_AUTO_TEST_CASE(outcome_keeps_stash_alive_after_planner) {
+    std::weak_ptr<xmatrix<>> stashed;
+    std::optional<planner<test_receiver>::algorithm_outcome> outcome;
+
+    // The planner is a temporary, gone at the end of this statement.
+    outcome.emplace(
+        planner<test_receiver>(simple_config())
+            .with_waypoint_provider([&stashed](auto& p) {
+                auto data = p.stash(xmatrix<>{{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}});
+                stashed = data;
+                return waypoint_accumulator{*data};
+            })
+            .with_totg([](const auto&, test_receiver& acc, const waypoint_accumulator&, trajectory&&, auto) { acc.segment_count++; })
+            .execute([](const auto&, auto totg, const auto&) { return totg; }));
+
+    BOOST_REQUIRE(outcome->receiver.has_value());
+    BOOST_CHECK(!stashed.expired());
+    outcome.reset();
+    BOOST_CHECK(stashed.expired());
 }
 
 BOOST_AUTO_TEST_CASE(segment_totg_false_passes_unsegmented_to_totg) {

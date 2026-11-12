@@ -25,6 +25,25 @@
 
 namespace viam::trajex::totg {
 
+namespace {
+
+void require_dof(std::span<const double> out, std::size_t dof) {
+    if (out.size() != dof) [[unlikely]] {
+        throw std::invalid_argument{"Output span size does not match path degrees of freedom"};
+    }
+}
+
+// Whether a representable arc length lies strictly between a and b, in either order. Step one value
+// from a toward b: if that falls short of b, a value lies between. Path construction asks before it
+// builds a segment, since a segment with no length cannot be built at all.
+bool has_interior(arc_length a, arc_length b) noexcept {
+    const auto from = static_cast<double>(a);
+    const auto to = static_cast<double>(b);
+    return (from != to) && (std::nextafter(from, to) != to);
+}
+
+}  // namespace
+
 path::options::options()
     : max_blend_deviation_(k_default_max_deviation),
       max_linear_deviation_(k_default_max_deviation),
@@ -150,15 +169,9 @@ arc_length path::segment::view::length() const noexcept {
     return end_ - start_;
 }
 
-namespace {
-
-void require_dof(std::span<const double> out, std::size_t dof) {
-    if (out.size() != dof) [[unlikely]] {
-        throw std::invalid_argument{"Output span size does not match path degrees of freedom"};
-    }
+bool path::segment::view::has_interior() const noexcept {
+    return ::viam::trajex::totg::has_interior(start_, end_);
 }
-
-}  // namespace
 
 std::size_t path::segment::view::dof_() const {
     return std::visit(
@@ -183,7 +196,7 @@ void path::segment::view::configuration(arc_length s, std::span<double> out) con
     }
 
     std::visit(
-        [local_s, out](const auto& seg_data) {
+        [local_s, length = length(), out](const auto& seg_data) {
             using T = std::decay_t<decltype(seg_data)>;
 
             if constexpr (std::is_same_v<T, segment::linear>) {
@@ -199,12 +212,16 @@ void path::segment::view::configuration(arc_length s, std::span<double> out) con
                 require_dof(out, seg_data.apex.shape(0));
 
                 // Circular arc configuration - Kunz & Stilman equation 7, measured from the apex, so
-                // that phi runs over [-angle / 2, angle / 2]. The 1 - cos(phi) term is written as
-                // 2 sin^2(phi / 2), which keeps its digits when phi is small.
-                const auto phi = (static_cast<double>(local_s) / seg_data.radius) - (seg_data.angle_rads / 2.0);
-                const auto sin_half_phi = std::sin(phi / 2.0);
-                const auto along_t = seg_data.radius * std::sin(phi);
-                const auto along_n = seg_data.radius * 2.0 * sin_half_phi * sin_half_phi;
+                // that theta runs over [-angle / 2, angle / 2]. The arc's span on the path is
+                // radius * angle rounded into the path's arc length, so theta is taken in proportion to
+                // that span rather than as local_s / radius: both ends then land exactly on
+                // +-angle / 2, where the rounding divided by a small radius would turn the tangent
+                // away from its neighbour's. The 1 - cos(theta) term is written as 2 sin^2(theta / 2),
+                // which keeps its digits when theta is small.
+                const auto theta = seg_data.angle_rads * ((local_s / length) - 0.5);
+                const auto sin_half_theta = std::sin(theta / 2.0);
+                const auto along_t = seg_data.radius * std::sin(theta);
+                const auto along_n = seg_data.radius * 2.0 * sin_half_theta * sin_half_theta;
 
                 for (std::size_t i = 0; i < out.size(); ++i) {
                     out[i] = seg_data.apex(i) + (along_t * seg_data.t(i)) + (along_n * seg_data.n(i));
@@ -223,7 +240,7 @@ void path::segment::view::tangent(arc_length s, std::span<double> out) const {
     }
 
     std::visit(
-        [local_s, out](const auto& seg_data) {
+        [local_s, length = length(), out](const auto& seg_data) {
             using T = std::decay_t<decltype(seg_data)>;
 
             if constexpr (std::is_same_v<T, segment::linear>) {
@@ -236,13 +253,13 @@ void path::segment::view::tangent(arc_length s, std::span<double> out) const {
             } else if constexpr (std::is_same_v<T, segment::circular>) {
                 require_dof(out, seg_data.apex.shape(0));
 
-                // Circular arc unit tangent - Kunz & Stilman equation 8, measured from the apex:
-                const auto phi = (static_cast<double>(local_s) / seg_data.radius) - (seg_data.angle_rads / 2.0);
-                const auto cos_phi = std::cos(phi);
-                const auto sin_phi = std::sin(phi);
+                // Circular arc unit tangent - Kunz & Stilman equation 8, with theta as for the configuration:
+                const auto theta = seg_data.angle_rads * ((local_s / length) - 0.5);
+                const auto cos_theta = std::cos(theta);
+                const auto sin_theta = std::sin(theta);
 
                 for (std::size_t i = 0; i < out.size(); ++i) {
-                    out[i] = (seg_data.t(i) * cos_phi) + (seg_data.n(i) * sin_phi);
+                    out[i] = (seg_data.t(i) * cos_theta) + (seg_data.n(i) * sin_theta);
                 }
             }
         },
@@ -258,7 +275,7 @@ void path::segment::view::curvature(arc_length s, std::span<double> out) const {
     }
 
     std::visit(
-        [local_s, out](const auto& seg_data) {
+        [local_s, length = length(), out](const auto& seg_data) {
             using T = std::decay_t<decltype(seg_data)>;
 
             if constexpr (std::is_same_v<T, segment::linear>) {
@@ -269,14 +286,14 @@ void path::segment::view::curvature(arc_length s, std::span<double> out) const {
             } else if constexpr (std::is_same_v<T, segment::circular>) {
                 require_dof(out, seg_data.apex.shape(0));
 
-                // Circular arc curvature vector - Kunz & Stilman equation 9, measured from the apex:
-                const auto phi = (static_cast<double>(local_s) / seg_data.radius) - (seg_data.angle_rads / 2.0);
-                const auto cos_phi = std::cos(phi);
-                const auto sin_phi = std::sin(phi);
+                // Circular arc curvature vector - Kunz & Stilman equation 9, with theta as for the configuration:
+                const auto theta = seg_data.angle_rads * ((local_s / length) - 0.5);
+                const auto cos_theta = std::cos(theta);
+                const auto sin_theta = std::sin(theta);
                 const auto inverse_radius = 1.0 / seg_data.radius;
 
                 for (std::size_t i = 0; i < out.size(); ++i) {
-                    out[i] = inverse_radius * ((seg_data.n(i) * cos_phi) - (seg_data.t(i) * sin_phi));
+                    out[i] = inverse_radius * ((seg_data.n(i) * cos_theta) - (seg_data.t(i) * sin_theta));
                 }
             }
         },
@@ -298,8 +315,8 @@ std::optional<arc_length> path::segment::view::coordinate_extremum(std::size_t j
                     throw std::out_of_range{"Joint index exceeds path degrees of freedom"};
                 }
 
-                // The joint's component of the tangent, cos(phi) t_i + sin(phi) n_i, is zero where
-                // tan(phi) = -t_i / n_i, which within (-pi/2, pi/2) has the single root atan(-t_i / n_i).
+                // The joint's component of the tangent, cos(theta) t_i + sin(theta) n_i, is zero where
+                // tan(theta) = -t_i / n_i, which within (-pi/2, pi/2) has the single root atan(-t_i / n_i).
                 // The arc turns by less than pi, so it lies within that interval too, and any root on
                 // the arc is this one. With n_i zero there is no root inside the interval, or, if t_i
                 // is zero too, the joint does not move on the arc at all.
@@ -311,12 +328,49 @@ std::optional<arc_length> path::segment::view::coordinate_extremum(std::size_t j
                 if (n_i == 0.0) {
                     return std::nullopt;
                 }
-                const auto phi = std::atan(-t_i / n_i);
+                const auto theta = std::atan(-t_i / n_i);
 
                 // Report the root wherever it falls, on the arc or on the circle beyond it. Whether one
                 // just off the arc should count is the caller's to decide, and it needs to know how far
                 // off it is to do that.
-                return start_ + arc_length{seg_data.radius * (phi + (seg_data.angle_rads / 2.0))};
+                return start_ + (length() * ((theta / seg_data.angle_rads) + 0.5));
+            }
+        },
+        seg_.get().data_);
+}
+
+arc_length path::segment::view::nearest(std::span<const double> configuration) const {
+    return std::visit(
+        [this, configuration](const auto& seg_data) -> arc_length {
+            using T = std::decay_t<decltype(seg_data)>;
+
+            if constexpr (std::is_same_v<T, segment::linear>) {
+                require_dof(configuration, seg_data.start.shape(0));
+
+                // Project onto the line, and clamp to the segment.
+                double along = 0.0;
+                for (std::size_t i = 0; i < configuration.size(); ++i) {
+                    along += (configuration[i] - seg_data.start(i)) * seg_data.unit_direction(i);
+                }
+                return std::clamp(start_ + arc_length{along}, start_, end_);
+            } else if constexpr (std::is_same_v<T, segment::circular>) {
+                require_dof(configuration, seg_data.apex.shape(0));
+
+                // The arc lies on a circle about apex + radius * n, and the configuration's direction
+                // from that center within the arc's plane gives the angle of the nearest point of the
+                // circle. The arc turns by less than pi, so clamping that angle to the arc gives the
+                // nearest point of the arc. Forming the center would cost about radius * eps at a capped
+                // radius, so the two in-plane components are taken relative to the apex instead.
+                double along_t = 0.0;
+                double along_n = 0.0;
+                for (std::size_t i = 0; i < configuration.size(); ++i) {
+                    const auto offset = configuration[i] - seg_data.apex(i);
+                    along_t += offset * seg_data.t(i);
+                    along_n += offset * seg_data.n(i);
+                }
+                const auto half_angle = seg_data.angle_rads / 2.0;
+                const auto theta = std::clamp(std::atan2(along_t, seg_data.radius - along_n), -half_angle, half_angle);
+                return std::clamp(start_ + (length() * ((theta / seg_data.angle_rads) + 0.5)), start_, end_);
             }
         },
         seg_.get().data_);
@@ -475,10 +529,9 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
             return std::nullopt;
         }
 
-        // Near-collinear: cap trim at tan(alpha/2)/kmin. The capped radius is exactly
-        // 1/kmin with no rounding; the arc retains exact C1 continuity at both boundaries.
-        // Between the two curvature checks the radius lies in [1/kmax, 1/kmin], so dividing by
-        // tan(alpha/2) here can neither blow up nor vanish.
+        // Near-collinear: cap trim at tan(alpha/2)/kmin, which makes the radius 1/kmin to within the
+        // rounding of the two divisions. Between the two curvature checks the radius lies in
+        // [1/kmax, 1/kmin], so dividing by tan(alpha/2) here can neither blow up nor vanish.
         const auto trim_distance = std::min(natural_trim, tan_half / opts.min_blend_curvature());
         const auto radius = trim_distance / tan_half;
 
@@ -677,23 +730,29 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
             //
             // A segment is only worth emitting if there is somewhere to be inside it. Positions
             // are addressed in the path's own arc length, so that means a representable value
-            // strictly between the endpoints: step one value inward from each end and require
-            // that they have not crossed. One ULP leaves nowhere to stand between the endpoints
+            // strictly between the endpoints. One ULP leaves nowhere to stand between the endpoints
             // and no way to advance through the segment; two leaves exactly one position, which
             // is the least that makes the segment a place rather than a boundary. This asks the
-            // number system rather than a tolerance, so it introduces no epsilon.
+            // number system rather than a tolerance, so it introduces no epsilon. The length must
+            // also be positive: the same rebuilt distance can fall a few ULPs short of the trim.
             const auto incoming_length = dist_to_locus - blend.trim_distance;
-            const auto span_start = static_cast<double>(cumulative_length);
-            const auto span_end = span_start + incoming_length;
-            if (!segment_fully_consumed && (span_end > span_start) &&
-                (std::nextafter(span_start, span_end) <= std::nextafter(span_end, span_start))) {
+            if (!segment_fully_consumed && (incoming_length > 0.0) &&
+                has_interior(cumulative_length, cumulative_length + arc_length{incoming_length})) {
                 segment::linear incoming_segment{current_position, incoming_unit, arc_length{incoming_length}};
                 segments.push_back({.seg = segment{std::move(incoming_segment)}, .start = cumulative_length});
                 cumulative_length += arc_length{incoming_length};
             }
 
-            segments.push_back({.seg = segment{blend.circular_seg}, .start = cumulative_length});
-            cumulative_length += arc_length{blend.circular_seg.radius * blend.circular_seg.angle_rads};
+            // The arc's span on the path is radius * angle rounded into the path's arc length, which
+            // is the length it will be traversed over. Refit the radius to that span, so the arc is
+            // traversed at unit speed and still turns by exactly its angle. Its ends move by about the
+            // rounding, in position only; the tangent at either end depends on the angle alone.
+            const auto& arc = blend.circular_seg;
+            const auto arc_start = cumulative_length;
+            cumulative_length += arc_length{arc.radius * arc.angle_rads};
+            const auto length = static_cast<double>(cumulative_length - arc_start);
+            segments.push_back(
+                {.seg = segment{segment::circular{arc.apex, arc.t, arc.n, length / arc.angle_rads, arc.angle_rads}}, .start = arc_start});
 
             // After the blend, we're positioned at the blend exit point on the outgoing segment.
             // This position doesn't correspond to any waypoint in the accumulator, which is why

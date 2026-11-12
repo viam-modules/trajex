@@ -1180,6 +1180,17 @@ std::optional<switching_point> find_velocity_switching_point(path::cursor cursor
         discontinuous_switching_point.has_value() ? std::min(discontinuous_switching_point->point.s, max_search_hint) : max_search_hint;
     const auto continuous_switching_point = find_continuous_velocity_switching_point(cursor, continuous_bound, opt);
 
+    // The continuous search was bounded by the discontinuous result, so it was asked only for an escape
+    // that comes first. An escape at the same location is the same switching point, seen without its
+    // cause: where the curvature jumps at a boundary, the trajectory and curve slopes jump with it, and
+    // the search, finding their difference of opposite sign across a bracket, bisects onto the boundary
+    // although the difference has no root there, only a jump. The boundary search evaluates both sides
+    // and classifies the jump, so its switching point stands.
+    if (discontinuous_switching_point && continuous_switching_point &&
+        opt.epsilon.wrap(continuous_switching_point->point.s) == opt.epsilon.wrap(discontinuous_switching_point->point.s)) {
+        return discontinuous_switching_point;
+    }
+
     return select_switching_point(discontinuous_switching_point, continuous_switching_point, opt.epsilon);
 }
 

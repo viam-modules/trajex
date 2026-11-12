@@ -13,12 +13,19 @@
 #include <viam/trajex/types/arc_length.hpp>
 #include <viam/trajex/types/xt.hpp>
 
+#if __has_include(<xtensor/reducers/xnorm.hpp>)
+#include <xtensor/reducers/xnorm.hpp>
+#else
+#include <xtensor/xnorm.hpp>
+#endif
+
 #include <boost/test/unit_test.hpp>
 
 using viam::trajex::degrees_to_radians;
 using viam::trajex::xmatrix;
 using viam::trajex::xvector;
 using viam::trajex::totg::test::configs_close;
+using viam::trajex::totg::test::curvature_refit_bound;
 using viam::trajex::totg::test::path_type_sequence;
 using viam::trajex::totg::test::verify_path_visits_waypoints;
 
@@ -256,10 +263,10 @@ BOOST_AUTO_TEST_CASE(circular_blend_near_collinear_dense_waypoints_no_throw) {
 // arc streamed a position 25 rad from the path.
 //
 // The expected geometry is what the bounds imply for the corner's true angle: the deviation budget
-// does not bind, so the trim is the min_blend_curvature cap, tan(angle / 2) / 1e-5, the radius is
-// exactly 1e5, and the arc sweeps the true angle. The angle and arc length carry a 1% tolerance,
-// which is how closely doubles can resolve a turn this small. Any change to which case these bounds
-// produce here should be a deliberate change to this test.
+// does not bind, so the trim is the min_blend_curvature cap, tan(angle / 2) / kmin, the curvature is
+// kmin up to the refit of the radius to the arc's span on the path, and the arc sweeps the true angle.
+// The angle and arc length carry a 1% tolerance, which is how closely doubles can resolve a turn this
+// small. Any change to which case these bounds produce here should be a deliberate change to this test.
 BOOST_AUTO_TEST_CASE(circular_blend_at_min_curvature_cap_stays_on_path) {
     using namespace viam::trajex::totg;
     using viam::trajex::arc_length;
@@ -270,13 +277,12 @@ BOOST_AUTO_TEST_CASE(circular_blend_at_min_curvature_cap_stays_on_path) {
         {-0.11730300284814804, 1.0953483486544517, -0.15849620874963882, 3.294503073115002, 0.28708480197312675, -3.696089400425196},
     };
 
-    // The production config: blend tolerance 0.1, no colinearization, curvature limits 1e-5 and 1e5.
-    const path p =
-        path::create(waypoints, path::options{}.set_max_blend_deviation(0.1).set_min_blend_curvature(1e-5).set_max_blend_curvature(1e5));
+    // The production config: blend tolerance 0.1, no colinearization, and the default curvature limits.
+    const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1));
 
     BOOST_REQUIRE_EQUAL(path_type_sequence(p), "LCL");
 
-    // The trim is tan(angle / 2) / 1e-5 for the true angle, computed exactly from these waypoints.
+    // The trim is tan(angle / 2) / kmin for the true angle, computed exactly from these waypoints.
     constexpr double k_expected_angle = 1.46716194234704914e-13;
     constexpr double k_expected_arc_length = 1.46716194234704914e-8;
     constexpr double k_expected_first_linear_length = 1.20126797700223382e-2;
@@ -290,9 +296,11 @@ BOOST_AUTO_TEST_CASE(circular_blend_at_min_curvature_cap_stays_on_path) {
     BOOST_CHECK_SMALL(static_cast<double>(first.end() - first.start()) - k_expected_first_linear_length, 1e-10);
     BOOST_CHECK_SMALL(static_cast<double>(last.end() - last.start()) - k_expected_last_linear_length, 1e-10);
     BOOST_CHECK_CLOSE(static_cast<double>(arc.end() - arc.start()), k_expected_arc_length, 1.0);
+    const auto curvature = xt::norm_l2(arc.curvature(arc.start()))();
+    constexpr auto k_min_curvature = path::options::k_default_min_blend_curvature;
+    BOOST_CHECK_LE(std::abs(curvature - k_min_curvature), k_min_curvature * curvature_refit_bound(arc));
     arc.visit([&](const auto& data) {
         if constexpr (std::is_same_v<std::decay_t<decltype(data)>, path::segment::circular>) {
-            BOOST_CHECK_CLOSE(data.radius, 1e5, 1e-10);
             BOOST_CHECK_CLOSE(data.angle_rads, k_expected_angle, 1.0);
         }
     });
@@ -326,8 +334,7 @@ BOOST_AUTO_TEST_CASE(circular_blend_near_reversal_meets_its_lines) {
             xt::view(waypoints, 1, xt::all()) = corner;
             xt::view(waypoints, 2, xt::all()) = corner + out;
 
-            const path p = path::create(
-                waypoints, path::options{}.set_max_blend_deviation(0.1).set_min_blend_curvature(1e-5).set_max_blend_curvature(1e5));
+            const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1));
             BOOST_REQUIRE_EQUAL(path_type_sequence(p), "LCL");
 
             auto it = p.begin();
@@ -714,19 +721,18 @@ BOOST_AUTO_TEST_CASE(near_collinear_emits_capped_arc) {
 }
 
 // Same near-collinear geometry, but with a tight min_blend_curvature=1.0 (max radius=1.0).
-// The natural blend radius is ~50000; the cap clamps it to <= 1.0.
+// The natural blend radius is ~50000; the cap clamps it to 1.0, which the refit of the radius to
+// the arc's span on the path may move by its bound and no more.
 BOOST_AUTO_TEST_CASE(near_collinear_arc_radius_respects_min_curvature) {
     using namespace viam::trajex::totg;
     const xmatrix<> waypoints = {{0.0, 0.0}, {1.0, 0.001}, {2.0, 0.0}};
-    constexpr double min_curvature = 1.0;
-    const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1).set_min_blend_curvature(min_curvature));
-    for (const auto& seg : p) {
-        seg.visit([](const auto& s) {
-            if constexpr (std::is_same_v<std::decay_t<decltype(s)>, path::segment::circular>) {
-                BOOST_CHECK_LE(s.radius, 1.0 / min_curvature);
-            }
-        });
-    }
+    constexpr double k_min_curvature = 1.0;
+    const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1).set_min_blend_curvature(k_min_curvature));
+    BOOST_REQUIRE_EQUAL(path_type_sequence(p), "LCL");
+
+    const auto arc = *std::next(p.begin());
+    const auto curvature = xt::norm_l2(arc.curvature(arc.start()))();
+    BOOST_CHECK_LE(std::abs(curvature - k_min_curvature), k_min_curvature * curvature_refit_bound(arc));
 }
 
 // Near-collinear outside tolerance: cross-track deviation (0.5) exceeds max_blend_deviation

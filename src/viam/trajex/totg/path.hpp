@@ -92,8 +92,8 @@ class VIAM_TRAJEX_TOTG_API path {
         /// Circular blend segment in configuration space.
         ///
         /// The arc is described from its apex, the midpoint of the arc, rather than from its center.
-        /// With phi running over [-angle_rads / 2, angle_rads / 2], the arc is
-        /// `apex + radius * (sin(phi) * t + (1 - cos(phi)) * n)`. Every term is bounded by the arc's
+        /// With the angle theta measured from the apex and running over [-angle_rads / 2, angle_rads / 2],
+        /// the arc is `apex + radius * (sin(theta) * t + (1 - cos(theta)) * n)`. Every term is bounded by the arc's
         /// length, so positions on the arc are accurate to a few ULPs of the coordinates no matter how
         /// large the radius is. A center would sit a radius away, and carry an error proportional to it.
         ///
@@ -162,6 +162,17 @@ class VIAM_TRAJEX_TOTG_API path {
             /// @return Length of the view (end - start)
             ///
             arc_length length() const noexcept;
+
+            ///
+            /// Checks whether there is somewhere to be inside this segment.
+            ///
+            /// Positions on a path are addressed by arc length, so that means a representable arc length
+            /// strictly between start() and end(). A segment without one can be stepped over, but not
+            /// advanced through.
+            ///
+            /// @return True if some representable arc length lies strictly between start() and end()
+            ///
+            bool has_interior() const noexcept;
 
             ///
             /// Checks if segment holds a specific type.
@@ -260,6 +271,19 @@ class VIAM_TRAJEX_TOTG_API path {
             /// @throws std::out_of_range if joint is not less than the degrees of freedom
             ///
             std::optional<arc_length> coordinate_extremum(std::size_t joint) const;
+
+            ///
+            /// Finds the point of this segment nearest a configuration.
+            ///
+            /// The configuration may be anywhere: it need not lie on the segment, nor in the plane of an
+            /// arc. A configuration equally near every point of an arc, on the axis through its center,
+            /// is reported nearest the arc's midpoint.
+            ///
+            /// @param configuration Configuration to measure from, sized to the degrees of freedom
+            /// @return Global arc length of the nearest point, within [start(), end()]
+            /// @throws std::invalid_argument if configuration is not sized to the degrees of freedom
+            ///
+            arc_length nearest(std::span<const double> configuration) const;
 
            private:
             // Recovered from the segment's stored vectors. Only the value-returning accessors

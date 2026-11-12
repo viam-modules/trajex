@@ -83,6 +83,20 @@ std::size_t planner_base::processed_waypoint_count() const noexcept {
     return processed_waypoint_count_;
 }
 
+path::options planner_base::path_options() const {
+    auto opts = path::options{}.set_max_blend_deviation(config_.path_blend_tolerance);
+    if (config_.colinearization_ratio) {
+        opts.set_max_linear_deviation(config_.path_blend_tolerance * *config_.colinearization_ratio);
+    }
+    if (config_.min_blend_curvature) {
+        opts.set_min_blend_curvature(*config_.min_blend_curvature);
+    }
+    if (config_.max_blend_curvature) {
+        opts.set_max_blend_curvature(*config_.max_blend_curvature);
+    }
+    return opts;
+}
+
 struct planner_base::config& planner_base::mutable_config() noexcept {
     return config_;
 }

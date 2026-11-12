@@ -39,6 +39,14 @@ std::pair<planner_base::config, xmatrix<>> parse_replay_record(const std::filesy
 ///
 struct replay_receiver {
     std::optional<trajectory> traj;
+
+    ///
+    /// The waypoints the trajectory's path was built from, after the planner's preprocessing.
+    ///
+    /// Views storage in the planner's stash, which the outcome holding this receiver shares, so it
+    /// remains valid as long as that outcome does.
+    ///
+    std::optional<waypoint_accumulator> waypoints;
 };
 
 #if defined(VIAM_TRAJEX_LEGACY_ENABLED)

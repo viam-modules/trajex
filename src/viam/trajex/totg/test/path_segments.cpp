@@ -344,6 +344,56 @@ BOOST_AUTO_TEST_CASE(coordinate_extremum) {
     BOOST_CHECK(expect_root_at(near_start_view, 1, (quarter / 2.0) + k_margin) > near_start_view.end());
 }
 
+BOOST_AUTO_TEST_CASE(nearest) {
+    using namespace viam::trajex::totg;
+    using viam::trajex::arc_length;
+
+    const auto nearest_to = [](const path::segment::view& view, const xvector<>& point) {
+        return static_cast<double>(view.nearest(std::span<const double>{point.data(), point.size()}));
+    };
+
+    // A line from (0,0,0) to (3,4,0), placed at s = 1. A point off the line projects onto it, and
+    // points beyond either end are nearest that end.
+    const path::segment::linear linear_data{xvector<>{0.0, 0.0, 0.0}, xvector<>{3.0, 4.0, 0.0}};
+    const path::segment linear_seg{linear_data};
+    const path::segment::view linear_view{linear_seg, arc_length{1.0}, arc_length{1.0} + linear_data.length};
+    BOOST_CHECK_CLOSE(nearest_to(linear_view, xvector<>{1.5, 2.0, 5.0}), 3.5, 1e-12);
+    BOOST_CHECK_EQUAL(nearest_to(linear_view, xvector<>{-1.0, -1.0, 0.0}), 1.0);
+    BOOST_CHECK_EQUAL(nearest_to(linear_view, xvector<>{10.0, 10.0, 0.0}), static_cast<double>(linear_view.end()));
+
+    // A quarter circle of unit radius about the origin, from angle -pi/4 to pi/4, placed at s = 1.
+    // A point off the circle is nearest the arc at its own angle, a point past an end is nearest
+    // that end, and so is a point on the far side of the center.
+    const double quarter = std::numbers::pi / 2;
+    const path::segment arc_seg{path::segment::circular{xvector<>{1.0, 0.0}, xvector<>{0.0, 1.0}, xvector<>{-1.0, 0.0}, 1.0, quarter}};
+    const path::segment::view arc_view{arc_seg, arc_length{1.0}, arc_length{1.0 + quarter}};
+    BOOST_CHECK_CLOSE(nearest_to(arc_view, xvector<>{2.0, 0.0}), 1.0 + (quarter / 2.0), 1e-12);
+    BOOST_CHECK_CLOSE(nearest_to(arc_view, xvector<>{3.0 * std::cos(0.3), 3.0 * std::sin(0.3)}), 1.0 + (quarter / 2.0) + 0.3, 1e-12);
+    BOOST_CHECK_EQUAL(nearest_to(arc_view, xvector<>{std::cos(1.2), std::sin(1.2)}), static_cast<double>(arc_view.end()));
+    BOOST_CHECK_EQUAL(nearest_to(arc_view, xvector<>{std::cos(-1.2), std::sin(-1.2)}), static_cast<double>(arc_view.start()));
+    BOOST_CHECK_EQUAL(nearest_to(arc_view, xvector<>{-1.0, 0.1}), static_cast<double>(arc_view.end()));
+
+    // The configuration must have the path's degrees of freedom.
+    BOOST_CHECK_THROW(nearest_to(arc_view, xvector<>{1.0, 0.0, 0.0}), std::invalid_argument);
+}
+
+BOOST_AUTO_TEST_CASE(has_interior) {
+    using namespace viam::trajex::totg;
+    using viam::trajex::arc_length;
+
+    // A segment has an interior when a representable arc length lies strictly between its ends: two
+    // ULPs apart leaves exactly one, one ULP apart leaves none.
+    const path::segment::linear data{xvector<>{0.0, 0.0}, xvector<>{3.0, 4.0}};
+    const path::segment seg{data};
+    const double start = 1.0;
+    const double one_ulp = std::nextafter(start, 2.0);
+    const double two_ulps = std::nextafter(one_ulp, 2.0);
+    BOOST_CHECK((path::segment::view{seg, arc_length{start}, arc_length{two_ulps}}.has_interior()));
+    BOOST_CHECK(!(path::segment::view{seg, arc_length{start}, arc_length{one_ulp}}.has_interior()));
+    BOOST_CHECK(!(path::segment::view{seg, arc_length{start}, arc_length{start}}.has_interior()));
+    BOOST_CHECK((path::segment::view{seg, arc_length{0.0}, data.length}.has_interior()));
+}
+
 BOOST_AUTO_TEST_CASE(segment_view_bounds_checking) {
     using namespace viam::trajex::totg;
     using viam::trajex::arc_length;

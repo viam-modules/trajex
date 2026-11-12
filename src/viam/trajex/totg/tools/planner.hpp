@@ -157,6 +157,15 @@ class planner_base {
     std::size_t processed_waypoint_count() const noexcept;
 
     ///
+    /// Path construction options derived from the planner configuration.
+    ///
+    /// These are the options TOTG builds its paths with.
+    ///
+    /// @return Path options for the configured blend tolerance, colinearization, and curvature limits
+    ///
+    path::options path_options() const;
+
+    ///
     /// Serializes the planner's configuration and the supplied waypoints to a
     /// canonical JSON replay record suitable for replay and regression testing.
     ///
@@ -213,9 +222,15 @@ class planner : public planner_base {
     /// The receiver is engaged when all segments complete successfully. If any
     /// segment fails, the receiver is disengaged and the exception is captured.
     ///
+    /// The outcome shares the planner's stash, so a receiver may keep the
+    /// waypoint_accumulators its callbacks were given: whatever they view that the
+    /// planner stashed lives as long as the outcome does, after the planner is gone.
+    /// Waypoint storage the caller supplied directly remains the caller's to keep alive.
+    ///
     struct algorithm_outcome {
         std::optional<Receiver> receiver;
         std::exception_ptr error;
+        std::vector<std::shared_ptr<void>> stash;
     };
 
     /// @name Handler type aliases
@@ -247,7 +262,8 @@ class planner : public planner_base {
     /// own its data. When a callback creates a waypoint matrix, that array
     /// must outlive the waypoint_accumulator that views it. Stash stores it
     /// here. The returned shared_ptr can be used immediately; the data it
-    /// points to remains valid until the planner is destroyed.
+    /// points to remains valid until the planner and every outcome it produced
+    /// are destroyed.
     ///
     template <typename T>
     std::shared_ptr<T> stash(T&& value) {
@@ -398,6 +414,12 @@ class planner : public planner_base {
         auto totg_outcome = run_totg_(totg_segments);
         auto legacy_outcome = run_legacy_(segments);
 
+        // Both outcomes share the stash. The planner itself has no further use for it.
+#if defined(VIAM_TRAJEX_LEGACY_ENABLED)
+        legacy_outcome.stash = stashed_;
+#endif
+        totg_outcome.stash = std::move(stashed_);
+
         return std::forward<Decider>(decider)(*this, std::move(totg_outcome), std::move(legacy_outcome));
     }
 
@@ -417,18 +439,7 @@ class planner : public planner_base {
             }
 
             try {
-                auto path_opts = path::options{}.set_max_blend_deviation(get_config().path_blend_tolerance);
-                if (get_config().colinearization_ratio) {
-                    path_opts.set_max_linear_deviation(get_config().path_blend_tolerance * *get_config().colinearization_ratio);
-                }
-                if (get_config().min_blend_curvature) {
-                    path_opts.set_min_blend_curvature(*get_config().min_blend_curvature);
-                }
-                if (get_config().max_blend_curvature) {
-                    path_opts.set_max_blend_curvature(*get_config().max_blend_curvature);
-                }
-
-                auto p = path::create(segment, path_opts);
+                auto p = path::create(segment, path_options());
 
                 trajectory::options topts;
                 topts.max_velocity = get_config().velocity_limits;
