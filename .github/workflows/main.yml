@@ -73,6 +73,85 @@ jobs:
       - name: Verify Package
         run: make -f .github/scripts/Makefile verify-package
 
+  sanitize-test:
+    name: Sanitize Test (ASan + UBSan)
+    runs-on: ${{ matrix.runner }}
+    # Same image as the Linux release build, so sanitizer coverage tracks the
+    # toolchain environment we ship from.
+    container: ghcr.io/viamrobotics/cpp-sdk-conan-ubuntu:jammy-2026-11.00
+    permissions:
+      contents: read
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - arch: amd64
+          runner: ubuntu-latest
+        - arch: arm64
+          runner: ubuntu-4cpu-arm
+    defaults:
+      run:
+        shell: bash
+    env:
+      SANITIZE_FLAGS: -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined
+      ASAN_SYMBOLIZER_PATH: /usr/lib/llvm-19/bin/llvm-symbolizer
+      ASAN_OPTIONS: detect_leaks=1:detect_stack_use_after_return=1
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+    steps:
+      - name: Checkout
+        # actions/checkout@v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          submodules: true
+
+      - name: Install dependencies and clang-19
+        # The image's clang-14 cannot compile libstdc++ 11's <ranges>, so clang-19
+        # comes from apt.llvm.org. libclang-rt-19-dev provides the sanitizer
+        # runtimes and llvm-19 provides llvm-symbolizer for readable stack traces.
+        # The service layer is not built, so test dependencies come from apt rather
+        # than conan.
+        run: |
+          set -euxo pipefail
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key -o /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+          echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-19 main" > /etc/apt/sources.list.d/llvm19.list
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            clang-19 libclang-rt-19-dev llvm-19 \
+            libboost-test-dev libeigen3-dev libjsoncpp-dev
+
+      - name: Configure
+        # CMAKE_POLICY_VERSION_MINIMUM: Jammy's jsoncppConfig.cmake declares
+        #   compatibility below 3.5, which CMake 4 otherwise rejects.
+        # -fno-relaxed-template-template-args: clang 19 enables P0522 matching by
+        #   default, which makes xtensor 0.25's rebind_container specializations
+        #   ambiguous. The flag is deprecated, so its warning is silenced for -Werror.
+        # CMAKE_C_STANDARD_LIBRARIES: the C ABI smoke test is linked by the C driver,
+        #   which otherwise omits the UBSan C++ runtime that the C++ libraries' vptr
+        #   checks need, and libstdc++ that runtime depends on. These go here rather
+        #   than in CMAKE_EXE_LINKER_FLAGS because CMake's C compiler check sees the
+        #   linker flags but not the standard libraries, and fails with only half.
+        run: |
+          set -euxo pipefail
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_C_COMPILER=clang-19 \
+            -DCMAKE_CXX_COMPILER=clang++-19 \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DVIAM_TRAJEX_ENABLE_SERVICE=OFF \
+            -DVIAM_TRAJEX_BUILD_BENCHMARKS=OFF \
+            "-DCMAKE_C_FLAGS=${SANITIZE_FLAGS}" \
+            "-DCMAKE_CXX_FLAGS=${SANITIZE_FLAGS} -fno-relaxed-template-template-args -Wno-deprecated-no-relaxed-template-template-args" \
+            "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined" \
+            "-DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=address,undefined" \
+            "-DCMAKE_C_STANDARD_LIBRARIES=-fsanitize-link-c++-runtime -lstdc++"
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -j "$(nproc)"
+
   build-release-artifacts:
     name: Build Trajex Release Artifacts
     needs: [check-recent-commits, build-test-lint]
