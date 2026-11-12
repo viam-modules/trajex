@@ -76,8 +76,6 @@ jobs:
   sanitize-test:
     name: Sanitize Test (ASan + UBSan)
     runs-on: ${{ matrix.runner }}
-    # Same image as the Linux release build, so sanitizer coverage tracks the
-    # toolchain environment we ship from.
     container: ghcr.io/viamrobotics/cpp-sdk-conan-ubuntu:jammy-2026-11.00
     permissions:
       contents: read
@@ -109,8 +107,6 @@ jobs:
         # The image's clang-14 cannot compile libstdc++ 11's <ranges>, so clang-19
         # comes from apt.llvm.org. libclang-rt-19-dev provides the sanitizer
         # runtimes and llvm-19 provides llvm-symbolizer for readable stack traces.
-        # The service layer is not built, so test dependencies come from apt rather
-        # than conan.
         run: |
           set -euxo pipefail
           curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key -o /etc/apt/trusted.gpg.d/apt.llvm.org.asc
@@ -128,9 +124,7 @@ jobs:
         #   ambiguous. The flag is deprecated, so its warning is silenced for -Werror.
         # CMAKE_C_STANDARD_LIBRARIES: the C ABI smoke test is linked by the C driver,
         #   which otherwise omits the UBSan C++ runtime that the C++ libraries' vptr
-        #   checks need, and libstdc++ that runtime depends on. These go here rather
-        #   than in CMAKE_EXE_LINKER_FLAGS because CMake's C compiler check sees the
-        #   linker flags but not the standard libraries, and fails with only half.
+        #   checks need, and libstdc++ that runtime depends on.
         run: |
           set -euxo pipefail
           cmake -S . -B build -G Ninja \
