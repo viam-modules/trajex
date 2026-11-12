@@ -417,18 +417,22 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
             return std::nullopt;
         }
 
-        // Compute angle between incoming and outgoing directions; Kunz & Stilman equation 2.
-        const auto dot = xt::sum(incoming_unit * outgoing_unit)();
+        // The sum and the difference of the two unit directions carry everything the blend needs.
+        // For a turn by alpha their lengths are 2 cos(alpha/2) and 2 sin(alpha/2), each good to about
+        // eps absolute.
+        const xvector<> sum = incoming_unit + outgoing_unit;
+        const xvector<> difference = outgoing_unit - incoming_unit;
+        const auto sum_norm = xt::norm_l2(sum)();
+        const auto difference_norm = xt::norm_l2(difference)();
 
-        // Clamp to [-1, 1] to guard against floating-point rounding past the domain of acos:
-        // unit vector dot products are theoretically bounded, but the normalization arithmetic
-        // can produce values slightly outside that range.
-        const auto dot_clamped = std::clamp(dot, -1.0, 1.0);
+        // Kunz & Stilman equation 2. Clamp to [-1, 1]: rounding can carry the dot product of two unit
+        // vectors slightly past either end, and the exact checks below treat those as the ends.
+        const auto dot = std::clamp(xt::sum(incoming_unit * outgoing_unit)(), -1.0, 1.0);
 
         // Exact collinear (angle=0): the bisector and radius formula both have singularities here.
         // No blend is needed since the tangent is unchanged, and TOTG won't mandate s_dot=0.
         // All near-collinear cases are handled by the min_blend_curvature cap below.
-        if (dot_clamped == 1.0) {
+        if (dot == 1.0) {
             return std::nullopt;
         }
 
@@ -436,23 +440,26 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         //
         // Near-reversal is handled by the max_blend_curvature check below. We guard this case
         // explicitly rather than relying on tan(pi/2) being large enough to trip that check.
-        if (dot_clamped == -1.0) {
+        if (dot == -1.0) {
             return std::nullopt;
         }
 
-        const auto angle = std::acos(dot_clamped);
-        const auto half_angle = angle / 2.0;
-
-        // At this point angle is strictly in (0, pi). segment::view::coordinate_extremum relies on
-        // this guarantee to find at most one extremum per joint on the arc.
+        // Equation 2 takes the angle as the arccosine of the dot product, which has no digits near
+        // 0 or pi: a corner turning by 1.5e-13 reads as its floor of 1.5e-8 (RSDK-14911). The norms
+        // give it to rounding at any angle, and the tangents of its half and quarter as plain ratios:
+        // tan(alpha/2) = |d| / |s|, and tan(alpha/4) = sin(alpha/2) / (1 + cos(alpha/2)) = |d| / (2 + |s|).
+        // The difference cannot vanish, since the directions differ, so the angle is positive; if
+        // the sum vanishes, the angle is pi and tan(alpha/2) is infinite, which the near-reversal
+        // check below rejects. So any arc built lies strictly in (0, pi), as segment::circular requires.
+        const auto angle = 2.0 * std::atan2(difference_norm, sum_norm);
+        const auto tan_half = difference_norm / sum_norm;
+        const auto tan_quarter = difference_norm / (2.0 + sum_norm);
 
         // Compute trim following Kunz & Stilman equations 3-4. Three constraints apply: can't
         // trim more than half of either segment, and the deviation at the blend must stay within
         // the budget. The deviation formula inverted is: trim = deviation / tan(alpha/4). This
         // form (via the half-angle identity sin(x)/(1-cos(x)) = cot(x/2)) is well-conditioned
         // at small angles, unlike the equivalent sin(alpha/2)/(1-cos(alpha/2)) expression.
-        const auto tan_half = std::tan(half_angle);
-        const auto tan_quarter = std::tan(half_angle / 2.0);
         const auto max_trim_from_segments = std::min(incoming_norm / 2.0, outgoing_norm / 2.0);
         const auto natural_trim = (max_trim_from_segments * tan_quarter <= opts.max_blend_deviation())
                                       ? max_trim_from_segments
@@ -482,21 +489,17 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         // radius cap that error carries the center, and the whole arc with it, far off the path
         // (RSDK-14911). Everything about the apex is bounded by the arc's length instead.
         //
-        // The frame comes from the sum and the difference of the two unit directions: the tangent
-        // at the apex lies along the sum, and the normal, toward the inside of the corner, along
-        // the difference. Their lengths are 2 cos(alpha/2) and 2 sin(alpha/2), so the longer is at
-        // least sqrt(2), while the shorter cancels nearly equal or nearly opposite vectors and has a
-        // direction good only to about eps over its length: the difference at a shallow corner, the
-        // sum at a near reversal. So normalize the longer and project it out of the shorter. Within
-        // the plane, the shorter's direction then follows from the longer's, and what error remains
-        // tilts the plane, which the ends of the arc see scaled by the shorter's length, so they
-        // meet the incoming and outgoing directions to rounding at any angle. Normalizing introduces
-        // no scale, since a vector's direction does not depend on its length, but if the shorter
-        // cancels completely there is no plane to put an arc in, and no blend.
-        const xvector<> sum = incoming_unit + outgoing_unit;
-        const xvector<> difference = outgoing_unit - incoming_unit;
-        const auto sum_norm = xt::norm_l2(sum)();
-        const auto difference_norm = xt::norm_l2(difference)();
+        // The frame comes from the sum and the difference too: the tangent at the apex lies along
+        // the sum, and the normal, toward the inside of the corner, along the difference. The
+        // longer of the two is at least sqrt(2), while the shorter cancels nearly equal or nearly
+        // opposite vectors and has a direction good only to about eps over its length: the
+        // difference at a shallow corner, the sum at a near reversal. So normalize the longer and
+        // project it out of the shorter. Within the plane, the shorter's direction then follows
+        // from the longer's, and what error remains tilts the plane, which the ends of the arc see
+        // scaled by the shorter's length, so they meet the incoming and outgoing directions to
+        // rounding at any angle. Normalizing introduces no scale, since a vector's direction does
+        // not depend on its length, but if the shorter cancels completely there is no plane to put
+        // an arc in, and no blend.
         const bool sum_is_longer = (sum_norm >= difference_norm);
 
         const xvector<> longer_unit = sum_is_longer ? xvector<>{sum / sum_norm} : xvector<>{difference / difference_norm};

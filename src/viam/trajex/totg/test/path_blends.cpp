@@ -2,6 +2,7 @@
 // Extracted from test.cpp lines 152-189 (helpers) and 1106-1560 (tests)
 
 #include <cmath>
+#include <limits>
 #include <numbers>
 #include <type_traits>
 
@@ -301,6 +302,52 @@ BOOST_AUTO_TEST_CASE(circular_blend_at_min_curvature_cap_stays_on_path) {
     BOOST_CHECK(configs_close(arc.configuration(arc.end()), last.configuration(last.start()), 1e-12));
     BOOST_CHECK(configs_close(p.configuration(arc_length{0.0}), xvector<>{xt::view(waypoints, 0, xt::all())}, 1e-12));
     BOOST_CHECK(configs_close(p.configuration(p.length()), xvector<>{xt::view(waypoints, 2, xt::all())}, 1e-12));
+}
+
+// Corners that nearly reverse, blended into arcs. An arc's frame and angle come from the sum and
+// the difference of the incoming and outgoing directions, and at a near reversal it is the sum that
+// cancels. Built by trusting the sum, or with the angle from acos, an arc met its lines about a
+// thousand eps off in tangent at the closest of these gaps. Each end must now meet its line to
+// rounding, in tangent and in position: within 64 eps, of a unit vector or of the coordinates.
+BOOST_AUTO_TEST_CASE(circular_blend_near_reversal_meets_its_lines) {
+    using namespace viam::trajex::totg;
+    constexpr double k_rounding_bound = 64 * std::numeric_limits<double>::epsilon();
+
+    // Directions off the axes so that every coordinate rounds.
+    const xvector<> in = xvector<>{1.0, 2.0, 3.0} / std::sqrt(14.0);
+    const xvector<> perpendicular = xvector<>{3.0, 0.0, -1.0} / std::sqrt(10.0);
+    const xvector<> corner = {0.3, -0.7, 1.1};
+
+    for (const double gap : {1e-1, 1e-2, 1e-3}) {
+        BOOST_TEST_CONTEXT("pi - angle = " << gap) {
+            const xvector<> out = (-std::cos(gap) * in) + (std::sin(gap) * perpendicular);
+            xmatrix<> waypoints = xt::zeros<double>({std::size_t{3}, std::size_t{3}});
+            xt::view(waypoints, 0, xt::all()) = corner - in;
+            xt::view(waypoints, 1, xt::all()) = corner;
+            xt::view(waypoints, 2, xt::all()) = corner + out;
+
+            const path p = path::create(
+                waypoints, path::options{}.set_max_blend_deviation(0.1).set_min_blend_curvature(1e-5).set_max_blend_curvature(1e5));
+            BOOST_REQUIRE_EQUAL(path_type_sequence(p), "LCL");
+
+            auto it = p.begin();
+            const auto first = *it++;
+            const auto arc = *it++;
+            const auto last = *it;
+
+            arc.visit([&](const auto& data) {
+                if constexpr (std::is_same_v<std::decay_t<decltype(data)>, path::segment::circular>) {
+                    BOOST_CHECK_SMALL(data.angle_rads - (std::numbers::pi - gap), k_rounding_bound);
+                }
+            });
+
+            const double position_bound = k_rounding_bound * xt::amax(xt::abs(waypoints))();
+            BOOST_CHECK(configs_close(first.tangent(first.end()), arc.tangent(arc.start()), k_rounding_bound));
+            BOOST_CHECK(configs_close(arc.tangent(arc.end()), last.tangent(last.start()), k_rounding_bound));
+            BOOST_CHECK(configs_close(first.configuration(first.end()), arc.configuration(arc.start()), position_bound));
+            BOOST_CHECK(configs_close(arc.configuration(arc.end()), last.configuration(last.start()), position_bound));
+        }
+    }
 }
 
 BOOST_AUTO_TEST_CASE(circular_blend_very_sharp_angle) {
