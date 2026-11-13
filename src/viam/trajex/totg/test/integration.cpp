@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <numbers>
 #include <optional>
 #include <random>
 #include <sstream>
@@ -20,8 +21,10 @@
 
 #if defined(__has_include) && (__has_include(<xtensor/containers/xadapt.hpp>))
 #include <xtensor/containers/xadapt.hpp>
+#include <xtensor/reducers/xnorm.hpp>
 #else
 #include <xtensor/xadapt.hpp>
+#include <xtensor/xnorm.hpp>
 #endif
 
 #include <viam/trajex/totg/observers.hpp>
@@ -30,6 +33,7 @@
 #include <viam/trajex/totg/tools/json_serialization.hpp>
 #include <viam/trajex/totg/trajectory.hpp>
 #include <viam/trajex/totg/uniform_sampler.hpp>
+#include <viam/trajex/totg/waypoint_accumulator.hpp>
 #include <viam/trajex/types/angles.hpp>
 #include <viam/trajex/types/arc_length.hpp>
 #include <viam/trajex/types/arc_operations.hpp>
@@ -53,6 +57,7 @@ using viam::trajex::arc_velocity;
 using viam::trajex::degrees_to_radians;
 using viam::trajex::xmatrix;
 using viam::trajex::xvector;
+using viam::trajex::totg::test::validate_path_quality;
 
 constexpr bool k_log_met_expectations = false;
 
@@ -805,6 +810,8 @@ struct trajectory_test_fixture {
             validate_against_legacy(traj);
         }
 
+        validate_path_quality(traj.path(), waypoint_accumulator{waypoints_}, path_opts);
+
         // Validate trajectory invariants
         validate_trajectory_invariants(traj, validation_tolerance_percent);
 
@@ -836,6 +843,7 @@ trajectory create_velocity_switching_test_trajectory(const xmatrix<>& waypoints_
     path::options popt;
     popt.set_max_blend_deviation(max_deviation);
     path p = path::create(waypoints_rad, popt);
+    validate_path_quality(p, waypoint_accumulator{waypoints_rad}, popt);
 
     trajectory::options topt;
     topt.max_velocity = max_velocity;
@@ -1508,6 +1516,7 @@ BOOST_AUTO_TEST_CASE(trajectory_json_serialization) {
     const xmatrix<> waypoints = {{0.0, 0.0, 0.0}, {1.0, 1.0, 1.0}, {2.0, 0.0, 0.0}};
 
     path p = path::create(waypoints, path::options{});
+    validate_path_quality(p, waypoint_accumulator{waypoints}, path::options{});
 
     // Attach collector
     trajectory_integration_event_collector collector;
@@ -2568,6 +2577,9 @@ void generate_trajectory_from_replay_file(const std::string& filename,
     BOOST_REQUIRE(outcome.receiver->traj.has_value());
 
     const trajectory& traj = *outcome.receiver->traj;
+    BOOST_REQUIRE(outcome.receiver->waypoints.has_value());
+    validate_path_quality(traj.path(), *outcome.receiver->waypoints, planner.path_options());
+
     if (trajectory_invariants_tolerance_percent.has_value()) {
         validate_trajectory_invariants(traj, *trajectory_invariants_tolerance_percent);
     }
@@ -2928,6 +2940,25 @@ BOOST_AUTO_TEST_CASE(RSDK_14509_orbsanding_13b848ed_run1_trajectory_generation, 
 BOOST_AUTO_TEST_CASE(RSDK_14509_orbsanding_13b848ed_run2_trajectory_generation, *boost::unit_test::disabled()) {
     generate_trajectory_from_replay_file(
         "orbsanding-13b848ed78d24c6c93d36dc30171b040_run2_plan001_step002_work.trajex-totg-replay.json", std::nullopt, std::nullopt);
+}
+
+// This is the regression test for RSDK-14911. A GP8 sanding move's 82 waypoints give 22 corners
+// turning by less than acos can resolve, each blended with an arc at the min_blend_curvature radius
+// cap. Every arc must lie on the path; the kinematics validator's comparison of each sample's
+// position against its velocity is what catches one that doesn't.
+//
+// The driver wrote no replay record, since generation produced a trajectory. This one was rebuilt
+// from the move's realtime capture: the waypoints and limits as captured, and the driver's default
+// path options, which match the options in its replay records from the same machine. Built this way,
+// the trajectory's second 3 Hz sample reproduces the position the driver streamed to four decimals.
+//
+// Both validators run at their default tolerance.
+BOOST_AUTO_TEST_CASE(RSDK_14911_gp8_blend_arc_displaced_from_path) {
+    constexpr auto k_trajectory_invariants_tolerance = 0.1;
+    constexpr auto k_joint_kinematics_tolerance = 0.1;
+    generate_trajectory_from_replay_file("gp8_blend_arc_displaced_from_path-20261110.trajex-totg-replay.json",
+                                         k_trajectory_invariants_tolerance,
+                                         k_joint_kinematics_tolerance);
 }
 
 BOOST_AUTO_TEST_SUITE_END()  // replay_regression_tests

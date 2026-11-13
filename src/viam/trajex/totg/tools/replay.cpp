@@ -185,8 +185,10 @@ replay_planner replay_planner::create(std::istream& in, std::optional<std::size_
     auto data = p.stash(std::move(waypoints));
     p.with_waypoint_provider([data](auto&) { return waypoint_accumulator{*data}; });
 
-    p.with_totg(
-        [](const auto&, replay_receiver& recv, const waypoint_accumulator&, trajectory&& traj, auto) { recv.traj = std::move(traj); });
+    p.with_totg([](const auto&, replay_receiver& recv, const waypoint_accumulator& waypoints, trajectory&& traj, auto) {
+        recv.waypoints.emplace(waypoints);
+        recv.traj = std::move(traj);
+    });
 
     return p;
 }
