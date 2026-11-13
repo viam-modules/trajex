@@ -2943,19 +2943,17 @@ BOOST_AUTO_TEST_CASE(RSDK_14509_orbsanding_13b848ed_run2_trajectory_generation, 
         "orbsanding-13b848ed78d24c6c93d36dc30171b040_run2_plan001_step002_work.trajex-totg-replay.json", std::nullopt, std::nullopt);
 }
 
-// A GP8 sanding move whose 82 waypoints give 22 corners turning by less than acos can resolve. Each
-// was blended with an arc at the min_blend_curvature radius cap whose center, and so the whole arc,
-// landed off the path, by up to thousands of radians. Generation succeeded and a sample streamed from
-// one of them was 25 rad from the path. The kinematics validator's comparison of each sample's
-// position against its velocity is what fails here.
+// This is the regression test for RSDK-14911. A GP8 sanding move's 82 waypoints give 22 corners
+// turning by less than acos can resolve, each blended with an arc at the min_blend_curvature radius
+// cap. Every arc must lie on the path; the kinematics validator's comparison of each sample's
+// position against its velocity is what catches one that doesn't.
 //
-// Generation produced a trajectory, so the driver wrote no replay record. This one was rebuilt from
-// the move's realtime capture: the waypoints and limits as captured, and the driver's default path
-// options, which match the options in its replay records from the same machine. Built this way, the
-// trajectory's second 3 Hz sample reproduces the position the driver streamed to four decimals.
+// The driver wrote no replay record, since generation produced a trajectory. This one was rebuilt
+// from the move's realtime capture: the waypoints and limits as captured, and the driver's default
+// path options, which match the options in its replay records from the same machine. Built this way,
+// the trajectory's second 3 Hz sample reproduces the position the driver streamed to four decimals.
 //
-// Both validators run at their default tolerance, which every other check here meets, so the
-// displaced arcs are the only failures.
+// Both validators run at their default tolerance, which every other check here meets.
 BOOST_AUTO_TEST_CASE(RSDK_14911_gp8_blend_arc_displaced_from_path) {
     constexpr auto k_trajectory_invariants_tolerance = 0.1;
     constexpr auto k_joint_kinematics_tolerance = 0.1;

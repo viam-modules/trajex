@@ -231,12 +231,9 @@ BOOST_AUTO_TEST_CASE(circular_blend_collinear_no_blend) {
     }
 }
 
-// Regression (RSDK-13338 field failure): three 6-DOF waypoints from a GP12 realtime plan whose
-// corner turns by less than acos can resolve (its floor is 1.5e-8 rad). The arc's center was placed
-// along a bisector that was rounding noise, and at the min_blend_curvature radius cap the frame built
-// from it was not perpendicular, so construction threw. Arcs are now described from their apex with a
-// frame that trusts the longer diagonal, so the corner blends at the curvature cap and the path meets
-// its contract.
+// This is the regression test for RSDK-13338. Three 6-DOF waypoints from a GP12 realtime plan form
+// a corner that turns by less than acos can resolve (its floor is 1.5e-8 rad). The corner must
+// blend at the curvature cap and the path must meet its contract.
 BOOST_AUTO_TEST_CASE(circular_blend_near_collinear_dense_waypoints_blends_at_curvature_cap) {
     using namespace viam::trajex::totg;
 
@@ -262,20 +259,16 @@ BOOST_AUTO_TEST_CASE(circular_blend_near_collinear_dense_waypoints_blends_at_cur
     validate_path_quality(p, waypoint_accumulator{waypoints}, opts);
 }
 
-// Regression (RSDK-14911 field failure): three consecutive waypoints from a GP8 sanding move whose
-// corner turns by 1.467e-13 rad. In doubles the cosine of that angle rounds to 1 - 2^-53, so acos
-// reports its precision floor of 1.49e-8, and the bisector the arc's center was placed along is a
-// difference of two unit vectors equal to about 1e-16, so its direction is noise. With the radius
-// at the min_blend_curvature cap of 1e5, the center landed tens of units away, and orthogonalizing
-// the basis kept the arc constructible but carried it along its tangent with the center. Generation
-// never noticed, since integration reads only tangent and curvature, and a sample that landed on the
-// arc streamed a position 25 rad from the path.
+// This is the regression test for RSDK-14911. Three consecutive waypoints from a GP8 sanding move
+// form a corner that turns by 1.467e-13 rad, far below what acos can resolve, and the radius sits
+// at the min_blend_curvature cap of 1e5. The arc must stay on the path.
 //
-// The expected geometry is what the bounds imply for the corner's true angle: the deviation budget
-// does not bind, so the trim is the min_blend_curvature cap, tan(angle / 2) / kmin, the curvature is
+// The expected geometry is what the bounds imply for the corner's true angle. The deviation budget
+// doesn't bind, so the trim is the min_blend_curvature cap, tan(angle / 2) / kmin, the curvature is
 // kmin up to the refit of the radius to the arc's span on the path, and the arc sweeps the true angle.
-// The angle and arc length carry a 1% tolerance, which is how closely doubles can resolve a turn this
-// small. Any change to which case these bounds produce here should be a deliberate change to this test.
+// The angle and arc length get a 1% tolerance, which is how closely doubles resolve a turn this
+// small. Any change in which case these bounds produce here should be a deliberate change to this
+// test.
 BOOST_AUTO_TEST_CASE(circular_blend_at_min_curvature_cap_stays_on_path) {
     using namespace viam::trajex::totg;
     using viam::trajex::arc_length;
@@ -286,7 +279,7 @@ BOOST_AUTO_TEST_CASE(circular_blend_at_min_curvature_cap_stays_on_path) {
         {-0.11730300284814804, 1.0953483486544517, -0.15849620874963882, 3.294503073115002, 0.28708480197312675, -3.696089400425196},
     };
 
-    // The production config: blend tolerance 0.1, no colinearization, and the default curvature limits.
+    // This is the production config: blend tolerance 0.1, no colinearization, and the default curvature limits.
     const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1));
 
     BOOST_REQUIRE_EQUAL(path_type_sequence(p), "LCL");
@@ -323,8 +316,7 @@ BOOST_AUTO_TEST_CASE(circular_blend_at_min_curvature_cap_stays_on_path) {
 
 // Corners that nearly reverse, blended into arcs. An arc's frame and angle come from the sum and
 // the difference of the incoming and outgoing directions, and at a near reversal it is the sum that
-// cancels. Built by trusting the sum, or with the angle from acos, an arc met its lines about a
-// thousand eps off in tangent at the closest of these gaps. Each end must now meet its line within
+// cancels, so this is where the frame is hardest to get right. Each end must meet its line within
 // the path's contract, which validate_path_quality enforces, and the arc must sweep the true angle.
 BOOST_AUTO_TEST_CASE(circular_blend_near_reversal_meets_its_lines) {
     using namespace viam::trajex::totg;
@@ -335,7 +327,7 @@ BOOST_AUTO_TEST_CASE(circular_blend_near_reversal_meets_its_lines) {
     constexpr std::size_t k_dof = 3;
     constexpr double k_angle_bound = (k_dof + 4) * std::numbers::pi * std::numeric_limits<double>::epsilon();
 
-    // Directions off the axes so that every coordinate rounds.
+    // The directions are off the axes so that every coordinate rounds.
     const xvector<> in = xvector<>{1.0, 2.0, 3.0} / std::sqrt(14.0);
     const xvector<> perpendicular = xvector<>{3.0, 0.0, -1.0} / std::sqrt(10.0);
     const xvector<> corner = {0.3, -0.7, 1.1};
@@ -729,7 +721,7 @@ BOOST_AUTO_TEST_CASE(near_collinear_emits_capped_arc) {
 }
 
 // Same near-collinear geometry, but with a tight min_blend_curvature=1.0 (max radius=1.0).
-// The natural blend radius is ~50000; the cap clamps it to 1.0, which the refit of the radius to
+// The natural blend radius is about 500; the cap clamps it to 1.0, which the refit of the radius to
 // the arc's span on the path may move by its bound and no more.
 BOOST_AUTO_TEST_CASE(near_collinear_arc_radius_respects_min_curvature) {
     using namespace viam::trajex::totg;
@@ -815,7 +807,7 @@ BOOST_AUTO_TEST_CASE(blends_taking_half_of_the_same_leg_emit_adjacent_arcs) {
     BOOST_CHECK_EQUAL(path_type_sequence(p), "LCCL");
 }
 
-// A corner whose arc would span less than the path can resolve where it falls. A turn of 1e-6 at the
+// This corner's arc would span less than the path can resolve where it falls. A turn of 1e-6 at the
 // radius a min_blend_curvature of 1e12 allows is an arc 1e-18 long, starting at arc length 1, where
 // adjacent doubles are 2.2e-16 apart. There is nowhere on the path to put that arc, so the corner
 // must be left unblended rather than emitted as a segment with no interior.
@@ -832,11 +824,11 @@ BOOST_AUTO_TEST_CASE(corner_whose_arc_has_no_span_is_left_unblended) {
     validate_path_quality(p, waypoint_accumulator{waypoints}, opts);
 }
 
-// Two corners joined by a short leg, whose blends leave a line of 1e-6 between them. That line starts
+// Two corners are joined by a short leg whose blends leave a line of 1e-6 between them. The line starts
 // at the first blend's exit point, which is rounded, so a direction rebuilt from there to the next
-// corner, about half the leg away, is off by about eps |q| over half the leg: hundreds of eps for a
-// 1e-3 leg. The line's direction is the leg's, so path::k_tangent_error_bound_ulps holds it to within
-// that many ULPs, as it holds each arc's end, and the two sides of each join to twice that of each
+// corner, about half the leg away, would be off by about eps |q| over half the leg: hundreds of eps
+// for a 1e-3 leg. The line takes the leg's direction instead, so path::k_tangent_error_bound_ulps
+// holds it as it holds each arc's end, and the two sides of each join are within twice that of each
 // other. The two corners turn by the same angle, so one deviation sets both trims.
 BOOST_AUTO_TEST_CASE(short_line_between_blends_meets_its_arcs) {
     using namespace viam::trajex::totg;
@@ -845,8 +837,8 @@ BOOST_AUTO_TEST_CASE(short_line_between_blends_meets_its_arcs) {
     constexpr auto k_leg = 1e-3;
     constexpr auto k_leftover = 1e-6;
 
-    // Directions off the axes so that every coordinate rounds. The third is the first reflected
-    // through the second, so both corners turn by the angle between the first two.
+    // The directions are off the axes so that every coordinate rounds. The third is the first
+    // reflected through the second, so both corners turn by the angle between the first two.
     const xvector<> first_direction = xvector<>{1.0, 2.0, 3.0} / std::sqrt(14.0);
     const xvector<> second_direction = xvector<>{3.0, 1.0, -1.0} / std::sqrt(11.0);
     const xvector<> third_direction = (2.0 * xt::sum(first_direction * second_direction)() * second_direction) - first_direction;
@@ -877,9 +869,9 @@ BOOST_AUTO_TEST_CASE(short_line_between_blends_meets_its_arcs) {
     validate_path_quality(p, waypoint_accumulator{waypoints}, opts);
 }
 
-// A corner turning by 1e-9, which the dot product of its two directions cannot see: cos(1e-9) rounds
-// to exactly 1. Here the outgoing direction (1, 1e-9) is its own normalization, so the dot product is
-// exactly 1 although the directions differ. The corner turns, so it must be blended.
+// This corner turns by 1e-9, which the dot product of its two directions cannot see, since cos(1e-9)
+// rounds to exactly 1. Here the outgoing direction (1, 1e-9) is its own normalization, so the dot
+// product is exactly 1 although the directions differ. The corner turns, so it must be blended.
 // path::k_tangent_error_bound_ulps holds each side of a join to within that many ULPs of the tangent
 // they share, and so to twice that of each other.
 BOOST_AUTO_TEST_CASE(corner_turning_below_dot_product_resolution_is_blended) {

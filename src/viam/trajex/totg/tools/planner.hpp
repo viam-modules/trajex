@@ -157,7 +157,7 @@ class planner_base {
     std::size_t processed_waypoint_count() const noexcept;
 
     ///
-    /// Path construction options derived from the planner configuration.
+    /// Builds the path construction options the planner configuration implies.
     ///
     /// These are the options TOTG builds its paths with.
     ///

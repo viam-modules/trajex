@@ -106,10 +106,10 @@ void validate_path_quality(const path& p, const waypoint_accumulator& waypoints,
 
     const std::vector<path::segment::view> segments(p.begin(), p.end());
 
-    // The size of the coordinates where each segment's positions are computed. A position on a segment
-    // sums its start or apex, no larger than its ends plus its length, and an offset no larger than its
-    // length, so the larger end plus the length bounds every term. Scaling per segment rather than by the
-    // whole path keeps a single far waypoint from loosening the bound everywhere else.
+    // This is the size of the coordinates where each segment's positions are computed. A position on a
+    // segment sums its start or apex with an offset. Neither term is larger than the segment's ends
+    // plus its length, so that is the scale. We scale per segment rather than by the whole path so
+    // that one far waypoint doesn't loosen the bound everywhere else.
     std::vector<double> scales;
     scales.reserve(segments.size());
     for (const auto& segment : segments) {
@@ -134,8 +134,8 @@ void validate_path_quality(const path& p, const waypoint_accumulator& waypoints,
             BOOST_TEST_CONTEXT("Segment " << k << " at s = " << segment.start()) {
                 BOOST_CHECK(segment.has_interior());
 
-                // A unit tangent within k_tangent_error_bound_ulps of one has a norm within that many ULPs
-                // of 1, and taking the norm sums dof squares, which rounds by at most (dof / 2 + 1) eps
+                // A unit tangent within k_tangent_error_bound_ulps of one has a norm within that many
+                // ULPs of 1. Taking the norm sums dof squares, which rounds by at most (dof / 2 + 1) eps
                 // relative.
                 const auto tangent_norm_bound = (path::k_tangent_error_bound_ulps + (dof / 2.0) + 1.0) * eps;
                 BOOST_CHECK_SMALL(xt::norm_l2(segment.tangent(segment.start()))() - 1.0, tangent_norm_bound);
@@ -143,12 +143,12 @@ void validate_path_quality(const path& p, const waypoint_accumulator& waypoints,
 
                 if (segment.is<path::segment::circular>()) {
                     // An arc traversed at unit speed turns its tangent by its length times its curvature,
-                    // which is less than pi. The angle between two directions moves by no more than either
-                    // direction does, so each end's tangent contributes at most k_tangent_error_bound_ulps.
-                    // Computing that angle normalizes two vectors and takes the norms of their difference and
-                    // sum, each a sum of dof terms, which rounds by under (dof + 4) eps in all. The curvature's
-                    // relative error, k_curvature_error_bound_ulps, and the rounding of the product with the
-                    // length carry across the angle, at most pi.
+                    // which is less than pi. The angle between two directions moves by no more than
+                    // either direction does, so each end's tangent contributes at most
+                    // k_tangent_error_bound_ulps. Computing the angle normalizes two vectors and takes
+                    // the norms of their difference and sum, which rounds by under (dof + 4) eps in all.
+                    // The curvature's relative error and the rounding of its product with the length
+                    // both scale with the angle, which is at most pi.
                     const auto turning_bound = ((2.0 * path::k_tangent_error_bound_ulps) + dof + 4.0 +
                                                 (std::numbers::pi * (path::k_curvature_error_bound_ulps + 1.0))) *
                                                eps;
@@ -165,13 +165,13 @@ void validate_path_quality(const path& p, const waypoint_accumulator& waypoints,
             }
         }
 
-        // Neighbors meet in position, and, where an arc is involved, in tangent; a join of two lines is a
-        // corner left unblended, which turns by design. Each side of a join is within
-        // k_position_error_bound_ulps of the same exact point, scaled by the larger of the two segments'
-        // coordinates, plus an ULP of the arc length at the join for addressing the end of the segment
-        // before it. Refitting an arc's radius to its span on the path moves the arc's ends by at most the
-        // rounding of that span, another ULP of the arc length there. Each side's tangent, a line's as much
-        // as an arc's, is within k_tangent_error_bound_ulps of the exact tangent they share.
+        // Neighbours meet in position, and in tangent wherever an arc is involved. A join of two lines
+        // is a corner left unblended, which turns by design. Each side of a join is within
+        // k_position_error_bound_ulps of the same exact point, scaled by the larger of the two
+        // segments' coordinates, plus an ULP of arc length for addressing the end of the earlier
+        // segment. Refitting an arc's radius moves its ends by at most the rounding of its span,
+        // another ULP of arc length. Each side's tangent, a line's as much as an arc's, is within
+        // k_tangent_error_bound_ulps of the exact tangent they share.
         for (std::size_t k = 1; k < segments.size(); ++k) {
             const auto& before = segments[k - 1];
             const auto& after = segments[k];
@@ -187,19 +187,19 @@ void validate_path_quality(const path& p, const waypoint_accumulator& waypoints,
             }
         }
 
-        // The path visits every waypoint, in order, within the deviation budget: each waypoint is within
-        // budget of the path somewhere at or after where its predecessor was visited. The search walks
-        // forward from that visit and takes the first point within budget. It resumes on the segment the
-        // predecessor was visited on, since consecutive waypoints can share a segment, as colinearized ones
-        // do. There it must not look behind the previous visit: a path that reverses comes back over a
-        // waypoint's position on a later segment, but the segment the search resumes on can pass that
-        // position too, earlier, before the predecessor. On a segment the distance to a point falls to a
-        // minimum and rises again, along a line and along an arc turning by less than pi alike, so the
-        // nearest point not before the previous visit is the segment's nearest point clamped to it.
+        // The path visits every waypoint, in order, within the deviation budget. Each waypoint must be
+        // within budget of the path somewhere at or after the point where its predecessor was visited.
+        // We walk forward from that visit and take the first point within budget. We resume on the
+        // segment the predecessor was visited on, since consecutive waypoints can share a segment, as
+        // colinearized ones do. On that segment we must not look behind the previous visit: a path
+        // that reverses comes back over a waypoint's position on a later segment, and the segment we
+        // resume on can pass that position too, before the predecessor. Along a line, and along an arc
+        // turning by less than pi, the distance to a point falls to one minimum and rises again. So
+        // the nearest point not before the previous visit is the segment's nearest point, clamped.
         //
-        // The exact path passes within the larger deviation budget of each waypoint, and a computed position
-        // on it within k_position_error_bound_ulps of that, plus an ULP of the arc length for addressing it
-        // and another for the refit of an arc.
+        // The exact path passes within the larger deviation budget of each waypoint. A computed
+        // position on it is within k_position_error_bound_ulps of that, plus an ULP of arc length for
+        // addressing it and another for the refit of an arc.
         const auto deviation_budget = std::max(opts.max_blend_deviation(), opts.max_linear_deviation());
         std::size_t match = 0;
         auto previous_visit = arc_length{0.0};

@@ -33,9 +33,9 @@ void require_dof(std::span<const double> out, std::size_t dof) {
     }
 }
 
-// Whether a representable arc length lies strictly between a and b, in either order. Step one value
-// from a toward b: if that falls short of b, a value lies between. Path construction asks before it
-// builds a segment, since a segment with no length cannot be built at all.
+// Returns true when some representable arc length lies strictly between a and b, in either order. We
+// step one value from a toward b, and if that lands short of b there is room between them. Path
+// construction asks this before building a segment, since a segment with no length can't be built.
 bool has_interior(arc_length a, arc_length b) noexcept {
     const auto from = static_cast<double>(a);
     const auto to = static_cast<double>(b);
@@ -117,20 +117,20 @@ path::segment::linear::linear(xrank_checked<xvector<>> start, xrank_checked<xvec
 path::segment::circular::circular(
     xrank_checked<xvector<>> apex, xrank_checked<xvector<>> t, xrank_checked<xvector<>> n, double radius, double angle_rads)
     : apex{std::move(apex).take()}, t{std::move(t).take()}, n{std::move(n).take()}, radius{radius}, angle_rads{angle_rads} {
-    // The comparisons below are false for NaN, so non-finite input must be rejected first.
+    // NaN compares false against every bound below, so we reject non-finite input first.
     if (!xt::all(xt::isfinite(this->apex)) || !xt::all(xt::isfinite(this->t)) || !xt::all(xt::isfinite(this->n)) ||
         !std::isfinite(radius) || !std::isfinite(angle_rads)) {
         throw std::invalid_argument{"Circular segment: geometry must be finite"};
     }
 
-    // A blend turns by less than pi, which is what leaves each joint at most one extremum on it.
+    // A blend turns by less than pi. That is what guarantees each joint at most one extremum on the arc.
     if (radius <= 0.0 || angle_rads <= 0.0 || angle_rads >= std::numbers::pi) {
         throw std::invalid_argument{"Circular segment: radius must be positive and angle must lie in (0, pi)"};
     }
 
-    // Normalizing a vector rounds once per coordinate, as does summing its squares again here to
-    // check it, and the residual a Gram-Schmidt step leaves in a dot product is of the same kind.
-    // So the bound is a few ULPs per coordinate, not a tolerance on the geometry.
+    // Normalizing rounds once per coordinate, and so does summing the squares here to check it; the
+    // residual a Gram-Schmidt step leaves in the dot product is the same size. So this is a rounding
+    // allowance of a few ULPs per coordinate, not a tolerance on the geometry.
     constexpr std::size_t k_rounding_ulps_per_coordinate = 4;
     const auto rounding_ulps = k_rounding_ulps_per_coordinate * this->t.size();
     const auto rounding_bound = static_cast<double>(rounding_ulps) * std::numeric_limits<double>::epsilon();
@@ -211,13 +211,13 @@ void path::segment::view::configuration(arc_length s, std::span<double> out) con
             } else if constexpr (std::is_same_v<T, segment::circular>) {
                 require_dof(out, seg_data.apex.shape(0));
 
-                // Circular arc configuration - Kunz & Stilman equation 7, measured from the apex, so
-                // that theta runs over [-angle / 2, angle / 2]. The arc's span on the path is
-                // radius * angle rounded into the path's arc length, so theta is taken in proportion to
-                // that span rather than as local_s / radius: both ends then land exactly on
-                // +-angle / 2, where the rounding divided by a small radius would turn the tangent
-                // away from its neighbour's. The 1 - cos(theta) term is written as 2 sin^2(theta / 2),
-                // which keeps its digits when theta is small.
+                // This is Kunz & Stilman equation 7, measured from the apex so that theta runs over
+                // [-angle / 2, angle / 2]. We take theta in proportion to the arc's span on the path
+                // rather than as local_s / radius. The span is radius * angle rounded into the path's
+                // arc length, and that rounding divided by a small radius would turn the exit tangent
+                // away from the next segment's; in proportion to the span, both ends land exactly on
+                // +-angle / 2. The 1 - cos(theta) term is written as 2 sin^2(theta / 2) to keep its
+                // digits when theta is small.
                 const auto theta = seg_data.angle_rads * ((local_s / length) - 0.5);
                 const auto sin_half_theta = std::sin(theta / 2.0);
                 const auto along_t = seg_data.radius * std::sin(theta);
@@ -253,7 +253,7 @@ void path::segment::view::tangent(arc_length s, std::span<double> out) const {
             } else if constexpr (std::is_same_v<T, segment::circular>) {
                 require_dof(out, seg_data.apex.shape(0));
 
-                // Circular arc unit tangent - Kunz & Stilman equation 8, with theta as for the configuration:
+                // This is Kunz & Stilman equation 8, with theta measured from the apex as in configuration().
                 const auto theta = seg_data.angle_rads * ((local_s / length) - 0.5);
                 const auto cos_theta = std::cos(theta);
                 const auto sin_theta = std::sin(theta);
@@ -286,7 +286,7 @@ void path::segment::view::curvature(arc_length s, std::span<double> out) const {
             } else if constexpr (std::is_same_v<T, segment::circular>) {
                 require_dof(out, seg_data.apex.shape(0));
 
-                // Circular arc curvature vector - Kunz & Stilman equation 9, with theta as for the configuration:
+                // This is Kunz & Stilman equation 9, with theta measured from the apex as in configuration().
                 const auto theta = seg_data.angle_rads * ((local_s / length) - 0.5);
                 const auto cos_theta = std::cos(theta);
                 const auto sin_theta = std::sin(theta);
@@ -315,14 +315,14 @@ std::optional<arc_length> path::segment::view::coordinate_extremum(std::size_t j
                     throw std::out_of_range{"Joint index exceeds path degrees of freedom"};
                 }
 
-                // The joint's component of the tangent, cos(theta) t_i + sin(theta) n_i, is zero where
-                // tan(theta) = -t_i / n_i, which within (-pi/2, pi/2) has the single root atan(-t_i / n_i).
-                // The arc turns by less than pi, so it lies within that interval too, and any root on
-                // the arc is this one. With n_i zero there is no root inside the interval, or, if t_i
-                // is zero too, the joint does not move on the arc at all.
+                // The joint's tangent component is cos(theta) t_i + sin(theta) n_i, which is zero where
+                // tan(theta) = -t_i / n_i. Within (-pi/2, pi/2) that has the single root atan(-t_i / n_i),
+                // and since the arc turns by less than pi it lies inside that interval, so any root on
+                // the arc is this one. When n_i is zero there is no root in the interval, and if t_i is
+                // zero as well the joint doesn't move on this arc at all.
                 //
-                // The quotient is safe: t and n are unit vectors, so it is finite unless n_i is so small
-                // that it overflows, and atan takes an infinity to +-pi/2, where the root then is.
+                // The quotient is safe. t and n are unit vectors, so it can only overflow when n_i is
+                // tiny, and atan takes an infinity to +-pi/2, which is where the root is.
                 const auto t_i = seg_data.t(joint);
                 const auto n_i = seg_data.n(joint);
                 if (n_i == 0.0) {
@@ -330,9 +330,9 @@ std::optional<arc_length> path::segment::view::coordinate_extremum(std::size_t j
                 }
                 const auto theta = std::atan(-t_i / n_i);
 
-                // Report the root wherever it falls, on the arc or on the circle beyond it. Whether one
-                // just off the arc should count is the caller's to decide, and it needs to know how far
-                // off it is to do that.
+                // We report the root wherever it falls, on the arc or beyond its end on the circle.
+                // Whether a root just off the arc should count is the caller's decision, and it needs
+                // to know how far off the root is to make it.
                 return start_ + (length() * ((theta / seg_data.angle_rads) + 0.5));
             }
         },
@@ -356,11 +356,12 @@ arc_length path::segment::view::nearest(std::span<const double> configuration) c
             } else if constexpr (std::is_same_v<T, segment::circular>) {
                 require_dof(configuration, seg_data.apex.shape(0));
 
-                // The arc lies on a circle about apex + radius * n, and the configuration's direction
-                // from that center within the arc's plane gives the angle of the nearest point of the
-                // circle. The arc turns by less than pi, so clamping that angle to the arc gives the
-                // nearest point of the arc. Forming the center would cost about radius * eps at a capped
-                // radius, so the two in-plane components are taken relative to the apex instead.
+                // The arc lies on a circle about apex + radius * n. The direction from that center to
+                // the configuration, within the arc's plane, gives the angle of the nearest point on
+                // the circle, and because the arc turns by less than pi, clamping that angle to the arc
+                // gives the nearest point on the arc. We don't form the center, which would cost about
+                // radius * eps at a capped radius; the two in-plane components are taken relative to
+                // the apex instead.
                 double along_t = 0.0;
                 double along_n = 0.0;
                 for (std::size_t i = 0; i < configuration.size(); ++i) {
@@ -422,17 +423,16 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         throw std::invalid_argument{"Max blend curvature must be >= min blend curvature"};
     }
 
-    // Build a path from waypoints in two passes. The first, colinearization, drops waypoints that lie
-    // within a tolerance tube of a straight run through their neighbours, so a run of nearly straight
-    // waypoints becomes one leg. The second walks the waypoints that remain, leg by leg: each corner
-    // between two legs either takes a circular blend, tangent to both legs and trimming each by the
-    // same distance, or is left as a hard corner, and the stretch of each leg that its blends leave
-    // behind is emitted as a line. Both passes keep the path within the deviation budgets in the
-    // options.
+    // We build the path in two passes. Colinearization first drops waypoints that lie within a
+    // tolerance tube of a straight run through their neighbours, so a nearly straight run of
+    // waypoints becomes one leg. Then we walk the remaining waypoints leg by leg. At each corner
+    // between two legs we either blend with a circular arc, tangent to both legs and trimming the
+    // same distance from each, or leave a hard corner, and whatever a leg's blends leave of it is
+    // emitted as a line. Both passes keep the path within the deviation budgets in the options.
 
-    // The arc a corner would get, as raw geometry rather than a constructed segment. The loop decides
-    // whether the arc has room on the path, and only then builds the one segment::circular, with its
-    // radius refit to that room, so the arc is constructed and validated once, on exactly what is stored.
+    // This is the arc a corner would get, as raw geometry rather than a constructed segment. The loop decides
+    // whether there is room for the arc on the path and only then builds the segment::circular, with
+    // the radius refit to that room, so each arc is constructed and validated once, as stored.
     struct blend_geometry {
         xvector<> apex;          // Point of the arc nearest the corner
         xvector<> apex_tangent;  // Unit tangent at the apex
@@ -444,23 +444,23 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         bool takes_half_outgoing;  // trim_distance is exactly half of the outgoing segment
     };
 
-    // A leg is the straight run from one waypoint to the next. Its direction and length are measured
-    // once, from the two waypoints, and everything built on the leg is built from that one measurement:
-    // the blend at either end takes its direction and caps its trim at half the length, and the line
-    // left between the blends runs along the same direction. A direction rebuilt from a blend's exit
-    // point would not do, because the exit point is rounded, and over the half leg or so left to the
-    // locus that rounding would turn the rebuilt direction by up to eps |q| over that distance.
+    // A leg is the straight run from one waypoint to the next. We measure its direction and length
+    // once and build everything on the leg from that one measurement. The blend at either end takes
+    // the leg's direction and caps its trim at half the leg's length. The line left between the
+    // blends runs along the same direction. We don't rebuild a direction from a blend's exit point,
+    // because the exit point is rounded, and over the half leg or so left to the locus that rounding
+    // turns the rebuilt direction by up to eps |q| over that distance.
     struct leg {
         xvector<> unit;
         double length;
 
-        // Whether the blend at the start of the leg took exactly half of it. False when that end of
-        // the leg is a hard waypoint rather than a blend.
+        // True when the blend at the start of this leg took exactly half of it, false when the leg
+        // starts at a hard waypoint.
         bool half_taken_at_start;
     };
 
-    // A zero-length leg has no direction, and nothing built on it could have one either, so it is
-    // refused here, where the cause can be named, rather than where a segment would later reject it.
+    // A zero-length leg has no direction, and nothing built on it could have one either. We refuse
+    // it here, where we can name the cause, rather than let a segment constructor reject it later.
     const auto measure_leg = [](leg& measured, const auto& from, const auto& to) {
         xt::noalias(measured.unit) = to - from;
         measured.length = xt::norm_l2(measured.unit)();
@@ -479,55 +479,51 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
             return std::nullopt;
         }
 
-        // The two unit directions span a rhombus, and its diagonals carry everything the blend needs.
-        // Their sum lies along the arc's tangent at its apex, and their difference along its normal
-        // there, toward the inside of the corner. For a turn by alpha their lengths are
-        // 2 cos(alpha/2) and 2 sin(alpha/2), each good to about eps absolute.
+        // The two unit directions span a rhombus whose diagonals carry everything the blend needs. The
+        // sum lies along the arc's tangent at its apex and the difference along its normal there,
+        // pointing into the corner. For a turn by alpha their lengths are 2 cos(alpha/2) and
+        // 2 sin(alpha/2), each good to about eps absolute.
         xvector<> apex_tangent = incoming.unit + outgoing.unit;
         xvector<> apex_normal = outgoing.unit - incoming.unit;
         const auto apex_tangent_length = xt::norm_l2(apex_tangent)();
         const auto apex_normal_length = xt::norm_l2(apex_normal)();
 
-        // Make the two diagonals an orthonormal frame. A rhombus's diagonals cross at right angles,
-        // because its sides are equal, so in exact arithmetic these two are already perpendicular. And
-        // because its sides here are unit, the diagonals share a fixed budget of length between them:
-        // as one shrinks the other grows, and the longer is never shorter than sqrt(2). So the longer
-        // is always well measured. The shorter is not. It is what is left when two nearly equal
-        // directions cancel, at a shallow corner, or two nearly opposite ones do, at a near reversal,
-        // and the rounding in that cancellation is about the same size whatever is left; when little is
-        // left, its direction is mostly rounding, and no longer perpendicular to the longer in fact.
-        // So trust the longer: make it unit, and keep only the part of the shorter perpendicular to
-        // it, which is the part the geometry guarantees. What rounding the shorter still carries can
-        // only tilt the plane the arc lies in, and the arc's ends feel that tilt scaled by the shorter's
-        // length, which is small exactly when the tilt is large, so they meet the incoming and outgoing
-        // directions to rounding at any angle.
+        // Make the diagonals an orthonormal frame. In exact arithmetic they are already perpendicular.
+        // The sides are unit, so |sum|^2 + |diff|^2 = 4 and the longer diagonal is at least sqrt(2):
+        // always well measured. The shorter is what survives a cancellation, of nearly equal directions
+        // at a shallow corner or nearly opposite ones at a near reversal, and when little survives its
+        // direction is mostly rounding. So we trust the longer. We make it unit and keep only the part
+        // of the shorter that is perpendicular to it. The rounding the shorter still carries can only
+        // tilt the plane of the arc, and the arc's ends feel that tilt scaled by the shorter's length,
+        // which is small exactly when the tilt is large. That is why the ends meet the incoming and
+        // outgoing directions to rounding at any angle.
         auto [longer, shorter] =
             (apex_normal_length > apex_tangent_length) ? std::tie(apex_normal, apex_tangent) : std::tie(apex_tangent, apex_normal);
         longer /= std::max(apex_tangent_length, apex_normal_length);
         xt::noalias(shorter) -= xt::sum(shorter * longer)() * longer;
         const auto shorter_length = xt::norm_l2(shorter)();
 
-        // Nothing perpendicular remains only when the directions are parallel, the same or opposite,
-        // to rounding: equal directions, an exact reversal, or directions on one line whose
-        // normalizations rounded differently. Such a corner has no plane to put an arc in. Where the
-        // directions are the same it does not turn, and needs no blend, and TOTG won't mandate
-        // s_dot = 0 there; where they are opposite no arc is defined. These are the only exclusions:
-        // a corner turning by any amount between, however near 0 or pi, is left to the curvature
-        // bounds below. The dot product of the directions cannot draw this line, since it is
-        // 1 - alpha^2 / 2, which rounds to exactly 1 for turns below about 1e-8.
+        // Nothing perpendicular survives only when the directions are parallel to rounding: the same,
+        // an exact reversal, or on one line with normalizations that rounded differently. Such a
+        // corner has no plane to put an arc in. Where the directions are the same the corner doesn't
+        // turn, so it needs no blend and TOTG won't mandate s_dot = 0 there. Where they are opposite
+        // there is no arc at all. These are the only exclusions. Any corner turning by an amount in
+        // between, however close to 0 or pi, goes on to the curvature bounds below. The dot product
+        // of the directions can't draw this line, because it is 1 - alpha^2 / 2, which rounds to
+        // exactly 1 for turns below about 1e-8.
         if (shorter_length == 0.0) {
             return std::nullopt;
         }
         shorter /= shorter_length;
 
-        // Kunz & Stilman equation 2 takes the angle as the arccosine of the dot product, which has
-        // no digits near 0 or pi: a corner turning by 1.5e-13 reads as its floor of 1.5e-8
-        // (see RSDK-14911). The diagonals give it to rounding at any angle, and the tangents of its half
-        // and quarter as plain ratios, the quarter by tan(alpha/4) = sin(alpha/2) / (1 + cos(alpha/2)).
-        // Neither length is zero, so the angle is positive. It can round to pi, which
-        // segment::circular rejects, only where the tangent diagonal is below about eps of the normal
-        // diagonal, and there tan(alpha/2) exceeds about 1/eps, which the near-reversal check below
-        // rejects for any max_blend_curvature short of 1 / (eps * trim).
+        // Kunz & Stilman equation 2 takes the angle as the arccosine of the dot product. That has no
+        // digits near 0 or pi: a corner turning by 1.5e-13 reads as acos's floor of 1.5e-8 (RSDK-14911).
+        // The diagonals give the angle to rounding at any size. The half and quarter angle tangents
+        // fall out as ratios of the same two lengths, the quarter via
+        // tan(alpha/4) = sin(alpha/2) / (1 + cos(alpha/2)). Neither length is zero, so the angle is
+        // positive. It rounds to pi, which segment::circular rejects, only when the tangent diagonal is
+        // below about eps of the normal one. There tan(alpha/2) is above about 1/eps, and the
+        // near-reversal check below rejects that for any max_blend_curvature under 1 / (eps * trim).
         const auto angle = 2.0 * std::atan2(apex_normal_length, apex_tangent_length);
         const auto tan_half = apex_normal_length / apex_tangent_length;
         const auto tan_quarter = apex_normal_length / (2.0 + apex_tangent_length);
@@ -552,22 +548,22 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
             return std::nullopt;
         }
 
-        // Near-collinear: cap trim at tan(alpha/2)/kmin, which makes the radius 1/kmin to within the
-        // rounding of the two divisions. Between the two curvature checks the radius lies in
+        // At a near-collinear corner, cap the trim at tan(alpha/2)/kmin, which puts the radius at 1/kmin
+        // to within the rounding of two divisions. Between the two curvature checks the radius lies in
         // [1/kmax, 1/kmin], so dividing by tan(alpha/2) here can neither blow up nor vanish.
         const auto trim_distance = std::min(natural_trim, tan_half / opts.min_blend_curvature());
         const auto radius = trim_distance / tan_half;
 
-        // Construct the arc from its apex rather than from its center as Kunz & Stilman equations
-        // 5-6 do. The paper puts the center on the bisector at radius / cos(alpha/2) from the corner,
-        // but the bisector is the difference of two unit vectors, which at a shallow corner are
-        // nearly equal, so its direction has few correct digits, and at the min_blend_curvature
-        // radius cap that error carries the center, and the whole arc with it, far off the path
-        // (see RSDK-14911). Everything about the apex is bounded by the arc's length instead.
+        // We construct the arc from its apex rather than from its center as Kunz & Stilman equations
+        // 5-6 do. The paper puts the center on the bisector, radius / cos(alpha/2) from the corner. The
+        // bisector is the difference of two unit vectors, and at a shallow corner they are nearly
+        // equal, so its direction has few correct digits. At the min_blend_curvature radius cap that
+        // error would carry the center, and the whole arc with it, far off the path (RSDK-14911).
+        // Everything about the apex is bounded by the arc's length instead.
         //
-        // The apex is the point of the arc nearest the corner, at the blend's deviation from it,
-        // which is trim * tan(alpha/4) by the relation the trim was computed from above. This needs
-        // no cosine of the half angle, which vanishes at a reversal.
+        // The apex is the point of the arc nearest the corner, at the blend's deviation from it. That
+        // deviation is trim * tan(alpha/4), by the same relation the trim came from. No cosine of the
+        // half angle is needed, which matters at a reversal, where it vanishes.
         xvector<> apex = corner + ((trim_distance * tan_quarter) * apex_normal);
 
         // Report which halves the trim took, by the same expressions that capped it. Halving is exact,
@@ -607,8 +603,8 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
 
         // Deviation is measured against a tube of this radius around the segment. Hoisted
         // because the enclosing branch has already established that the tolerance is non-zero.
-        // The test below compares squared lengths, so the radius is squared once here and no
-        // square root is taken per locus.
+        // We compare squared lengths below, so the radius is squared once here and no square root is
+        // taken per locus.
         const auto radius = opts.max_linear_deviation() / 2.0;
         const auto radius_sq = radius * radius;
 
@@ -616,10 +612,10 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         // next are the same position, because the locus is then an intentional intermediate
         // goal rather than a point along a line, and nothing may be coalesced through it.
         //
-        // The squared length is computed first and stands in for the elementwise check on every
-        // real segment: a nonzero sum of squares cannot come from a zero vector. A zero sum can,
-        // or can come from components so small their squares underflow, so only then does the
-        // elementwise check decide.
+        // We compute the squared length first and let it stand in for the elementwise check on every
+        // real segment, since a nonzero sum of squares can't come from a zero vector. A zero sum can,
+        // or can come from components so small that their squares underflow, so only then do we check
+        // the elements.
         const auto begin_segment = [&segment_ctx](const auto& start, const auto& next) -> bool {
             xt::noalias(segment_ctx.start_to_next) = next - start;
             segment_ctx.length_sq = xt::sum(segment_ctx.start_to_next * segment_ctx.start_to_next)();
@@ -689,8 +685,8 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
     }
 
     // Each locus emits at most a line and an arc, so this bounds the segment count. Real paths fill
-    // about nine tenths of it, and the path keeps the slack, in exchange for never moving a segment
-    // to grow the vector.
+    // about nine tenths of it. The path keeps the slack, and in exchange no segment is ever moved to
+    // grow the vector.
     std::vector<positioned_segment> segments;
     segments.reserve(2 * (std::ranges::size(waypoints_range) - 1));
     arc_length cumulative_length{0.0};
@@ -701,8 +697,8 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
     // waypoints rather than one of the original waypoints in the accumulator.
     xvector<> current_position = *waypoints_range.begin();
 
-    // The leg into the locus and the leg out of it. Each leg is measured once, looking ahead from
-    // the locus it leaves, and is carried over to be the incoming leg of the locus it reaches.
+    // These are the leg into the locus and the leg out of it. Each leg is measured once, looking ahead
+    // from the locus it leaves, and carried over to be the incoming leg at the locus it reaches.
     leg incoming{xvector<>::from_shape(std::array<std::size_t, 1>{waypoints.dof()}), 0.0, false};
     leg outgoing{xvector<>::from_shape(std::array<std::size_t, 1>{waypoints.dof()}), 0.0, false};
     measure_leg(outgoing, *waypoints_range.begin(), *std::next(waypoints_range.begin()));
@@ -710,8 +706,8 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
     for (auto locus = std::next(waypoints_range.begin()); locus != waypoints_range.end(); ++locus) {
         auto next = std::next(locus);
 
-        // The leg measured ahead of the previous locus is the leg into this one. If there is a leg
-        // beyond this locus, measure it, and see whether the corner between the two takes a blend.
+        // The leg we measured ahead of the previous locus is the leg into this one. If there is a leg
+        // beyond this locus, measure it and see whether the corner between the two gets a blend.
         std::swap(incoming, outgoing);
         std::optional<blend_geometry> blend_opt;
         if (next != waypoints_range.end()) {
@@ -720,7 +716,7 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         }
 
         // The line into the locus starts at current_position and runs along the incoming leg. Its
-        // length is a scalar, which carries the rounding of current_position only absolutely.
+        // length is a scalar, so the rounding in current_position affects it only absolutely.
         const auto dist_to_locus = xt::norm_l2(*locus - current_position)();
 
         if (blend_opt) {
@@ -738,21 +734,20 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
             // and emit a sliver that the integrator then has to stand on.
             const bool segment_fully_consumed = incoming.half_taken_at_start && blend.takes_half_incoming;
 
-            // A segment is only worth emitting if there is somewhere to be inside it. Positions
-            // are addressed in the path's own arc length, so that means a representable value
-            // strictly between the endpoints. One ULP leaves nowhere to stand between the endpoints
-            // and no way to advance through the segment; two leaves exactly one position, which
-            // is the least that makes the segment a place rather than a boundary. This asks the
-            // number system rather than a tolerance, so it introduces no epsilon. The length must
-            // also be positive: the same rebuilt distance can fall a few ULPs short of the trim.
+            // A segment is only worth emitting if there is somewhere to be inside it. Positions are
+            // addressed in the path's own arc length, so that means a representable value strictly
+            // between the endpoints. One ULP apart leaves nowhere to stand and no way to advance
+            // through the segment. Two leaves exactly one position. This asks the number system rather
+            // than a tolerance, so there is no epsilon in it. The length must also be positive, since
+            // the distance rebuilt from the exit point can fall a few ULPs short of the trim.
             const auto incoming_line_length = dist_to_locus - blend.trim_distance;
             const bool has_incoming_line = !segment_fully_consumed && (incoming_line_length > 0.0) &&
                                            has_interior(cumulative_length, cumulative_length + arc_length{incoming_line_length});
 
-            // The arc's span on the path is radius * angle rounded into the path's arc length, which
-            // is the length it will be traversed over. An arc needs somewhere to be inside it just as a
-            // line does, and a corner that turns by little, far along the path, can have an arc whose
-            // span rounds to nothing. Such a corner is left unblended, below.
+            // The arc's span on the path is radius * angle rounded into the path's arc length. That is
+            // the length it will be traversed over, and an arc needs somewhere to be inside it just as
+            // a line does. A corner that turns by very little, far along the path, can have an arc
+            // whose span rounds to nothing. We leave such a corner unblended, below.
             auto arc_start = cumulative_length;
             if (has_incoming_line) {
                 arc_start += arc_length{incoming_line_length};
@@ -764,15 +759,15 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
                                         .start = cumulative_length});
                 }
 
-                // Refit the radius to the span, so the arc is traversed at unit speed and still turns
-                // by exactly its angle. Its ends move by about the rounding, in position only; the
-                // tangent at either end depends on the angle alone.
+                // Refit the radius to the span so the arc is traversed at unit speed and still turns by
+                // exactly its angle. Its ends move by about the rounding, in position only. The tangent
+                // at either end depends on the angle alone.
                 //
-                // This is the arc's only construction, so the geometry is validated here and not before
-                // the interior check above. Nothing is lost by the order: the frame can only fail the
-                // constructor's checks when the corner's legs were not finite, and then the radius or
-                // the angle is NaN, the span is NaN, and has_interior, whose comparisons are all true
-                // for NaN, brings us here to throw just as a construction before the check would have.
+                // This is the arc's only construction, so validation happens here, after the interior
+                // check. Nothing is lost by the order. The frame can only fail the constructor's checks
+                // when a leg was not finite. Then the radius or the angle is NaN, the span is NaN, and
+                // has_interior, whose comparisons are all true for NaN, brings us here to throw just as
+                // an earlier construction would have.
                 const auto span = static_cast<double>(arc_end - arc_start);
                 segments.push_back({.seg = segment{segment::circular{std::move(blend.apex),
                                                                      std::move(blend.apex_tangent),
@@ -791,8 +786,8 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
             }
         }
 
-        // No blend, or none with room on the path: emit the line from current_position to the locus,
-        // and stop there.
+        // There is no blend, or no room for one on the path, so we emit the line from current_position
+        // to the locus and stop there.
         segments.push_back(
             {.seg = segment{segment::linear{current_position, incoming.unit, arc_length{dist_to_locus}}}, .start = cumulative_length});
         cumulative_length += arc_length{dist_to_locus};

@@ -300,10 +300,10 @@ BOOST_AUTO_TEST_CASE(coordinate_extremum) {
     BOOST_CHECK(!linear_view.coordinate_extremum(0));
     BOOST_CHECK_THROW(linear_view.coordinate_extremum(3), std::out_of_range);
 
-    // Quarter-turn arcs of unit radius placed at s = 1 on their path, with the frame rotated so that
-    // the first coordinate's tangent component is sin(phi - root) and peaks at phi = root, and the
-    // second's is cos(phi - root), with its root a quarter turn away. The third coordinate never
-    // moves.
+    // These are quarter-turn arcs of unit radius placed at s = 1 on their path, with the frame rotated
+    // so that the first coordinate's tangent component is sin(phi - root) and peaks at phi = root,
+    // and the second's is cos(phi - root), with its root a quarter turn away. The third coordinate
+    // never moves.
     const double quarter = degrees_to_radians(90.0);
     const arc_length start{1.0};
     const auto arc_with_root_at = [&](double root) {
@@ -320,8 +320,8 @@ BOOST_AUTO_TEST_CASE(coordinate_extremum) {
         return *extremum;
     };
 
-    // A root at the apex. The second coordinate's root would be a quarter turn either side, which
-    // is not within the interval roots are taken from.
+    // The root is at the apex. The second coordinate's root would be a quarter turn either side,
+    // which is not within the interval roots are taken from.
     const auto apex_seg = arc_with_root_at(0.0);
     const path::segment::view apex_view{apex_seg, start, start + arc_length{quarter}};
     BOOST_CHECK_SMALL(apex_view.tangent(expect_root_at(apex_view, 0, 0.0))(0), 1e-15);
@@ -337,7 +337,7 @@ BOOST_AUTO_TEST_CASE(coordinate_extremum) {
     BOOST_CHECK_SMALL(near_end_view.tangent(expect_root_at(near_end_view, 0, (quarter / 2.0) - k_margin))(0), 1e-15);
     BOOST_CHECK(expect_root_at(near_end_view, 1, -(quarter / 2.0) - k_margin) < near_end_view.start());
 
-    // And the mirror image: a root near the start, and the second coordinate's past the end.
+    // This is the mirror image: the root is near the start, and the second coordinate's is past the end.
     const auto near_start_seg = arc_with_root_at(k_margin - (quarter / 2.0));
     const path::segment::view near_start_view{near_start_seg, start, start + arc_length{quarter}};
     BOOST_CHECK_SMALL(near_start_view.tangent(expect_root_at(near_start_view, 0, k_margin - (quarter / 2.0)))(0), 1e-15);
@@ -352,8 +352,8 @@ BOOST_AUTO_TEST_CASE(nearest) {
         return static_cast<double>(view.nearest(std::span<const double>{point.data(), point.size()}));
     };
 
-    // A line from (0,0,0) to (3,4,0), placed at s = 1. A point off the line projects onto it, and
-    // points beyond either end are nearest that end.
+    // The line runs from (0,0,0) to (3,4,0) and is placed at s = 1. A point off the line projects
+    // onto it, and points beyond either end are nearest that end.
     const path::segment::linear linear_data{xvector<>{0.0, 0.0, 0.0}, xvector<>{3.0, 4.0, 0.0}};
     const path::segment linear_seg{linear_data};
     const path::segment::view linear_view{linear_seg, arc_length{1.0}, arc_length{1.0} + linear_data.length};
@@ -361,9 +361,9 @@ BOOST_AUTO_TEST_CASE(nearest) {
     BOOST_CHECK_EQUAL(nearest_to(linear_view, xvector<>{-1.0, -1.0, 0.0}), 1.0);
     BOOST_CHECK_EQUAL(nearest_to(linear_view, xvector<>{10.0, 10.0, 0.0}), static_cast<double>(linear_view.end()));
 
-    // A quarter circle of unit radius about the origin, from angle -pi/4 to pi/4, placed at s = 1.
-    // A point off the circle is nearest the arc at its own angle, a point past an end is nearest
-    // that end, and so is a point on the far side of the center.
+    // The arc is a quarter circle of unit radius about the origin, from angle -pi/4 to pi/4, placed
+    // at s = 1. A point off the circle is nearest the arc at its own angle, a point past an end is
+    // nearest that end, and so is a point on the far side of the center.
     const double quarter = std::numbers::pi / 2;
     const path::segment arc_seg{path::segment::circular{xvector<>{1.0, 0.0}, xvector<>{0.0, 1.0}, xvector<>{-1.0, 0.0}, 1.0, quarter}};
     const path::segment::view arc_view{arc_seg, arc_length{1.0}, arc_length{1.0 + quarter}};

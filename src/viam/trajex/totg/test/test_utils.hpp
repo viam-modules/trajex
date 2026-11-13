@@ -25,17 +25,17 @@ void verify_path_visits_waypoints(const path& p, const xmatrix<>& waypoints, dou
 /// Example: a 3-waypoint path with a single circular blend yields "LCL".
 std::string path_type_sequence(const path& p);
 
-/// The angle between two nonzero vectors, in [0, pi], accurate at every angle including near 0 and pi.
+/// Returns the angle between two nonzero vectors, in [0, pi], accurate everywhere including near 0 and pi.
 double angle_between(const xvector<>& a, const xvector<>& b);
 
-/// How far, relative to its value, an arc's curvature may sit from the one path construction chose
-/// for it, as a fraction of that value.
+/// Returns how far an arc's curvature may sit from the one path construction chose for it, as a
+/// fraction of that value.
 double curvature_refit_bound(const path::segment::view& arc);
 
 /// Validates the geometry of a path against the waypoints and options it was built from.
 ///
-/// The segments and their joins are checked directly rather than by sampling the path: an arc can be
-/// far shorter than any sampling interval, and the arcs RSDK-14911 carried off the path were. Every
+/// The segments and their joins are checked directly rather than by sampling the path, since an arc
+/// can be far shorter than any sampling interval and a sample would never land on it. Every
 /// bound is derived from the error bounds path declares and from the rounding of this function's own
 /// arithmetic, so a failure means the path broke its contract rather than that a tolerance was tight.
 /// Against those bounds, evaluating stored arcs measured at most 1.1 ULPs for positions, 1.4 for

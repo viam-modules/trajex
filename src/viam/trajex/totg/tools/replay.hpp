@@ -41,10 +41,10 @@ struct replay_receiver {
     std::optional<trajectory> traj;
 
     ///
-    /// The waypoints the trajectory's path was built from, after the planner's preprocessing.
+    /// Holds the waypoints the trajectory's path was built from, after the planner's preprocessing.
     ///
-    /// Views storage in the planner's stash, which the outcome holding this receiver shares, so it
-    /// remains valid as long as that outcome does.
+    /// It views storage in the planner's stash, which the outcome holding this receiver shares, so
+    /// it remains valid as long as that outcome does.
     ///
     std::optional<waypoint_accumulator> waypoints;
 };

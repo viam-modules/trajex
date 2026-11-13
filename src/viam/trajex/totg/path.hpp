@@ -49,28 +49,28 @@ namespace viam::trajex::totg {
 class VIAM_TRAJEX_TOTG_API path {
    public:
     ///
-    /// Bound, in ULPs, on the error of every configuration a path or its segments report.
+    /// Bounds the error of every configuration a path or its segments report, in ULPs.
     ///
-    /// Error is measured against the exact path that the waypoints and options describe, in ULPs of
-    /// the coordinates where the configuration is computed: the largest magnitude among the containing
-    /// segment's two ends, plus the segment's length, which bounds every term summed to form a
-    /// position. A query at global arc length s may err by an ULP of s more, since it is evaluated at s
-    /// less the segment's start, which rounds by up to that much and moves the position as far.
+    /// Error is measured against the exact path the waypoints and options describe, in ULPs of the
+    /// coordinates where the configuration is computed: the largest magnitude among the containing
+    /// segment's two ends plus the segment's length, which bounds every term summed to form a
+    /// position. A query at global arc length s may err by one more ULP of s, because it is evaluated
+    /// at s less the segment's start, and that subtraction rounds by up to that much.
     ///
-    /// This bound and the two that follow are a specification, set with margin over the errors
-    /// measured, rather than derived from the arithmetic.
+    /// This bound and the two that follow are a specification with margin over the errors we
+    /// measured, not a derivation from the arithmetic.
     ///
     static constexpr std::size_t k_position_error_bound_ulps = 8;
 
     ///
-    /// Bound, in ULPs of 1, on the error of every unit tangent a path or its segments report, against
-    /// the exact unit tangent.
+    /// Bounds the error of every unit tangent a path or its segments report, against the exact unit
+    /// tangent, in ULPs of 1.
     ///
     static constexpr std::size_t k_tangent_error_bound_ulps = 4;
 
     ///
-    /// Bound, in ULPs, on the relative error of every curvature vector a path or its segments report,
-    /// against the exact curvature.
+    /// Bounds the relative error of every curvature vector a path or its segments report, against the
+    /// exact curvature, in ULPs.
     ///
     static constexpr std::size_t k_curvature_error_bound_ulps = 4;
 
@@ -118,10 +118,10 @@ class VIAM_TRAJEX_TOTG_API path {
         /// Circular blend segment in configuration space.
         ///
         /// The arc is described from its apex, the midpoint of the arc, rather than from its center.
-        /// With the angle theta measured from the apex and running over [-angle_rads / 2, angle_rads / 2],
-        /// the arc is `apex + radius * (sin(theta) * t + (1 - cos(theta)) * n)`. Every term is bounded by the arc's
-        /// length, so positions on the arc are accurate to a few ULPs of the coordinates no matter how
-        /// large the radius is. A center would sit a radius away, and carry an error proportional to it.
+        /// With theta measured from the apex over [-angle_rads / 2, angle_rads / 2], the arc is
+        /// `apex + radius * (sin(theta) * t + (1 - cos(theta)) * n)`. Every term is bounded by the
+        /// arc's length, so positions on the arc are accurate to a few ULPs of the coordinates however
+        /// large the radius. A center would sit a radius away and carry an error proportional to it.
         ///
         struct circular {
             ///
