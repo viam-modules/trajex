@@ -35,7 +35,8 @@ void require_dof(std::span<const double> out, std::size_t dof) {
 
 // Returns true when some representable arc length lies strictly between a and b, in either order. We
 // step one value from a toward b, and if that lands short of b there is room between them. Path
-// construction asks this before building a segment, since a segment with no length can't be built.
+// construction asks this before emitting a segment, since a segment with nowhere inside it can be
+// stepped over but never advanced through.
 bool has_interior(arc_length a, arc_length b) noexcept {
     const auto from = static_cast<double>(a);
     const auto to = static_cast<double>(b);
@@ -128,9 +129,9 @@ path::segment::circular::circular(
         throw std::invalid_argument{"Circular segment: radius must be positive and angle must lie in (0, pi)"};
     }
 
-    // Normalizing rounds once per coordinate, and so does summing the squares here to check it; the
-    // residual a Gram-Schmidt step leaves in the dot product is the same size. So this is a rounding
-    // allowance of a few ULPs per coordinate, not a tolerance on the geometry.
+    // Normalizing rounds once per coordinate, and so does the sum of squares that checks it. The
+    // residual a Gram-Schmidt step leaves in the dot product is the same size. This allows a few ULPs
+    // of rounding per coordinate. It is not a tolerance on the geometry.
     constexpr std::size_t k_rounding_ulps_per_coordinate = 4;
     const auto rounding_ulps = k_rounding_ulps_per_coordinate * this->t.size();
     const auto rounding_bound = static_cast<double>(rounding_ulps) * std::numeric_limits<double>::epsilon();
@@ -315,14 +316,14 @@ std::optional<arc_length> path::segment::view::coordinate_extremum(std::size_t j
                     throw std::out_of_range{"Joint index exceeds path degrees of freedom"};
                 }
 
-                // The joint's tangent component is cos(theta) t_i + sin(theta) n_i, which is zero where
-                // tan(theta) = -t_i / n_i. Within (-pi/2, pi/2) that has the single root atan(-t_i / n_i),
-                // and since the arc turns by less than pi it lies inside that interval, so any root on
-                // the arc is this one. When n_i is zero there is no root in the interval, and if t_i is
-                // zero as well the joint doesn't move on this arc at all.
+                // The joint's tangent component is cos(theta) t_i + sin(theta) n_i. It vanishes where
+                // tan(theta) = -t_i / n_i, and within (-pi/2, pi/2) that has the one root atan(-t_i / n_i).
+                // The arc turns by less than pi, so it lies inside that interval and any root on the arc
+                // is this one. When n_i is zero the root sits at +-pi/2, outside the interval. If t_i is
+                // zero as well, the joint doesn't move on this arc at all.
                 //
                 // The quotient is safe. t and n are unit vectors, so it can only overflow when n_i is
-                // tiny, and atan takes an infinity to +-pi/2, which is where the root is.
+                // tiny, and atan takes an infinity to +-pi/2, where the root is.
                 const auto t_i = seg_data.t(joint);
                 const auto n_i = seg_data.n(joint);
                 if (n_i == 0.0) {
@@ -489,14 +490,14 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         const auto apex_normal_length = xt::norm_l2(apex_normal)();
 
         // Make the diagonals an orthonormal frame. In exact arithmetic they are already perpendicular.
-        // The sides are unit, so |sum|^2 + |diff|^2 = 4 and the longer diagonal is at least sqrt(2):
-        // always well measured. The shorter is what survives a cancellation, of nearly equal directions
-        // at a shallow corner or nearly opposite ones at a near reversal, and when little survives its
-        // direction is mostly rounding. So we trust the longer. We make it unit and keep only the part
-        // of the shorter that is perpendicular to it. The rounding the shorter still carries can only
-        // tilt the plane of the arc, and the arc's ends feel that tilt scaled by the shorter's length,
-        // which is small exactly when the tilt is large. That is why the ends meet the incoming and
-        // outgoing directions to rounding at any angle.
+        // The sides are unit, so |sum|^2 + |diff|^2 = 4 and the longer diagonal is at least sqrt(2),
+        // which is always well measured. The shorter is what survives a cancellation, of nearly equal
+        // directions at a shallow corner or nearly opposite ones at a near reversal, and when little
+        // survives its direction is mostly rounding. We trust the longer, make it unit, and keep only
+        // the part of the shorter that is perpendicular to it. The rounding the shorter still carries
+        // can only tilt the plane of the arc. The arc's ends feel that tilt scaled by the shorter's
+        // length, which is small exactly when the tilt is large. That is why the ends meet the incoming
+        // and outgoing directions to rounding at any angle.
         auto [longer, shorter] =
             (apex_normal_length > apex_tangent_length) ? std::tie(apex_normal, apex_tangent) : std::tie(apex_tangent, apex_normal);
         longer /= std::max(apex_tangent_length, apex_normal_length);

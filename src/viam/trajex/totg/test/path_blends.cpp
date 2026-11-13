@@ -267,8 +267,8 @@ BOOST_AUTO_TEST_CASE(circular_blend_near_collinear_dense_waypoints_blends_at_cur
 // doesn't bind, so the trim is the min_blend_curvature cap, tan(angle / 2) / kmin, the curvature is
 // kmin up to the refit of the radius to the arc's span on the path, and the arc sweeps the true angle.
 // The angle and arc length get a 1% tolerance, which is how closely doubles resolve a turn this
-// small. Any change in which case these bounds produce here should be a deliberate change to this
-// test.
+// small. If a change puts this corner in a different case of those bounds, this test should change
+// with it, deliberately.
 BOOST_AUTO_TEST_CASE(circular_blend_at_min_curvature_cap_stays_on_path) {
     using namespace viam::trajex::totg;
     using viam::trajex::arc_length;
@@ -314,10 +314,11 @@ BOOST_AUTO_TEST_CASE(circular_blend_at_min_curvature_cap_stays_on_path) {
     BOOST_CHECK(configs_close(p.configuration(p.length()), xvector<>{xt::view(waypoints, 2, xt::all())}, 1e-12));
 }
 
-// Corners that nearly reverse, blended into arcs. An arc's frame and angle come from the sum and
-// the difference of the incoming and outgoing directions, and at a near reversal it is the sum that
-// cancels, so this is where the frame is hardest to get right. Each end must meet its line within
-// the path's contract, which validate_path_quality enforces, and the arc must sweep the true angle.
+// These corners nearly reverse, and each is blended into an arc. An arc's frame and angle come from
+// the sum and the difference of the incoming and outgoing directions. At a near reversal it is the
+// sum that cancels, so this is where the frame is hardest to get right. Each end must meet its line
+// within the path's contract, which validate_path_quality enforces, and the arc must sweep the true
+// angle.
 BOOST_AUTO_TEST_CASE(circular_blend_near_reversal_meets_its_lines) {
     using namespace viam::trajex::totg;
 
@@ -826,8 +827,8 @@ BOOST_AUTO_TEST_CASE(corner_whose_arc_has_no_span_is_left_unblended) {
 
 // Two corners are joined by a short leg whose blends leave a line of 1e-6 between them. The line starts
 // at the first blend's exit point, which is rounded, so a direction rebuilt from there to the next
-// corner, about half the leg away, would be off by about eps |q| over half the leg: hundreds of eps
-// for a 1e-3 leg. The line takes the leg's direction instead, so path::k_tangent_error_bound_ulps
+// corner, about half the leg away, would be off by about eps |q| over half the leg, a few thousand
+// eps for a 1e-3 leg. The line takes the leg's direction instead, so path::k_tangent_error_bound_ulps
 // holds it as it holds each arc's end, and the two sides of each join are within twice that of each
 // other. The two corners turn by the same angle, so one deviation sets both trims.
 BOOST_AUTO_TEST_CASE(short_line_between_blends_meets_its_arcs) {

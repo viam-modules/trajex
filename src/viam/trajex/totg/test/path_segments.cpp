@@ -301,9 +301,9 @@ BOOST_AUTO_TEST_CASE(coordinate_extremum) {
     BOOST_CHECK_THROW(linear_view.coordinate_extremum(3), std::out_of_range);
 
     // These are quarter-turn arcs of unit radius placed at s = 1 on their path, with the frame rotated
-    // so that the first coordinate's tangent component is sin(phi - root) and peaks at phi = root,
-    // and the second's is cos(phi - root), with its root a quarter turn away. The third coordinate
-    // never moves.
+    // so that the first coordinate's tangent component is sin(phi - root), which puts its extremum at
+    // phi = root, and the second's is cos(phi - root), with its root a quarter turn away. The third
+    // coordinate never moves.
     const double quarter = degrees_to_radians(90.0);
     const arc_length start{1.0};
     const auto arc_with_root_at = [&](double root) {

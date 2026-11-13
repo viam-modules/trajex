@@ -518,7 +518,6 @@ std::optional<switching_point> find_acceleration_switching_point(path::cursor cu
                 std::vector<arc_length> candidate_extrema;
                 candidate_extrema.reserve(cursor.path().dof());
 
-                //
                 // The path reports each joint's root on the arc's circle, which may fall off the arc. A
                 // root before the cursor, including any before the arc starts, has already been passed. A
                 // root past the arc's end by no more than a few ULPs of angle is taken to be at the end,

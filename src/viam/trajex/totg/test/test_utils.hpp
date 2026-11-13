@@ -38,9 +38,6 @@ double curvature_refit_bound(const path::segment::view& arc);
 /// can be far shorter than any sampling interval and a sample would never land on it. Every
 /// bound is derived from the error bounds path declares and from the rounding of this function's own
 /// arithmetic, so a failure means the path broke its contract rather than that a tolerance was tight.
-/// Against those bounds, evaluating stored arcs measured at most 1.1 ULPs for positions, 1.4 for
-/// tangents and 1.3 for curvatures, and arcs' end tangents came within 1 ULP of the exact directions
-/// over the replay corpus and random corners.
 void validate_path_quality(const path& p, const waypoint_accumulator& waypoints, const path::options& opts);
 
 /// The quaternion w, x, y, z for a URDF fixed-axis XYZ rpy, which composes as

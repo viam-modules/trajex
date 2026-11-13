@@ -87,8 +87,8 @@ double angle_between(const xvector<>& a, const xvector<>& b) {
 double curvature_refit_bound(const path::segment::view& arc) {
     // Path construction refits an arc's radius to the span the arc is given on the path, which is
     // radius * angle rounded into the path's arc length. Rounding the arc's end moves that span by at
-    // most an ULP of the end, so the radius, and the curvature with it, by at most that relative to
-    // the arc's length, and the division that refits it rounds once more.
+    // most an ULP of the end, and so moves the radius, and the curvature with it, by at most that much
+    // relative to the arc's length. The division that refits the radius rounds once more.
     const auto end = static_cast<double>(arc.end());
     const auto end_ulp = std::nextafter(end, std::numeric_limits<double>::infinity()) - end;
     return (end_ulp / static_cast<double>(arc.length())) + std::numeric_limits<double>::epsilon();
@@ -187,15 +187,12 @@ void validate_path_quality(const path& p, const waypoint_accumulator& waypoints,
             }
         }
 
-        // The path visits every waypoint, in order, within the deviation budget. Each waypoint must be
-        // within budget of the path somewhere at or after the point where its predecessor was visited.
-        // We walk forward from that visit and take the first point within budget. We resume on the
-        // segment the predecessor was visited on, since consecutive waypoints can share a segment, as
-        // colinearized ones do. On that segment we must not look behind the previous visit: a path
-        // that reverses comes back over a waypoint's position on a later segment, and the segment we
-        // resume on can pass that position too, before the predecessor. Along a line, and along an arc
-        // turning by less than pi, the distance to a point falls to one minimum and rises again. So
-        // the nearest point not before the previous visit is the segment's nearest point, clamped.
+        // The path visits every waypoint, in order, within the deviation budget. We walk the segments
+        // forward from where the previous waypoint was visited and take the first point within budget
+        // of this one. We resume on the previous waypoint's segment, since colinearized waypoints share
+        // one, but never behind the previous visit, because on a path that reverses the segment we
+        // resume on may have crossed this waypoint's position before it reached the previous one. The
+        // candidate on each segment is its nearest point, held back to the previous visit.
         //
         // The exact path passes within the larger deviation budget of each waypoint. A computed
         // position on it is within k_position_error_bound_ulps of that, plus an ULP of arc length for
