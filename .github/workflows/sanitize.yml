@@ -1,0 +1,98 @@
+name: Sanitize Test
+
+# Builds trajex, including the service layer and the viam-cpp-sdk, with clang's
+# AddressSanitizer and UndefinedBehaviorSanitizer and runs the test suite. It is
+# kept out of the per-push pipeline because the sanitized SDK build is slow.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 10 * * 0'  # 10 AM UTC every Sunday
+
+permissions:
+  contents: read
+
+jobs:
+  sanitize-test:
+    name: Sanitize Test (ASan + UBSan)
+    runs-on: ${{ matrix.runner }}
+    container: ghcr.io/viamrobotics/cpp-sdk-conan-ubuntu:jammy-2026-11.00
+    # Generous because the viam-cpp-sdk, including its generated protobuf
+    # sources, is compiled from source with sanitizers.
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - arch: amd64
+          runner: ubuntu-latest
+        - arch: arm64
+          runner: ubuntu-4cpu-arm
+    defaults:
+      run:
+        shell: bash
+    env:
+      SANITIZE_FLAGS: -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined
+      ASAN_SYMBOLIZER_PATH: /usr/lib/llvm-19/bin/llvm-symbolizer
+      ASAN_OPTIONS: detect_leaks=1:detect_stack_use_after_return=1
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+    steps:
+      - name: Checkout
+        # actions/checkout@v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          submodules: true
+
+      - name: Install dependencies and clang-19
+        # The image's clang-14 cannot compile libstdc++ 11's <ranges>, so clang-19
+        # comes from apt.llvm.org. libclang-rt-19-dev provides the sanitizer
+        # runtimes and llvm-19 provides llvm-symbolizer for readable stack traces.
+        #
+        # The viam-cpp-sdk is built from source but finds Boost.Log, gRPC, and
+        # protobuf with find_package, so those come prebuilt from Jammy's archive
+        # and are not instrumented. Jammy ships gRPC 1.30 and protobuf 3.12, the
+        # SDK's minimums and far older than the versions conan.lock releases with.
+        # The viamconan prebuilt binaries are not usable here because they are
+        # published for gcc, not clang.
+        run: |
+          set -euxo pipefail
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key -o /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+          echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-19 main" > /etc/apt/sources.list.d/llvm19.list
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            clang-19 libclang-rt-19-dev llvm-19 \
+            libboost-test-dev libeigen3-dev libjsoncpp-dev \
+            libboost-log-dev libboost-program-options-dev \
+            libgrpc++-dev libprotobuf-dev protobuf-compiler-grpc
+
+      - name: Configure
+        # CMAKE_POLICY_VERSION_MINIMUM: Jammy's jsoncppConfig.cmake declares
+        #   compatibility below 3.5, which CMake 4 otherwise rejects.
+        # -fno-relaxed-template-template-args: clang 19 enables P0522 matching by
+        #   default, which makes xtensor 0.25's rebind_container specializations
+        #   ambiguous. The flag is deprecated, so its warning is silenced for -Werror.
+        # -Wno-enum-constexpr-conversion: Boost 1.74's MPL casts out-of-range values
+        #   to enums, which clang 19 rejects by default. trajex's own targets already
+        #   disable this, but the viam-cpp-sdk targets need it set globally.
+        # CMAKE_C_STANDARD_LIBRARIES: the C ABI smoke test is linked by the C driver,
+        #   which otherwise omits the UBSan C++ runtime that the C++ libraries' vptr
+        #   checks need, and libstdc++ that runtime depends on.
+        run: |
+          set -euxo pipefail
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_C_COMPILER=clang-19 \
+            -DCMAKE_CXX_COMPILER=clang++-19 \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DVIAM_TRAJEX_ENABLE_SERVICE=ON \
+            -DVIAM_TRAJEX_BUILD_BENCHMARKS=OFF \
+            "-DCMAKE_C_FLAGS=${SANITIZE_FLAGS}" \
+            "-DCMAKE_CXX_FLAGS=${SANITIZE_FLAGS} -fno-relaxed-template-template-args -Wno-deprecated-no-relaxed-template-template-args -Wno-enum-constexpr-conversion" \
+            "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined" \
+            "-DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=address,undefined" \
+            "-DCMAKE_C_STANDARD_LIBRARIES=-fsanitize-link-c++-runtime -lstdc++"
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -j "$(nproc)"
