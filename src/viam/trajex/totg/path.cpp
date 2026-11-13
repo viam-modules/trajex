@@ -436,7 +436,7 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
 
     struct blend_geometry {
         segment::circular circular_seg;
-        double trim_distance;      // Distance trimmed from both segments
+        double trim_distance;      // Distance trimmed from each leg at the corner
         bool takes_half_incoming;  // trim_distance is exactly half of the incoming segment
         bool takes_half_outgoing;  // trim_distance is exactly half of the outgoing segment
     };
@@ -445,63 +445,86 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
     // Kunz & Stilman Section IV. The blend arc is tangent to both the incoming and
     // outgoing segments, trimming equal distances from each side. The blend keeps
     // the path within max_blend_deviation of the original corner waypoint.
-    const auto try_create_blend =
-        [&opts](const xvector<>& current_pos, const xvector<>& corner, const xvector<>& next_waypoint) -> std::optional<blend_geometry> {
+    const auto try_create_blend = [&opts](const xvector<>& previous_waypoint,
+                                          const xvector<>& corner,
+                                          const xvector<>& next_waypoint) -> std::optional<blend_geometry> {
         if (opts.max_blend_deviation() <= 0.0) {
             return std::nullopt;
         }
 
-        const auto incoming = corner - current_pos;
+        const auto incoming = corner - previous_waypoint;
         const auto outgoing = next_waypoint - corner;
 
-        const auto incoming_norm = xt::norm_l2(incoming)();
-        const auto outgoing_norm = xt::norm_l2(outgoing)();
+        const auto incoming_leg_length = xt::norm_l2(incoming)();
+        const auto outgoing_leg_length = xt::norm_l2(outgoing)();
 
         // Need non-zero segments to compute angle
-        if (incoming_norm <= 0.0 || outgoing_norm <= 0.0) {
+        if (incoming_leg_length <= 0.0 || outgoing_leg_length <= 0.0) {
             return std::nullopt;
         }
 
-        const auto incoming_unit = incoming / incoming_norm;
-        const auto outgoing_unit = outgoing / outgoing_norm;
+        const auto incoming_unit = incoming / incoming_leg_length;
+        const auto outgoing_unit = outgoing / outgoing_leg_length;
 
-        // The sum and the difference of the two unit directions carry everything the blend needs.
-        // For a turn by alpha their lengths are 2 cos(alpha/2) and 2 sin(alpha/2), each good to about
-        // eps absolute.
-        const xvector<> sum = incoming_unit + outgoing_unit;
-        const xvector<> difference = outgoing_unit - incoming_unit;
-        const auto sum_norm = xt::norm_l2(sum)();
-        const auto difference_norm = xt::norm_l2(difference)();
+        // The two unit directions span a rhombus, and its diagonals carry everything the blend needs.
+        // Their sum lies along the arc's tangent at its apex, and their difference along its normal
+        // there, toward the inside of the corner. For a turn by alpha their lengths are
+        // 2 cos(alpha/2) and 2 sin(alpha/2), each good to about eps absolute.
+        xvector<> apex_tangent = incoming_unit + outgoing_unit;
+        xvector<> apex_normal = outgoing_unit - incoming_unit;
+        const auto apex_tangent_length = xt::norm_l2(apex_tangent)();
+        const auto apex_normal_length = xt::norm_l2(apex_normal)();
 
-        // A corner whose directions are equal does not turn, and needs no blend; TOTG won't mandate
-        // s_dot = 0 there. One whose directions are opposite is an exact reversal, where no arc is
-        // defined. These are the only exclusions: a corner turning by any amount between, however
-        // near 0 or pi, is left to the curvature bounds below. The dot product of the directions
-        // cannot draw this line, since it is 1 - alpha^2 / 2, which rounds to exactly 1 for turns
-        // below about 1e-8.
-        if (difference_norm == 0.0 || sum_norm == 0.0) {
+        // Make the two diagonals an orthonormal frame. A rhombus's diagonals cross at right angles,
+        // because its sides are equal, so in exact arithmetic these two are already perpendicular. And
+        // because its sides here are unit, the diagonals share a fixed budget of length between them:
+        // as one shrinks the other grows, and the longer is never shorter than sqrt(2). So the longer
+        // is always well measured. The shorter is not. It is what is left when two nearly equal
+        // directions cancel, at a shallow corner, or two nearly opposite ones do, at a near reversal,
+        // and the rounding in that cancellation is about the same size whatever is left; when little is
+        // left, its direction is mostly rounding, and no longer perpendicular to the longer in fact.
+        // So trust the longer: make it unit, and keep only the part of the shorter perpendicular to
+        // it, which is the part the geometry guarantees. What rounding the shorter still carries can
+        // only tilt the plane the arc lies in, and the arc's ends feel that tilt scaled by the shorter's
+        // length, which is small exactly when the tilt is large, so they meet the incoming and outgoing
+        // directions to rounding at any angle.
+        auto [longer, shorter] =
+            (apex_normal_length > apex_tangent_length) ? std::tie(apex_normal, apex_tangent) : std::tie(apex_tangent, apex_normal);
+        longer /= std::max(apex_tangent_length, apex_normal_length);
+        xt::noalias(shorter) -= xt::sum(shorter * longer)() * longer;
+        const auto shorter_length = xt::norm_l2(shorter)();
+
+        // Nothing perpendicular remains only when the directions are parallel, the same or opposite,
+        // to rounding: equal directions, an exact reversal, or directions on one line whose
+        // normalizations rounded differently. Such a corner has no plane to put an arc in. Where the
+        // directions are the same it does not turn, and needs no blend, and TOTG won't mandate
+        // s_dot = 0 there; where they are opposite no arc is defined. These are the only exclusions:
+        // a corner turning by any amount between, however near 0 or pi, is left to the curvature
+        // bounds below. The dot product of the directions cannot draw this line, since it is
+        // 1 - alpha^2 / 2, which rounds to exactly 1 for turns below about 1e-8.
+        if (shorter_length == 0.0) {
             return std::nullopt;
         }
+        shorter /= shorter_length;
 
         // Kunz & Stilman equation 2 takes the angle as the arccosine of the dot product, which has
         // no digits near 0 or pi: a corner turning by 1.5e-13 reads as its floor of 1.5e-8
-        // (RSDK-14911). The norms give it to rounding at any angle, and the tangents of its half and
-        // quarter as plain ratios: tan(alpha/2) = |d| / |s|, and
-        // tan(alpha/4) = sin(alpha/2) / (1 + cos(alpha/2)) = |d| / (2 + |s|). Neither norm is zero,
-        // so the angle is positive. It can round to pi, which segment::circular rejects, only where
-        // the sum is below about eps of the difference, and there tan(alpha/2) exceeds about 1/eps,
-        // which the near-reversal check below rejects for any max_blend_curvature short of
-        // 1 / (eps * trim).
-        const auto angle = 2.0 * std::atan2(difference_norm, sum_norm);
-        const auto tan_half = difference_norm / sum_norm;
-        const auto tan_quarter = difference_norm / (2.0 + sum_norm);
+        // (see RSDK-14911). The diagonals give it to rounding at any angle, and the tangents of its half
+        // and quarter as plain ratios, the quarter by tan(alpha/4) = sin(alpha/2) / (1 + cos(alpha/2)).
+        // Neither length is zero, so the angle is positive. It can round to pi, which
+        // segment::circular rejects, only where the tangent diagonal is below about eps of the normal
+        // diagonal, and there tan(alpha/2) exceeds about 1/eps, which the near-reversal check below
+        // rejects for any max_blend_curvature short of 1 / (eps * trim).
+        const auto angle = 2.0 * std::atan2(apex_normal_length, apex_tangent_length);
+        const auto tan_half = apex_normal_length / apex_tangent_length;
+        const auto tan_quarter = apex_normal_length / (2.0 + apex_tangent_length);
 
         // Compute trim following Kunz & Stilman equations 3-4. Three constraints apply: can't
         // trim more than half of either segment, and the deviation at the blend must stay within
         // the budget. The deviation formula inverted is: trim = deviation / tan(alpha/4). This
         // form (via the half-angle identity sin(x)/(1-cos(x)) = cot(x/2)) is well-conditioned
         // at small angles, unlike the equivalent sin(alpha/2)/(1-cos(alpha/2)) expression.
-        const auto max_trim_from_segments = std::min(incoming_norm / 2.0, outgoing_norm / 2.0);
+        const auto max_trim_from_segments = std::min(incoming_leg_length / 2.0, outgoing_leg_length / 2.0);
         const auto natural_trim = (max_trim_from_segments * tan_quarter <= opts.max_blend_deviation())
                                       ? max_trim_from_segments
                                       : opts.max_blend_deviation() / tan_quarter;
@@ -527,33 +550,8 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         // but the bisector is the difference of two unit vectors, which at a shallow corner are
         // nearly equal, so its direction has few correct digits, and at the min_blend_curvature
         // radius cap that error carries the center, and the whole arc with it, far off the path
-        // (RSDK-14911). Everything about the apex is bounded by the arc's length instead.
+        // (see RSDK-14911). Everything about the apex is bounded by the arc's length instead.
         //
-        // The frame comes from the sum and the difference too: the tangent at the apex lies along
-        // the sum, and the normal, toward the inside of the corner, along the difference. The
-        // longer of the two is at least sqrt(2), while the shorter cancels nearly equal or nearly
-        // opposite vectors and has a direction good only to about eps over its length: the
-        // difference at a shallow corner, the sum at a near reversal. So normalize the longer and
-        // project it out of the shorter. Within the plane, the shorter's direction then follows
-        // from the longer's, and what error remains tilts the plane, which the ends of the arc see
-        // scaled by the shorter's length, so they meet the incoming and outgoing directions to
-        // rounding at any angle. Normalizing introduces no scale, since a vector's direction does
-        // not depend on its length, but if the shorter cancels completely there is no plane to put
-        // an arc in, and no blend.
-        const bool sum_is_longer = (sum_norm >= difference_norm);
-
-        const xvector<> longer_unit = sum_is_longer ? xvector<>{sum / sum_norm} : xvector<>{difference / difference_norm};
-        const auto& shorter = sum_is_longer ? difference : sum;
-        const xvector<> shorter_perpendicular = shorter - (xt::sum(shorter * longer_unit)() * longer_unit);
-        const auto shorter_perpendicular_norm = xt::norm_l2(shorter_perpendicular)();
-        if (shorter_perpendicular_norm == 0.0) {
-            return std::nullopt;
-        }
-        const xvector<> shorter_unit = shorter_perpendicular / shorter_perpendicular_norm;
-
-        const auto& apex_tangent = sum_is_longer ? longer_unit : shorter_unit;
-        const auto& apex_normal = sum_is_longer ? shorter_unit : longer_unit;
-
         // The apex is the point of the arc nearest the corner, at the blend's deviation from it,
         // which is trim * tan(alpha/4) by the relation the trim was computed from above. This needs
         // no cosine of the half angle, which vanishes at a reversal.
@@ -564,8 +562,8 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         // loop uses them to recognize a segment that two blends consume completely.
         return blend_geometry{.circular_seg = segment::circular{apex, apex_tangent, apex_normal, radius, angle},
                               .trim_distance = trim_distance,
-                              .takes_half_incoming = (trim_distance == incoming_norm / 2.0),
-                              .takes_half_outgoing = (trim_distance == outgoing_norm / 2.0)};
+                              .takes_half_incoming = (trim_distance == incoming_leg_length / 2.0),
+                              .takes_half_outgoing = (trim_distance == outgoing_leg_length / 2.0)};
     };
 
     // Run colinearization as a single pass before constructing circular blends.
@@ -681,18 +679,11 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
     for (auto locus = std::next(waypoints_range.begin()); locus != waypoints_range.end(); ++locus) {
         auto next = std::next(locus);
 
-        // If we're at the last waypoint, we must emit the final segment
-        const bool at_last = (next == waypoints_range.end());
-
-        // Locus represents a corner (or the final waypoint). We need to emit the segment
-        // from current_position to this locus, and if it's a corner, decide whether to
-        // create a circular blend or stop at the hard waypoint.
-
         // Pass *segment_start (the original segment's start waypoint) rather than
         // current_position (which may be a blend exit point part-way along the segment).
         // This ensures the trim distance cap uses the full original segment length, not
         // just the remaining portion after a prior blend.
-        const auto blend_opt = !at_last ? try_create_blend(*segment_start, *locus, *next) : std::nullopt;
+        const auto blend_opt = (next != waypoints_range.end()) ? try_create_blend(*segment_start, *locus, *next) : std::nullopt;
 
         // The line into the locus starts at current_position and runs along the leg from
         // segment_start. It takes the leg's direction, the one the blends at either end of the leg
@@ -719,9 +710,6 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
             // and emit a sliver that the integrator then has to stand on.
             const bool segment_fully_consumed = previous_blend_takes_half_of_segment && blend.takes_half_incoming;
 
-            // Otherwise, compute the incoming linear segment length as a scalar subtraction to avoid
-            // catastrophic cancellation from reconstructing two nearly-equal endpoint positions.
-            //
             // A segment is only worth emitting if there is somewhere to be inside it. Positions
             // are addressed in the path's own arc length, so that means a representable value
             // strictly between the endpoints. One ULP leaves nowhere to stand between the endpoints
@@ -729,20 +717,23 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
             // is the least that makes the segment a place rather than a boundary. This asks the
             // number system rather than a tolerance, so it introduces no epsilon. The length must
             // also be positive: the same rebuilt distance can fall a few ULPs short of the trim.
-            const auto incoming_length = dist_to_locus - blend.trim_distance;
-            const bool emits_incoming = !segment_fully_consumed && (incoming_length > 0.0) &&
-                                        has_interior(cumulative_length, cumulative_length + arc_length{incoming_length});
+            const auto incoming_line_length = dist_to_locus - blend.trim_distance;
+            const bool has_incoming_line = !segment_fully_consumed && (incoming_line_length > 0.0) &&
+                                           has_interior(cumulative_length, cumulative_length + arc_length{incoming_line_length});
 
             // The arc's span on the path is radius * angle rounded into the path's arc length, which
             // is the length it will be traversed over. An arc needs somewhere to be inside it just as a
             // line does, and a corner that turns by little, far along the path, can have an arc whose
             // span rounds to nothing. Such a corner is left unblended, below.
             const auto& arc = blend.circular_seg;
-            const auto arc_start = emits_incoming ? cumulative_length + arc_length{incoming_length} : cumulative_length;
+            auto arc_start = cumulative_length;
+            if (has_incoming_line) {
+                arc_start += arc_length{incoming_line_length};
+            }
             const auto arc_end = arc_start + arc_length{arc.radius * arc.angle_rads};
             if (has_interior(arc_start, arc_end)) {
-                if (emits_incoming) {
-                    segments.push_back({.seg = segment{segment::linear{current_position, leg_unit, arc_length{incoming_length}}},
+                if (has_incoming_line) {
+                    segments.push_back({.seg = segment{segment::linear{current_position, leg_unit, arc_length{incoming_line_length}}},
                                         .start = cumulative_length});
                 }
 
