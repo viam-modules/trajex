@@ -525,6 +525,13 @@ std::optional<switching_point> find_acceleration_switching_point(path::cursor cu
                 // the end: this search needs extrema at the boundary it is about to cross, which a
                 // reversal blended into adjacent arcs produces. On a circle, arc length times curvature
                 // is angle, and the curvature's magnitude is the same everywhere on it.
+                //
+                // TODO(RSDK-12850): The root arrives as an arc length, so converting it back to an angle
+                // carries the rounding of that arc length, about ULP(s) * curvature / 2, which exceeds the
+                // allowance below once s * curvature is more than about 8: ten metres of path and a radius
+                // under 1.25, say. A root exactly at such an arc's end is then dropped rather than snapped.
+                // Compare in ULPs of the end instead, or take the overshoot in theta before converting,
+                // when the boundary rule replaces this snap.
                 constexpr std::size_t k_end_rounding_ulps = 4;
                 const auto end = current_segment.end();
                 const auto curvature_magnitude = xt::norm_l2(current_segment.curvature(cursor.position()))();
@@ -1182,10 +1189,14 @@ std::optional<switching_point> find_velocity_switching_point(path::cursor cursor
 
     // The continuous search was bounded by the discontinuous result, so it was asked only for an escape
     // that comes first. An escape at the same location is the same switching point, seen without its
-    // cause: where the curvature jumps at a boundary, the trajectory and curve slopes jump with it, and
-    // the search, finding their difference of opposite sign across a bracket, bisects onto the boundary
-    // although the difference has no root there, only a jump. The boundary search evaluates both sides
-    // and classifies the jump, so its switching point stands.
+    // cause: the scan never steps over a boundary but does step onto it, and a cursor there reads the
+    // far side, so where the curvature jumps the bracket's end carries the far side's delta. The sign
+    // change is the jump, not a root, and bisection converges onto the boundary from inside. The boundary
+    // search evaluates both sides and classifies the jump, so its switching point stands.
+    //
+    // Sameness is judged at opt.epsilon because that is the bisection's own resolution: it stops once
+    // its bracket is that narrow, so it cannot place an escape more finely than this, and two points
+    // it cannot tell apart are one.
     if (discontinuous_switching_point && continuous_switching_point &&
         opt.epsilon.wrap(continuous_switching_point->point.s) == opt.epsilon.wrap(discontinuous_switching_point->point.s)) {
         return discontinuous_switching_point;

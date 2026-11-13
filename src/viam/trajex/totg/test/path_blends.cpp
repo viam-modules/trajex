@@ -231,14 +231,13 @@ BOOST_AUTO_TEST_CASE(circular_blend_collinear_no_blend) {
     }
 }
 
-// Regression (RSDK-13338 field failure): a near-collinear corner among dense joint-space
-// waypoints used to throw "Circular segment: x and y must be perpendicular". These three
-// 6-DOF waypoints (captured from a GP12 realtime plan) form a corner whose turn angle is at
-// the acos(dot) precision floor (~1.5e-8 rad). The bisector direction is then numerical noise,
-// and with the min_blend_curvature radius cap the blend construction produced non-perpendicular
-// basis vectors. The blend basis is now orthogonalized against the incoming direction at
-// construction, so the corner blends normally rather than throwing.
-BOOST_AUTO_TEST_CASE(circular_blend_near_collinear_dense_waypoints_no_throw) {
+// Regression (RSDK-13338 field failure): three 6-DOF waypoints from a GP12 realtime plan whose
+// corner turns by less than acos can resolve (its floor is 1.5e-8 rad). The arc's center was placed
+// along a bisector that was rounding noise, and at the min_blend_curvature radius cap the frame built
+// from it was not perpendicular, so construction threw. Arcs are now described from their apex with a
+// frame that trusts the longer diagonal, so the corner blends at the curvature cap and the path meets
+// its contract.
+BOOST_AUTO_TEST_CASE(circular_blend_near_collinear_dense_waypoints_blends_at_curvature_cap) {
     using namespace viam::trajex::totg;
 
     const xmatrix<> waypoints = {
@@ -249,9 +248,18 @@ BOOST_AUTO_TEST_CASE(circular_blend_near_collinear_dense_waypoints_no_throw) {
 
     // Production config from the failed-plan replay: blend tolerance 0.1, no colinearization,
     // default curvature limits.
-    const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1));  // must not throw
+    const auto opts = path::options{}.set_max_blend_deviation(0.1);
+    const path p = path::create(waypoints, opts);
 
-    BOOST_CHECK_GT(static_cast<double>(p.length()), 0.0);
+    BOOST_REQUIRE_EQUAL(path_type_sequence(p), "LCL");
+
+    auto it = p.begin();
+    const auto arc = *++it;
+    const auto curvature = xt::norm_l2(arc.curvature(arc.start()))();
+    constexpr auto k_min_curvature = path::options::k_default_min_blend_curvature;
+    BOOST_CHECK_LE(std::abs(curvature - k_min_curvature), k_min_curvature * curvature_refit_bound(arc));
+
+    validate_path_quality(p, waypoint_accumulator{waypoints}, opts);
 }
 
 // Regression (RSDK-14911 field failure): three consecutive waypoints from a GP8 sanding move whose
@@ -316,11 +324,16 @@ BOOST_AUTO_TEST_CASE(circular_blend_at_min_curvature_cap_stays_on_path) {
 // Corners that nearly reverse, blended into arcs. An arc's frame and angle come from the sum and
 // the difference of the incoming and outgoing directions, and at a near reversal it is the sum that
 // cancels. Built by trusting the sum, or with the angle from acos, an arc met its lines about a
-// thousand eps off in tangent at the closest of these gaps. Each end must now meet its line to
-// rounding, in tangent and in position: within 64 eps, of a unit vector or of the coordinates.
+// thousand eps off in tangent at the closest of these gaps. Each end must now meet its line within
+// the path's contract, which validate_path_quality enforces, and the arc must sweep the true angle.
 BOOST_AUTO_TEST_CASE(circular_blend_near_reversal_meets_its_lines) {
     using namespace viam::trajex::totg;
-    constexpr double k_rounding_bound = 64 * std::numeric_limits<double>::epsilon();
+
+    // The angle is twice the arctangent of a ratio of two norms, each a sum of dof squares of
+    // coordinates that each rounded once, so its relative error is a few times dof eps, carried
+    // across an angle of at most pi.
+    constexpr std::size_t k_dof = 3;
+    constexpr double k_angle_bound = (k_dof + 4) * std::numbers::pi * std::numeric_limits<double>::epsilon();
 
     // Directions off the axes so that every coordinate rounds.
     const xvector<> in = xvector<>{1.0, 2.0, 3.0} / std::sqrt(14.0);
@@ -330,30 +343,24 @@ BOOST_AUTO_TEST_CASE(circular_blend_near_reversal_meets_its_lines) {
     for (const double gap : {1e-1, 1e-2, 1e-3}) {
         BOOST_TEST_CONTEXT("pi - angle = " << gap) {
             const xvector<> out = (-std::cos(gap) * in) + (std::sin(gap) * perpendicular);
-            xmatrix<> waypoints = xt::zeros<double>({std::size_t{3}, std::size_t{3}});
+            xmatrix<> waypoints = xt::zeros<double>({std::size_t{3}, k_dof});
             xt::view(waypoints, 0, xt::all()) = corner - in;
             xt::view(waypoints, 1, xt::all()) = corner;
             xt::view(waypoints, 2, xt::all()) = corner + out;
 
-            const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1));
+            const auto opts = path::options{}.set_max_blend_deviation(0.1);
+            const path p = path::create(waypoints, opts);
             BOOST_REQUIRE_EQUAL(path_type_sequence(p), "LCL");
 
             auto it = p.begin();
-            const auto first = *it++;
-            const auto arc = *it++;
-            const auto last = *it;
-
+            const auto arc = *++it;
             arc.visit([&](const auto& data) {
                 if constexpr (std::is_same_v<std::decay_t<decltype(data)>, path::segment::circular>) {
-                    BOOST_CHECK_SMALL(data.angle_rads - (std::numbers::pi - gap), k_rounding_bound);
+                    BOOST_CHECK_SMALL(data.angle_rads - (std::numbers::pi - gap), k_angle_bound);
                 }
             });
 
-            const double position_bound = k_rounding_bound * xt::amax(xt::abs(waypoints))();
-            BOOST_CHECK(configs_close(first.tangent(first.end()), arc.tangent(arc.start()), k_rounding_bound));
-            BOOST_CHECK(configs_close(arc.tangent(arc.end()), last.tangent(last.start()), k_rounding_bound));
-            BOOST_CHECK(configs_close(first.configuration(first.end()), arc.configuration(arc.start()), position_bound));
-            BOOST_CHECK(configs_close(arc.configuration(arc.end()), last.configuration(last.start()), position_bound));
+            validate_path_quality(p, waypoint_accumulator{waypoints}, opts);
         }
     }
 }

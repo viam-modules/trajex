@@ -473,9 +473,14 @@ class VIAM_TRAJEX_TOTG_API path {
     ///
     /// Creates a path from a waypoints accumulator.
     ///
+    /// Consecutive waypoints must be distinct. A zero-length leg between two has no direction,
+    /// and the path refuses it rather than guess one; deduplicate before calling.
+    ///
     /// @param waypoints Waypoint sequence to follow
     /// @param opts Path creation options (coalescing and blending parameters)
     /// @return Constructed path with segments
+    /// @throws std::invalid_argument if there are fewer than two waypoints, if two consecutive
+    /// waypoints coincide, or if the options are out of range
     ///
     [[nodiscard]] static path create(const waypoint_accumulator& waypoints, const options& opts = options{});
 
