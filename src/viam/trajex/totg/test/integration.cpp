@@ -57,7 +57,6 @@ using viam::trajex::arc_velocity;
 using viam::trajex::degrees_to_radians;
 using viam::trajex::xmatrix;
 using viam::trajex::xvector;
-using viam::trajex::totg::test::configs_close;
 using viam::trajex::totg::test::validate_path_quality;
 
 constexpr bool k_log_met_expectations = false;
