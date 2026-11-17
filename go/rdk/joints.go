@@ -44,7 +44,7 @@ func JointsFromModel(m referenceframe.Model, tcp spatialmath.Pose) ([]kinematics
 	if m == nil {
 		return nil, errors.New("trajex/rdk: model is nil")
 	}
-	chain, err := m.Chain("")
+	chain, err := m.Chain()
 	if err != nil {
 		return nil, errors.Wrapf(err, "trajex/rdk: model %q", m.Name())
 	}
