@@ -9,7 +9,6 @@
 #include <iomanip>
 #include <iterator>
 #include <limits>
-#include <numbers>
 #include <optional>
 #include <ranges>
 #include <sstream>
@@ -19,8 +18,10 @@
 
 #if __has_include(<xtensor/core/xnoalias.hpp>)
 #include <xtensor/core/xnoalias.hpp>
+#include <xtensor/reducers/xnorm.hpp>
 #else
 #include <xtensor/xnoalias.hpp>
+#include <xtensor/xnorm.hpp>
 #endif
 
 #include <viam/trajex/totg/path.hpp>
@@ -506,211 +507,201 @@ std::optional<switching_point> find_acceleration_switching_point(path::cursor cu
         // is continuous, but not differentiable, per VII-A Case 2 in the paper (Kunz & Stilman equation 39). These
         // switching points occur on the interior of circular segments for joint extrema where f'_i(s) = 0.
         if (current_segment.is<path::segment::circular>()) {
-            // Visit segment to access circular blend parameters
-            auto extremal_switching_point = current_segment.visit([&](const auto& seg_data) {
-                using segment_type = std::decay_t<decltype(seg_data)>;
-                if constexpr (std::is_same_v<segment_type, path::segment::circular>) {
-                    const auto& x = seg_data.x;
-                    const auto& y = seg_data.y;
-                    const double radius = seg_data.radius;
-                    const double total_angle = seg_data.angle_rads;
+            auto extremal_switching_point = [&]() -> std::optional<switching_point> {
+                // When a joint reaches a local extremum inside a circular arc (f'_i(s) = 0 while the path
+                // keeps curving), the acceleration limit curve becomes continuous but non-differentiable,
+                // which is a potential switching point (equation 39, Section VII-A case 2). The path
+                // reports where each joint is extremal, and a blend arc has at most one extremum per joint.
+                //
+                // There may be more than one candidate. We gather them, sort them by s, and filter them in
+                // order; the first to pass is the switching point.
+                std::vector<arc_length> candidate_extrema;
+                candidate_extrema.reserve(cursor.path().dof());
 
-                    // When a joint reaches a local extremum within a circular arc (f'_i(s) = 0 while path
-                    // continues curving), the acceleration limit curve becomes continuous but non-differentiable,
-                    // creating a potential switching point (equation 39, Section VII-A case 2).
-                    //
-                    // For circular parameterization q(theta) = c + x*cos(theta) + y*sin(theta), the tangent
-                    // q'_i(theta) = -x_i*sin(theta) + y_i*cos(theta) is zero when tan(theta) = y_i/x_i.
-                    // tan has period pi, so the two roots are {atan2(y_i, x_i), atan2(y_i, x_i) + pi}.
-                    // atan2 returns values in (-pi, pi]; adding pi when negative normalizes to [0, pi) so
-                    // both candidates land in [0, 2*pi). Blend arcs have total_angle < pi (enforced by
-                    // path::create), so at most one root per joint falls in range.
-                    //
-                    // Note that there may be more than one extremal point. We need to gather them, sort them and then
-                    // filter them. The first to pass the filter, if any, is the selected switching point.
-                    std::vector<arc_length> candidate_extrema;
-                    candidate_extrema.reserve(cursor.path().dof());
+                // The path reports each joint's root on the arc's circle, which may fall off the arc. A
+                // root before the cursor, including any before the arc starts, has already been passed. A
+                // root past the arc's end by no more than a few ULPs of angle is taken to be at the end,
+                // because this search needs the extrema at the boundary it is about to cross, and a
+                // reversal blended into two adjacent arcs puts them there. On a circle, arc length times
+                // curvature is angle, and the curvature's magnitude is the same everywhere on it.
+                //
+                // TODO(RSDK-12850): The root arrives as an arc length, and converting it back to an angle
+                // carries the rounding of that arc length, about ULP(s) * curvature / 2. That exceeds the
+                // allowance below once s * curvature is past about 8 (ten metres of path and a radius
+                // under 1.25, say), and a root exactly at such an arc's end is dropped rather than snapped.
+                // When the boundary rule replaces this snap, compare in ULPs of the end instead, or take
+                // the overshoot in theta before converting.
+                constexpr std::size_t k_end_rounding_ulps = 4;
+                const auto end = current_segment.end();
+                const auto curvature_magnitude = xt::norm_l2(current_segment.curvature(cursor.position()))();
+                for (size_t i = 0; i < cursor.path().dof(); ++i) {
+                    const auto s_global = current_segment.coordinate_extremum(i);
 
-                    for (size_t i = 0; i < x.size(); ++i) {
-                        // If this joint is orthogonal to the blend, it cannot be an extremum.
-                        if (x(i) == 0 && y(i) == 0) {
-                            continue;
-                        }
-
-                        auto extremum_angle = std::atan2(y(i), x(i));
-                        if (extremum_angle < 0.0) {
-                            extremum_angle += std::numbers::pi;
-                        }
-
-                        // Need to account for FP here: sometimes `extremum_angle` will be above `total_angle` by a few ULPs,
-                        // but really, it is just telling us it is at the boundary. After which, we must clamp to the angle.
-                        if (extremum_angle > total_angle + (4 * std::numeric_limits<double>::epsilon())) {
-                            continue;
-                        }
-                        extremum_angle = std::min(extremum_angle, total_angle);
-
-                        const arc_length s_local{radius * extremum_angle};
-                        const auto s_global = current_segment.start() + s_local;
-
-                        // Strict < avoids re-checking if cursor is exactly at this extremum
-                        if (s_global < cursor.position()) {
-                            continue;
-                        }
-
-                        candidate_extrema.push_back(s_global);
+                    // Strict < avoids re-checking if cursor is exactly at this extremum
+                    if (!s_global || *s_global < cursor.position()) {
+                        continue;
                     }
 
-                    // The above loop extracts candidate extrema in joint order, but we need to process them in `s`
-                    // order so we can find the first local minimum.
-                    std::ranges::sort(candidate_extrema);
+                    if (*s_global <= end) {
+                        candidate_extrema.push_back(*s_global);
+                        continue;
+                    }
 
-                    // If we found an extremum, validate it as a switching point
-                    for (const auto& candidate_extremum : candidate_extrema) {
-                        // Query geometry at the extremum
-                        const auto q_prime = current_segment.tangent(candidate_extremum);
-                        const auto q_double_prime = current_segment.curvature(candidate_extremum);
-
-                        // Compute acceleration limit curve at extremum
-                        const auto curves =
-                            compute_limit_curves(current_segment.configuration(candidate_extremum), q_prime, q_double_prime, opt);
-                        const auto s_dot_max_acc = curves.s_dot_max_acc;
-                        const auto s_dot_max_vel = curves.s_dot_max_vel;
-
-                        // If this switching point is infeasible with respect to the velocity limit curve,
-                        // reject it.
-                        if (opt.epsilon.wrap(s_dot_max_vel) < opt.epsilon.wrap(s_dot_max_acc)) {
-                            continue;
-                        }
-
-                        // Validate: acceleration limit curve must have local minimum (derivative changes negative to positive)
-                        // Sample slightly before and after the extremum.
-
-                        // TODO(RSDK-12850): Replace numerical derivative check with analytical derivative computation.
-                        // For circular segments, we can derive the exact formula for d/ds s_dot_max_acc(s) from
-                        // equations 29-31 in the paper. The current epsilon-offset approach works but is less
-                        // accurate and has epsilon dependency. An analytical solution would be more robust and
-                        // faster (no need for 4 extra geometry queries + limit calculations per extremum).
-
-                        // `Divergent Behavior 5`: C-C adjacency requires cross-boundary sampling when the
-                        // limit curve is continuous across the boundary. Check continuity before sampling.
-                        auto before_candidate = std::max(arc_length{0.0}, candidate_extremum - arc_length{opt.epsilon});
-                        auto before_candidate_segment = current_segment;
-                        if (before_candidate < current_segment.start()) {
-                            if (auto base = path::cursor{cursor}.seek(candidate_extremum).base(); base != cursor.path().begin()) {
-                                // Get the segment prior
-                                auto prior_segment = *--base;
-
-                                // Can't cross more than one segment, so clamp to the beginning of the prior segment.
-                                before_candidate = std::max(before_candidate, prior_segment.start());
-
-                                // Evaluate the limit curve at the end of the prior segment
-                                const auto q_prime_end_prior = prior_segment.tangent(prior_segment.end());
-                                const auto q_double_prime_end_prior = prior_segment.curvature(prior_segment.end());
-
-                                // Compute acceleration limit curve at end of the prior segment
-                                const auto s_dot_max_acc_end_prior = compute_acceleration_limit(
-                                    q_prime_end_prior, q_double_prime_end_prior, opt.max_acceleration, opt.epsilon);
-
-                                // Evaluate the limit curve at the beginning of the current segment
-                                const auto q_prime_begin_current = current_segment.tangent(current_segment.start());
-                                const auto q_double_prime_begin_current = current_segment.curvature(current_segment.start());
-
-                                // Compute acceleration limit curve at beginning of current segment
-                                const auto s_dot_max_acc_begin_current = compute_acceleration_limit(
-                                    q_prime_begin_current, q_double_prime_begin_current, opt.max_acceleration, opt.epsilon);
-
-                                // Check if we have continuity into the prior segment. If so, we can cross the boundary. Otherwise, we're
-                                // stuck in this segment.
-                                if (opt.epsilon.wrap(s_dot_max_acc_end_prior) == opt.epsilon.wrap(s_dot_max_acc_begin_current)) {
-                                    before_candidate_segment = prior_segment;
-                                }
-                            }
-                        }
-
-                        // Whatever segment we ended up in, we can't go earlier than its start.
-                        before_candidate = std::max(before_candidate, before_candidate_segment.start());
-
-                        auto after_candidate = std::min(cursor.path().length(), candidate_extremum + arc_length{opt.epsilon});
-                        auto after_candidate_segment = current_segment;
-                        if (after_candidate > current_segment.end()) {
-                            // Need to be a little more careful in this case. The one liner we used above for the moving backward
-                            // case doesn't work when moving forward, because if the candidate is at the boundary, we will move to the next
-                            // segment.
-                            auto base = path::cursor{cursor}.seek(candidate_extremum).base();
-                            if (base == cursor.base()) {
-                                ++base;
-                            }
-                            if (base != cursor.path().end()) {
-                                auto next_segment = *base;
-
-                                // Can't cross more than one segment, so clamp to the end of the next segment.
-                                after_candidate = std::min(after_candidate, next_segment.end());
-
-                                // Evaluate the limit curve at the end of the current segment
-                                const auto q_prime_end_current = current_segment.tangent(current_segment.end());
-                                const auto q_double_prime_end_current = current_segment.curvature(current_segment.end());
-
-                                // Compute acceleration limit curve at end of current segment
-                                const auto s_dot_max_acc_end_current = compute_acceleration_limit(
-                                    q_prime_end_current, q_double_prime_end_current, opt.max_acceleration, opt.epsilon);
-
-                                // Evaluate the limit curve at the beginning of the next segment
-                                const auto q_prime_start_next = next_segment.tangent(next_segment.start());
-                                const auto q_double_prime_start_next = next_segment.curvature(next_segment.start());
-
-                                // Compute acceleration limit curve at beginning of next segment
-                                const auto s_dot_max_acc_start_next = compute_acceleration_limit(
-                                    q_prime_start_next, q_double_prime_start_next, opt.max_acceleration, opt.epsilon);
-
-                                // Check if we have continuity into the next segment. If so, we can cross the boundary. Otherwise, we're
-                                // stuck in this segment.
-                                if (opt.epsilon.wrap(s_dot_max_acc_end_current) == opt.epsilon.wrap(s_dot_max_acc_start_next)) {
-                                    after_candidate_segment = next_segment;
-                                }
-                            }
-                        }
-
-                        // Whatever segment we ended up in, we can't go later than its end.
-                        after_candidate = std::min(after_candidate, after_candidate_segment.end());
-
-                        // Bail if we couldn't get clean epsilon separation on either side -- no meaningful
-                        // slope estimate is possible.
-                        const auto half_epsilon = opt.epsilon * 0.5;
-                        if (half_epsilon.wrap(before_candidate) == half_epsilon.wrap(candidate_extremum) ||
-                            half_epsilon.wrap(candidate_extremum) == half_epsilon.wrap(after_candidate)) {
-                            continue;
-                        }
-
-                        const auto q_prime_before = before_candidate_segment.tangent(before_candidate);
-                        const auto q_double_prime_before = before_candidate_segment.curvature(before_candidate);
-                        const auto s_dot_before =
-                            compute_acceleration_limit(q_prime_before, q_double_prime_before, opt.max_acceleration, opt.epsilon);
-
-                        const auto q_prime_after = after_candidate_segment.tangent(after_candidate);
-                        const auto q_double_prime_after = after_candidate_segment.curvature(after_candidate);
-                        const auto s_dot_after =
-                            compute_acceleration_limit(q_prime_after, q_double_prime_after, opt.max_acceleration, opt.epsilon);
-
-                        // Check if curve has local minimum (decreasing before, increasing after)
-                        const bool is_local_minimum = (s_dot_before > s_dot_max_acc) && (s_dot_after > s_dot_max_acc);
-
-                        if (is_local_minimum) {
-                            // Valid continuous-nondifferentiable switching point (Section VII-A case 2).
-                            // Backward integration starts from this point with zero acceleration, since applying
-                            // any non-zero acceleration would move off the non-differentiable cusp. The switching
-                            // velocity is the value of the limit curve at this point.
-                            return std::make_optional<switching_point>(
-                                {.point = {.s = candidate_extremum, .s_dot = s_dot_max_acc},
-                                 .kind = trajectory::switching_point_kind::k_nondifferentiable_extremum,
-                                 .forward_accel = arc_acceleration{0.0},
-                                 .backward_accel = arc_acceleration{0.0}});
-                        }
+                    const auto angle_past_end = static_cast<double>(*s_global - end) * curvature_magnitude;
+                    if (angle_past_end <= k_end_rounding_ulps * std::numeric_limits<double>::epsilon()) {
+                        candidate_extrema.push_back(end);
                     }
                 }
 
-                // Not a circular segment, or no switching point found in this segment.
+                // The above loop extracts candidate extrema in joint order, but we need to process them in `s`
+                // order so we can find the first local minimum.
+                std::ranges::sort(candidate_extrema);
+
+                // If we found an extremum, validate it as a switching point
+                for (const auto& candidate_extremum : candidate_extrema) {
+                    // Query geometry at the extremum
+                    const auto q_prime = current_segment.tangent(candidate_extremum);
+                    const auto q_double_prime = current_segment.curvature(candidate_extremum);
+
+                    // Compute acceleration limit curve at extremum
+                    const auto curves =
+                        compute_limit_curves(current_segment.configuration(candidate_extremum), q_prime, q_double_prime, opt);
+                    const auto s_dot_max_acc = curves.s_dot_max_acc;
+                    const auto s_dot_max_vel = curves.s_dot_max_vel;
+
+                    // If this switching point is infeasible with respect to the velocity limit curve,
+                    // reject it.
+                    if (opt.epsilon.wrap(s_dot_max_vel) < opt.epsilon.wrap(s_dot_max_acc)) {
+                        continue;
+                    }
+
+                    // Validate: acceleration limit curve must have local minimum (derivative changes negative to positive)
+                    // Sample slightly before and after the extremum.
+
+                    // TODO(RSDK-12850): Replace numerical derivative check with analytical derivative computation.
+                    // For circular segments, we can derive the exact formula for d/ds s_dot_max_acc(s) from
+                    // equations 29-31 in the paper. The current epsilon-offset approach works but is less
+                    // accurate and has epsilon dependency. An analytical solution would be more robust and
+                    // faster (no need for 4 extra geometry queries + limit calculations per extremum).
+
+                    // `Divergent Behavior 5`: C-C adjacency requires cross-boundary sampling when the
+                    // limit curve is continuous across the boundary. Check continuity before sampling.
+                    auto before_candidate = std::max(arc_length{0.0}, candidate_extremum - arc_length{opt.epsilon});
+                    auto before_candidate_segment = current_segment;
+                    if (before_candidate < current_segment.start()) {
+                        if (auto base = path::cursor{cursor}.seek(candidate_extremum).base(); base != cursor.path().begin()) {
+                            // Get the segment prior
+                            auto prior_segment = *--base;
+
+                            // Can't cross more than one segment, so clamp to the beginning of the prior segment.
+                            before_candidate = std::max(before_candidate, prior_segment.start());
+
+                            // Evaluate the limit curve at the end of the prior segment
+                            const auto q_prime_end_prior = prior_segment.tangent(prior_segment.end());
+                            const auto q_double_prime_end_prior = prior_segment.curvature(prior_segment.end());
+
+                            // Compute acceleration limit curve at end of the prior segment
+                            const auto s_dot_max_acc_end_prior =
+                                compute_acceleration_limit(q_prime_end_prior, q_double_prime_end_prior, opt.max_acceleration, opt.epsilon);
+
+                            // Evaluate the limit curve at the beginning of the current segment
+                            const auto q_prime_begin_current = current_segment.tangent(current_segment.start());
+                            const auto q_double_prime_begin_current = current_segment.curvature(current_segment.start());
+
+                            // Compute acceleration limit curve at beginning of current segment
+                            const auto s_dot_max_acc_begin_current = compute_acceleration_limit(
+                                q_prime_begin_current, q_double_prime_begin_current, opt.max_acceleration, opt.epsilon);
+
+                            // Check if we have continuity into the prior segment. If so, we can cross the boundary. Otherwise, we're
+                            // stuck in this segment.
+                            if (opt.epsilon.wrap(s_dot_max_acc_end_prior) == opt.epsilon.wrap(s_dot_max_acc_begin_current)) {
+                                before_candidate_segment = prior_segment;
+                            }
+                        }
+                    }
+
+                    // Whatever segment we ended up in, we can't go earlier than its start.
+                    before_candidate = std::max(before_candidate, before_candidate_segment.start());
+
+                    auto after_candidate = std::min(cursor.path().length(), candidate_extremum + arc_length{opt.epsilon});
+                    auto after_candidate_segment = current_segment;
+                    if (after_candidate > current_segment.end()) {
+                        // Need to be a little more careful in this case. The one liner we used above for the moving backward
+                        // case doesn't work when moving forward, because if the candidate is at the boundary, we will move to the next
+                        // segment.
+                        auto base = path::cursor{cursor}.seek(candidate_extremum).base();
+                        if (base == cursor.base()) {
+                            ++base;
+                        }
+                        if (base != cursor.path().end()) {
+                            auto next_segment = *base;
+
+                            // Can't cross more than one segment, so clamp to the end of the next segment.
+                            after_candidate = std::min(after_candidate, next_segment.end());
+
+                            // Evaluate the limit curve at the end of the current segment
+                            const auto q_prime_end_current = current_segment.tangent(current_segment.end());
+                            const auto q_double_prime_end_current = current_segment.curvature(current_segment.end());
+
+                            // Compute acceleration limit curve at end of current segment
+                            const auto s_dot_max_acc_end_current = compute_acceleration_limit(
+                                q_prime_end_current, q_double_prime_end_current, opt.max_acceleration, opt.epsilon);
+
+                            // Evaluate the limit curve at the beginning of the next segment
+                            const auto q_prime_start_next = next_segment.tangent(next_segment.start());
+                            const auto q_double_prime_start_next = next_segment.curvature(next_segment.start());
+
+                            // Compute acceleration limit curve at beginning of next segment
+                            const auto s_dot_max_acc_start_next = compute_acceleration_limit(
+                                q_prime_start_next, q_double_prime_start_next, opt.max_acceleration, opt.epsilon);
+
+                            // Check if we have continuity into the next segment. If so, we can cross the boundary. Otherwise, we're
+                            // stuck in this segment.
+                            if (opt.epsilon.wrap(s_dot_max_acc_end_current) == opt.epsilon.wrap(s_dot_max_acc_start_next)) {
+                                after_candidate_segment = next_segment;
+                            }
+                        }
+                    }
+
+                    // Whatever segment we ended up in, we can't go later than its end.
+                    after_candidate = std::min(after_candidate, after_candidate_segment.end());
+
+                    // Bail if we couldn't get clean epsilon separation on either side -- no meaningful
+                    // slope estimate is possible.
+                    const auto half_epsilon = opt.epsilon * 0.5;
+                    if (half_epsilon.wrap(before_candidate) == half_epsilon.wrap(candidate_extremum) ||
+                        half_epsilon.wrap(candidate_extremum) == half_epsilon.wrap(after_candidate)) {
+                        continue;
+                    }
+
+                    const auto q_prime_before = before_candidate_segment.tangent(before_candidate);
+                    const auto q_double_prime_before = before_candidate_segment.curvature(before_candidate);
+                    const auto s_dot_before =
+                        compute_acceleration_limit(q_prime_before, q_double_prime_before, opt.max_acceleration, opt.epsilon);
+
+                    const auto q_prime_after = after_candidate_segment.tangent(after_candidate);
+                    const auto q_double_prime_after = after_candidate_segment.curvature(after_candidate);
+                    const auto s_dot_after =
+                        compute_acceleration_limit(q_prime_after, q_double_prime_after, opt.max_acceleration, opt.epsilon);
+
+                    // Check if curve has local minimum (decreasing before, increasing after)
+                    const bool is_local_minimum = (s_dot_before > s_dot_max_acc) && (s_dot_after > s_dot_max_acc);
+
+                    if (is_local_minimum) {
+                        // Valid continuous-nondifferentiable switching point (Section VII-A case 2).
+                        // Backward integration starts from this point with zero acceleration, since applying
+                        // any non-zero acceleration would move off the non-differentiable cusp. The switching
+                        // velocity is the value of the limit curve at this point.
+                        return std::make_optional<switching_point>({.point = {.s = candidate_extremum, .s_dot = s_dot_max_acc},
+                                                                    .kind = trajectory::switching_point_kind::k_nondifferentiable_extremum,
+                                                                    .forward_accel = arc_acceleration{0.0},
+                                                                    .backward_accel = arc_acceleration{0.0}});
+                    }
+                }
+
+                // No switching point found in this segment.
                 return std::optional<switching_point>{};
-            });
+            }();
 
             // If we found a valid extremum switching point, return it
             if (extremal_switching_point) {
@@ -1194,6 +1185,21 @@ std::optional<switching_point> find_velocity_switching_point(path::cursor cursor
     const auto continuous_bound =
         discontinuous_switching_point.has_value() ? std::min(discontinuous_switching_point->point.s, max_search_hint) : max_search_hint;
     const auto continuous_switching_point = find_continuous_velocity_switching_point(cursor, continuous_bound, opt);
+
+    // The continuous search was bounded by the discontinuous result, so it was only asked for an escape
+    // that comes first. An escape at the same location is the same switching point seen without its
+    // cause. The scan never steps over a boundary, but it does step onto one, and a cursor there reads
+    // the far side. So where the curvature jumps, the bracket's end carries the far side's delta. That
+    // sign change is the jump, not a root, and bisection converges onto the boundary from inside. The
+    // boundary search evaluates both sides and classifies the jump, so we keep its switching point.
+    //
+    // We judge sameness at opt.epsilon because that is the bisection's own resolution. It stops once its
+    // bracket is that narrow, so it can't place an escape more finely than that. Two points it can't
+    // tell apart are one point.
+    if (discontinuous_switching_point && continuous_switching_point &&
+        opt.epsilon.wrap(continuous_switching_point->point.s) == opt.epsilon.wrap(discontinuous_switching_point->point.s)) {
+        return discontinuous_switching_point;
+    }
 
     return select_switching_point(discontinuous_switching_point, continuous_switching_point, opt.epsilon);
 }

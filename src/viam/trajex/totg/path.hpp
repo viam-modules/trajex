@@ -3,6 +3,7 @@
 #include <bitset>
 #include <concepts>
 #include <cstddef>
+#include <optional>
 #include <ranges>
 #include <span>
 #include <utility>
@@ -48,6 +49,32 @@ namespace viam::trajex::totg {
 class VIAM_TRAJEX_TOTG_API path {
    public:
     ///
+    /// Bounds the error of every configuration a path or its segments report, in ULPs.
+    ///
+    /// Error is measured against the exact path the waypoints and options describe, in ULPs of the
+    /// coordinates where the configuration is computed: the largest magnitude among the containing
+    /// segment's two ends plus the segment's length, which bounds every term summed to form a
+    /// position. A query at global arc length s may err by one more ULP of s, because it is evaluated
+    /// at s less the segment's start, and that subtraction rounds by up to that much.
+    ///
+    /// This bound and the two that follow are a specification with margin over the errors we
+    /// measured, not a derivation from the arithmetic.
+    ///
+    static constexpr std::size_t k_position_error_bound_ulps = 8;
+
+    ///
+    /// Bounds the error of every unit tangent a path or its segments report, against the exact unit
+    /// tangent, in ULPs of 1.
+    ///
+    static constexpr std::size_t k_tangent_error_bound_ulps = 4;
+
+    ///
+    /// Bounds the relative error of every curvature vector a path or its segments report, against the
+    /// exact curvature, in ULPs.
+    ///
+    static constexpr std::size_t k_curvature_error_bound_ulps = 4;
+
+    ///
     /// Geometric segment in configuration space.
     ///
     class segment {
@@ -90,23 +117,29 @@ class VIAM_TRAJEX_TOTG_API path {
         ///
         /// Circular blend segment in configuration space.
         ///
+        /// The arc is described from its apex, the midpoint of the arc, rather than from its center.
+        /// With theta measured from the apex over [-angle_rads / 2, angle_rads / 2], the arc is
+        /// `apex + radius * (sin(theta) * t + (1 - cos(theta)) * n)`. Every term is bounded by the
+        /// arc's length, so positions on the arc are accurate to a few ULPs of the coordinates however
+        /// large the radius. A center would sit a radius away and carry an error proportional to it.
+        ///
         struct circular {
             ///
             /// Constructs circular arc with validation.
             ///
-            /// @param center Center of arc in configuration space
-            /// @param x First basis vector (must be unit length)
-            /// @param y Second basis vector (must be unit length and perpendicular to x)
+            /// @param apex Midpoint of the arc in configuration space
+            /// @param t Unit tangent at the apex
+            /// @param n Unit normal at the apex, pointing toward the center of the arc
             /// @param radius Radius of the circular arc
             /// @param angle_rads Total angle swept by arc (radians)
-            /// @throws std::invalid_argument if x,y are not orthonormal
+            /// @throws std::invalid_argument if t,n are not orthonormal to within rounding
             ///
             circular(
-                xrank_checked<xvector<>> center, xrank_checked<xvector<>> x, xrank_checked<xvector<>> y, double radius, double angle_rads);
+                xrank_checked<xvector<>> apex, xrank_checked<xvector<>> t, xrank_checked<xvector<>> n, double radius, double angle_rads);
 
-            xvector<> center;   ///< Center of arc in configuration space
-            xvector<> x;        ///< First basis vector (defines rotation plane)
-            xvector<> y;        ///< Second basis vector (perpendicular to x)
+            xvector<> apex;     ///< Midpoint of the arc in configuration space
+            xvector<> t;        ///< Unit tangent at the apex
+            xvector<> n;        ///< Unit normal at the apex, toward the center (perpendicular to t)
             double radius;      ///< Radius of the circular arc (units: configuration space distance)
             double angle_rads;  ///< Total angle swept by arc (units: radians)
         };
@@ -155,6 +188,17 @@ class VIAM_TRAJEX_TOTG_API path {
             /// @return Length of the view (end - start)
             ///
             arc_length length() const noexcept;
+
+            ///
+            /// Checks whether there is somewhere to be inside this segment.
+            ///
+            /// Positions on a path are addressed by arc length, so that means a representable arc length
+            /// strictly between start() and end(). A segment without one can be stepped over, but not
+            /// advanced through.
+            ///
+            /// @return True if some representable arc length lies strictly between start() and end()
+            ///
+            bool has_interior() const noexcept;
 
             ///
             /// Checks if segment holds a specific type.
@@ -235,6 +279,37 @@ class VIAM_TRAJEX_TOTG_API path {
             /// @throws std::invalid_argument if out is not sized to the degrees of freedom
             ///
             void curvature(arc_length s, std::span<double> out) const;
+
+            ///
+            /// Finds where one coordinate of a circular segment's configuration is extremal.
+            ///
+            /// A coordinate is extremal where its component of the tangent is zero. A linear
+            /// segment's tangent is constant, so it has no such point. For a blend arc, the root is
+            /// taken on the arc's circle within a quarter turn either side of the apex, where it is
+            /// unique; a blend arc turns by less than pi, so any root on the arc itself is this one.
+            /// The root is reported wherever it falls, which may be off this segment: rounding can
+            /// place a root that belongs at a boundary just outside it, and the caller decides what
+            /// an off-segment root means. The geometry accessors throw for an off-segment arc length.
+            ///
+            /// @param joint Index of the coordinate
+            /// @return Global arc length of the root, possibly outside [start(), end()], or nullopt if
+            ///         there is none
+            /// @throws std::out_of_range if joint is not less than the degrees of freedom
+            ///
+            std::optional<arc_length> coordinate_extremum(std::size_t joint) const;
+
+            ///
+            /// Finds the point of this segment nearest a configuration.
+            ///
+            /// The configuration may be anywhere: it need not lie on the segment, nor in the plane of an
+            /// arc. A configuration equally near every point of an arc, on the axis through its center,
+            /// is reported nearest the arc's midpoint.
+            ///
+            /// @param configuration Configuration to measure from, sized to the degrees of freedom
+            /// @return Global arc length of the nearest point, within [start(), end()]
+            /// @throws std::invalid_argument if configuration is not sized to the degrees of freedom
+            ///
+            arc_length nearest(std::span<const double> configuration) const;
 
            private:
             // Recovered from the segment's stored vectors. Only the value-returning accessors
@@ -328,7 +403,15 @@ class VIAM_TRAJEX_TOTG_API path {
         ///
         /// Blend arcs whose natural radius would exceed 1/curvature are capped at that
         /// radius. This prevents numerically fragile enormous-radius arcs at near-collinear
-        /// waypoints while retaining exact C1 continuity at every segment boundary.
+        /// waypoints while keeping tangents continuous at every segment boundary, to within
+        /// k_tangent_error_bound_ulps.
+        ///
+        /// Each arc's radius is then refit to the span the arc occupies on the path, which is its
+        /// length rounded into the path's arc length, so that the arc is traversed at unit speed.
+        /// The refit can carry an arc's curvature past either curvature bound, by a relative
+        /// amount of at most an ULP of the arc's end, divided by the arc's length, plus an ULP
+        /// for the division. The curvature the path reports may differ from that by
+        /// k_curvature_error_bound_ulps more.
         ///
         /// This is `Divergent Behavior 3`: the Kunz & Stilman paper uses no bounds on blend curvature.
         ///
@@ -342,7 +425,8 @@ class VIAM_TRAJEX_TOTG_API path {
         ///
         /// Waypoints whose blend arc would exceed this curvature (1/radius) are treated
         /// as unblended corners. This prevents near-degenerate tiny arcs at near-reversal
-        /// waypoints.
+        /// waypoints. An arc that is emitted can exceed this curvature by the refit described
+        /// for set_min_blend_curvature().
         ///
         /// This is `Divergent Behavior 3`: the Kunz & Stilman paper uses no bounds on blend curvature.
         ///
@@ -389,9 +473,14 @@ class VIAM_TRAJEX_TOTG_API path {
     ///
     /// Creates a path from a waypoints accumulator.
     ///
+    /// Consecutive waypoints must be distinct. A zero-length leg between two has no direction,
+    /// and the path refuses it rather than guess one; deduplicate before calling.
+    ///
     /// @param waypoints Waypoint sequence to follow
     /// @param opts Path creation options (coalescing and blending parameters)
     /// @return Constructed path with segments
+    /// @throws std::invalid_argument if there are fewer than two waypoints, if two consecutive
+    /// waypoints coincide, or if the options are out of range
     ///
     [[nodiscard]] static path create(const waypoint_accumulator& waypoints, const options& opts = options{});
 
