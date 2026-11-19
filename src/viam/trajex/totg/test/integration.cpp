@@ -2977,6 +2977,34 @@ BOOST_AUTO_TEST_CASE(RSDK_13890_arc_exit_breach_undetected_0fb4d71c, *boost::uni
         std::nullopt);
 }
 
+// The breach above, at a boundary between two arcs rather than an arc and a straight. A forward step
+// reaching the exit of a 1.7e-2 arc is re-ended on the boundary at s_dot 0.25492, above that arc's
+// limit curve at its exit (0.25207), and is checked against the arc that follows, whose curve there
+// is 0.26755. The backward pass from an extremum just past the boundary then reaches it above the
+// first arc's curve, and generation fails with infeasible acceleration bounds.
+//
+// TODO(RSDK-13890): Enable with 0fb4d71c. Here the curve is finite on both sides of the boundary.
+BOOST_AUTO_TEST_CASE(failed_trajectory_281279c7_95c23110_trajectory_generation, *boost::unit_test::disabled()) {
+    generate_trajectory_from_replay_file(
+        "njsanding-viam_capture_tag=281279c7-c5b2-4886-b133-3df6b6c1fea1_95c23110-2927-4e8b-ac51-d8da42e36ff6_arm.trajex-totg-replay.json",
+        std::nullopt,
+        std::nullopt);
+}
+
+// A 179.8 degree stroke reversal is blended by an arc of radius 1.4e-5, just under the curvature cap,
+// and the acceleration limit curve across it is about 0.0093. Forward integration hits that curve
+// inside the arc, and the velocity switching point search returns an escape exactly on the arc's exit,
+// on the velocity curve at s_dot 2.5707. Judged from the straight that follows, which has no
+// acceleration limit, that point is not above the acceleration curve, so it is accepted. The backward
+// pass from it steps into the arc at about 275 times the arc's curve, and generation fails with
+// infeasible acceleration bounds.
+//
+// TODO(RSDK-12850): Enable once a switching point on a boundary is judged against the segment the
+// trajectory arrives from.
+BOOST_AUTO_TEST_CASE(RSDK_14913_gp8_reversal_blend_velocity_escape, *boost::unit_test::disabled()) {
+    generate_trajectory_from_replay_file("gp8_reversal_blend_velocity_escape-20261110.trajex-totg-replay.json", std::nullopt, std::nullopt);
+}
+
 BOOST_AUTO_TEST_SUITE_END()  // replay_regression_tests
 
 BOOST_AUTO_TEST_SUITE(online_extension_verification)
