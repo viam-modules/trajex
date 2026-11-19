@@ -97,7 +97,7 @@ jobs:
           - platform: linux/amd64
             runner: ubuntu-latest
             image: &cpp_sdk_image ghcr.io/viamrobotics/cpp-sdk-conan-ubuntu
-            digest: &cpp_sdk_digest sha256:f7b3a66d7653a61afe3f2623e04359d3996239fab49edcc5267ff96e4f9aaf2d  # jammy-2026-11.02
+            digest: &cpp_sdk_digest sha256:0a4ae32ae659eb481afd576f2adce42b9eb3ddb32814e85e45f2a497beefe28d  # jammy-2026-11.02
             artifact_name: trajex-linux-amd64
           - platform: linux/arm64
             runner: ubuntu-4cpu-arm
