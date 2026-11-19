@@ -38,13 +38,16 @@ class trajex_service(ConanFile):
         # that SDK release on GitHub (`conan lock create --lockfile-partial` per
         # platform, then `conan lock merge`), and update `bin/setup.sh` and the
         # viam-cpp-sdk GIT_TAG in CMakeLists.txt to match.
-        self.requires("viam-cpp-sdk/0.44.0")
-        self.requires("eigen/[>=3.4 <5.0]")
-        self.requires("boost/[>=1.74.0]")
-        self.requires("jsoncpp/[>=1.9.5]")
         self.requires("benchmark/[>=1.9.5]")
-        # Note: grpc comes via viam-cpp-sdk
-        # Note: trajex doesn't need URCL (Universal Robots Client Library)
+        self.requires("boost/[>=1.74.0]")
+        self.requires("eigen/[>=3.4 <5.0]")
+        self.requires("jsoncpp/[>=1.9.5]")
+        self.requires("viam-cpp-sdk/0.46.0")
+
+        # Generally, these should track what the C++ SDK requires. The override
+        # for XTL is per the same choice in the C++ SDK conanfile.py.
+        self.requires("xtensor/[>=0.26.0]")
+        self.requires("xtl/[>=0.8.0]", override=True)
 
     def validate(self):
         check_min_cppstd(self, 20)

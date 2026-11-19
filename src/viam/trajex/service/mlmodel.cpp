@@ -6,9 +6,8 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
-
-#include <boost/variant/get.hpp>
 
 #include <viam/sdk/log/logging.hpp>
 
@@ -52,7 +51,7 @@ const auto& get_double_tensor(const mlmodel::named_tensor_views& inputs, std::st
     if (it == inputs.end()) {
         throw std::invalid_argument("missing required input tensor: " + std::string(name));
     }
-    const auto* view = boost::get<mlmodel::tensor_view<double>>(&it->second);
+    const auto* view = std::get_if<mlmodel::tensor_view<double>>(&it->second);
     if (!view) {
         throw std::invalid_argument("input tensor '" + std::string(name) + "' has wrong type (expected float64)");
     }
@@ -64,7 +63,7 @@ const auto& get_int64_tensor(const mlmodel::named_tensor_views& inputs, std::str
     if (it == inputs.end()) {
         throw std::invalid_argument("missing required input tensor: " + std::string(name));
     }
-    const auto* view = boost::get<mlmodel::tensor_view<std::int64_t>>(&it->second);
+    const auto* view = std::get_if<mlmodel::tensor_view<std::int64_t>>(&it->second);
     if (!view) {
         throw std::invalid_argument("input tensor '" + std::string(name) + "' has wrong type (expected int64)");
     }
