@@ -10,8 +10,6 @@
 #include <string>
 #include <vector>
 
-#include <boost/variant/get.hpp>
-
 #include <viam/sdk/config/resource.hpp>
 #include <viam/sdk/services/mlmodel.hpp>
 

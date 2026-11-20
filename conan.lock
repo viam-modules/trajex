@@ -5,7 +5,7 @@
         "xtl/0.8.0#45f1f2f2e5cbff154b59a57dbd6efb55%1747056138.62",
         "xtensor/0.26.0#929fed688e0b3e850106059bf3782e81%1755248340.339",
         "xsimd/13.2.0#b4819b06b51041b1cd32114700adbb59%1743412135.667",
-        "viam-cpp-sdk/0.44.0#8c54da7a5b15b6400ce6e0e1eff4f2ee%1793028457.393338",
+        "viam-cpp-sdk/0.46.0#ca30f20baa53cbe8435686bd7b5ae821%1795114956.2774332",
         "re2/20251105#8579cfd0bda4daf0683f9e3898f964b4%1772560729.95",
         "protobuf/6.33.5#ca5ff466767b31a1b496ec60247e105c%1785159690.783",
         "opentelemetry-cpp/1.26.0#9d81768342c78cb897345fd419b358d2%1776934712.672",
@@ -36,11 +36,12 @@
     ],
     "python_requires": [],
     "overrides": {
-        "xtl/[>=0.7.7]": [
+        "xtl/[>=0.8.0]": [
             "xtl/0.8.0#45f1f2f2e5cbff154b59a57dbd6efb55"
         ],
         "xtl/0.8.0": [
-            "xtl/0.8.0#45f1f2f2e5cbff154b59a57dbd6efb55"
+            "xtl/0.8.0#45f1f2f2e5cbff154b59a57dbd6efb55",
+            "xtl/[>=0.8.0]"
         ]
     },
     "config_requires": []

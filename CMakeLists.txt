@@ -224,14 +224,15 @@ endif()
 # we do not enforce a minimum; the package's `find_package` (or its
 # `FIND_PACKAGE_ARGS`-mediated equivalent) accepts whatever is found.
 # Below 1.9.5 `RegisterBenchmarkInternal` takes a raw pointer and clang-tidy reports every
-# benchmark registration as a leak.
+# benchmark registration as a leak. Note that when set, these minima should probably match
+# more or less exactly to the minima declared in `conanfile.py`.
 set(VIAM_TRAJEX_BENCHMARK_VERSION_MINIMUM 1.9.5)
 set(VIAM_TRAJEX_BOOST_VERSION_MINIMUM "")    # TODO: Decide this
 set(VIAM_TRAJEX_EIGEN3_VERSION_MINIMUM "")   # TODO: Decide this
 set(VIAM_TRAJEX_JSONCPP_VERSION_MINIMUM "")  # TODO: Decide this
-set(VIAM_TRAJEX_VIAMCPPSDK_VERSION_MINIMUM 0.44.0)
-set(VIAM_TRAJEX_XTENSOR_VERSION_MINIMUM 0.24.3)
-set(VIAM_TRAJEX_XTL_VERSION_MINIMUM 0.7.2)
+set(VIAM_TRAJEX_VIAMCPPSDK_VERSION_MINIMUM 0.46.0)
+set(VIAM_TRAJEX_XTENSOR_VERSION_MINIMUM 0.26.0)
+set(VIAM_TRAJEX_XTL_VERSION_MINIMUM 0.8.0)
 
 # Each external dependency is acquired here, gated to the feature flag(s) whose
 # enablement requires it. The gates below mirror but do not duplicate the
@@ -259,11 +260,25 @@ set(VIAM_TRAJEX_XTL_VERSION_MINIMUM 0.7.2)
 
 include(FetchContent)
 
+FetchContent_Declare(
+  xtl
+  GIT_REPOSITORY https://github.com/xtensor-stack/xtl.git
+  GIT_TAG        c52350e283b98e5d69dbc50726925a1f8e16c57c # 0.8.2
+  FIND_PACKAGE_ARGS ${VIAM_TRAJEX_XTL_VERSION_MINIMUM} CONFIG
+)
+
+FetchContent_Declare(
+  xtensor
+  GIT_REPOSITORY https://github.com/xtensor-stack/xtensor
+  GIT_TAG        934d6d49ba64593169fbf350e8f54ca2786e6704 # 0.27.2
+  FIND_PACKAGE_ARGS ${VIAM_TRAJEX_XTENSOR_VERSION_MINIMUM} CONFIG
+)
+
 if (VIAM_TRAJEX_ENABLE_SERVICE)
   FetchContent_Declare(
     viam-cpp-sdk
     GIT_REPOSITORY https://github.com/viamrobotics/viam-cpp-sdk
-    GIT_TAG        releases/v0.44.0
+    GIT_TAG        releases/v0.46.0
     GIT_SHALLOW    TRUE
     SYSTEM
     # Delete conflicting protobuf headers
@@ -273,20 +288,6 @@ if (VIAM_TRAJEX_ENABLE_SERVICE)
   set(VIAMCPPSDK_USE_WALL_WERROR OFF)
   FetchContent_MakeAvailable(viam-cpp-sdk)
 endif()
-
-FetchContent_Declare(
-  xtl
-  GIT_REPOSITORY https://github.com/xtensor-stack/xtl.git
-  GIT_TAG        a7c1c5444dfc57f76620391af4c94785ff82c8d6 # 0.7.7
-  FIND_PACKAGE_ARGS ${VIAM_TRAJEX_XTL_VERSION_MINIMUM} CONFIG
-)
-
-FetchContent_Declare(
-  xtensor
-  GIT_REPOSITORY https://github.com/xtensor-stack/xtensor
-  GIT_TAG        3634f2ded19e0cf38208c8b86cea9e1d7c8e397d # 0.25.0
-  FIND_PACKAGE_ARGS ${VIAM_TRAJEX_XTENSOR_VERSION_MINIMUM} CONFIG
-)
 
 # When xtl and xtensor are fetched rather than found, they get installed alongside trajex, which
 # our installed headers need. Neither project assigns its install rules to a component, so this

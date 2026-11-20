@@ -60,7 +60,7 @@ jobs:
           - plat: linux_amd64
             runner: ubuntu-24.04
             image: &cpp_sdk_image ghcr.io/viamrobotics/cpp-sdk-system-ubuntu:focal
-            digest: &cpp_sdk_digest sha256:2c79d7f26ee515cdd42c9b15294e496a498bc68b83fb1d6b702f913abad39ad0
+            digest: &cpp_sdk_digest sha256:55859b04494201debcd92f03e5e8122c678bf0dce6c5b5ea9f03d89256e082c9  # focal-2026-11.02
           - plat: linux_arm64
             runner: ubuntu-24.04-arm
             image: *cpp_sdk_image
