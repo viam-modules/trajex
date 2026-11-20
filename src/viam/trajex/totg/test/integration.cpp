@@ -2665,9 +2665,9 @@ BOOST_AUTO_TEST_CASE(vik_182_forward_integration_acc_natural_escape_stall) {
 
 // The same check as tcp_limits_tests/terminal_acceleration_finite_and_sampleable_at_exact_duration,
 // on the gp12 chain with a 0.5 m/s cap and a field record, so the property is also held on a real
-// arm. Like that test it was written for RSDK-13338, whose failure does not reproduce at any
-// commit of the branch that added it. The record predates TCP options (schema v1), so the test
-// applies the cap to the gp12 chain itself.
+// arm. Like that test it was written for RSDK-13338 and never reproduced the failure. RSDK-14959,
+// whose reproducer follows, fixed what is likely the same cause. The record predates TCP options
+// (schema v1), so the test applies the cap to the gp12 chain itself.
 BOOST_AUTO_TEST_CASE(gp12_tcp_terminal_acceleration_sentinel_sample) {
     std::ifstream in(std::filesystem::path(VIAM_TRAJEX_TEST_DATA_DIR) /
                      "gp12_tcp_terminal_nan_acceleration-20260612.trajex-totg-replay.json");
@@ -2699,6 +2699,19 @@ BOOST_AUTO_TEST_CASE(gp12_tcp_terminal_acceleration_sentinel_sample) {
     const auto traj = trajectory::create(std::move(p), std::move(opt));
     BOOST_CHECK(std::isfinite(static_cast<double>(traj.get_integration_points().back().s_ddot)));
     BOOST_CHECK_NO_THROW(static_cast<void>(traj.create_cursor().seek(traj.duration()).sample()));
+}
+
+// This reproduces RSDK-14959, the failure the two tests above check for, with joint limits only.
+// A UR5e reported "Cannot query cursor at sentinel position" on a short, densely spaced straight
+// move. The universal-robots module puts the measured joint position ahead of the caller's
+// waypoints and deduplicates at 1e-3 rad. That drops the caller's first waypoint, so the path it
+// built started a little off the recorded one. This record is the field record with its first
+// waypoint moved by less than that tolerance. Of 1500 random such starts, it was the only one to
+// leave a NaN s_ddot on the terminal integration point. Sampling at exactly the duration
+// interpolates from that point with dt == 0. A NaN there gets through the arc length clamp and
+// seeks the path cursor to its sentinel.
+BOOST_AUTO_TEST_CASE(RSDK_14959_ur5e_unstraighten_terminal_nan_acceleration) {
+    generate_trajectory_from_replay_file("ur5e_unstraighten_terminal_nan_acceleration-20261119.trajex-totg-replay.json", 0.1, 0.1);
 }
 
 // Every integration point's s_ddot must lie within its feasible [s_ddot_min, s_ddot_max] band. Path

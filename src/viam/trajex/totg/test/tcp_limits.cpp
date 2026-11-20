@@ -234,9 +234,12 @@ BOOST_AUTO_TEST_CASE(steep_falling_crossing_respects_tcp_limit) {
 // The terminal integration point must carry a finite acceleration, and the trajectory must be
 // sampleable at exactly its duration, which interpolates from that point with dt == 0. A NaN there
 // would seek the path cursor to its sentinel and make the sample throw. This was written for
-// RSDK-13338, which reported exactly that on a TCP-capped path, but the failure does not reproduce
-// at any commit of the branch that added it, with or without the fixes that came with it. It is
-// kept as a check of the property across a sweep of caps, not as a regression test.
+// RSDK-13338, which reported exactly that on a TCP-capped path, but it never reproduced the failure.
+// RSDK-14959 later reproduced the same failure with joint limits only and fixed its cause, a path
+// end from the switching point search with no forward acceleration. That is likely what RSDK-13338
+// hit too. The regression test is
+// `replay_regression_tests/RSDK_14959_ur5e_unstraighten_terminal_nan_acceleration`.
+// This remains a check of the property across a sweep of caps.
 BOOST_AUTO_TEST_CASE(terminal_acceleration_finite_and_sampleable_at_exact_duration) {
     for (const double cap : {0.05, 0.1, 0.15, 0.2, 0.3, 0.5, 1.0}) {
         const path p = path::create(xmatrix<>{{0.0, 2.0}, {10.0, 0.0}});
