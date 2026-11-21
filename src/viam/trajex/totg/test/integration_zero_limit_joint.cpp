@@ -13,9 +13,6 @@ namespace {
 
 using namespace viam::trajex::totg;
 using namespace viam::trajex::totg::test;
-using viam::trajex::arc_length;
-using viam::trajex::arc_velocity;
-using viam::trajex::degrees_to_radians;
 using viam::trajex::xmatrix;
 using viam::trajex::xvector;
 
