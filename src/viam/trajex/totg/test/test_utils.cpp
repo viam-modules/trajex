@@ -2,8 +2,11 @@
 #include <viam/trajex/totg/test/test_utils.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <fstream>
+#include <iostream>
 #include <limits>
 #include <numbers>
 #include <optional>
@@ -12,8 +15,12 @@
 #include <vector>
 
 #include <viam/trajex/totg/path.hpp>
+#include <viam/trajex/totg/tools/json_serialization.hpp>
+#include <viam/trajex/totg/uniform_sampler.hpp>
 #include <viam/trajex/totg/waypoint_accumulator.hpp>
 #include <viam/trajex/types/arc_length.hpp>
+#include <viam/trajex/types/arc_operations.hpp>
+#include <viam/trajex/types/hertz.hpp>
 
 #if __has_include(<xtensor/reducers/xnorm.hpp>)
 #include <xtensor/reducers/xnorm.hpp>
@@ -21,7 +28,17 @@
 #include <xtensor/xnorm.hpp>
 #endif
 
+#include <boost/test/results_collector.hpp>
 #include <boost/test/unit_test.hpp>
+
+#if defined(VIAM_TRAJEX_LEGACY_ENABLED)
+#include <list>
+
+#include <Eigen/Core>
+
+#include <third_party/trajectories/Path.h>
+#include <third_party/trajectories/Trajectory.h>
+#endif
 
 namespace viam::trajex::totg::test {
 
@@ -220,6 +237,547 @@ void validate_path_quality(const path& p, const waypoint_accumulator& waypoints,
             previous_visit = *visit;
         }
     }
+}
+
+namespace {
+
+constexpr bool k_log_met_expectations = false;
+
+}  // namespace
+
+void expectation_observer::on_started_forward_integration(const trajectory&, started_forward_event event) {
+    BOOST_TEST_CONTEXT("on_started_forward_integration event") {
+        BOOST_REQUIRE_MESSAGE(!expectations_.empty(),
+                              "Unexpected forward_start event at s=" << event.start.s << " s_dot=" << event.start.s_dot);
+
+        const auto* expected = std::get_if<expected_forward_start>(&expectations_.front());
+        BOOST_REQUIRE_MESSAGE(expected != nullptr, "Expected different event type, got forward_start at s=" << event.start.s);
+
+        const double tol = expected->tolerance_percent.value_or(default_tolerance_percent_);
+
+        if (expected->s.has_value()) {
+            BOOST_CHECK_CLOSE(static_cast<double>(event.start.s), static_cast<double>(*expected->s), tol);
+        }
+        if (expected->s_dot.has_value()) {
+            BOOST_CHECK_CLOSE(static_cast<double>(event.start.s_dot), static_cast<double>(*expected->s_dot), tol);
+        }
+
+        if constexpr (k_log_met_expectations) {
+            std::cout << "Met expectation: forward_start at s=" << event.start.s << " s_dot=" << event.start.s_dot << "\n";
+        }
+
+        expectations_.pop_front();
+    }
+}
+
+void expectation_observer::on_hit_limit_curve(const trajectory&, limit_hit_event event) {
+    BOOST_TEST_CONTEXT("on_hit_limit_curve event") {
+        BOOST_REQUIRE_MESSAGE(!expectations_.empty(),
+                              "Unexpected hit_limit event at s=" << event.breach.s << " s_dot=" << event.breach.s_dot);
+
+        const auto* expected = std::get_if<expected_hit_limit>(&expectations_.front());
+        BOOST_REQUIRE_MESSAGE(expected != nullptr, "Expected different event type, got hit_limit at s=" << event.breach.s);
+
+        const double tol = expected->tolerance_percent.value_or(default_tolerance_percent_);
+
+        if (expected->s.has_value()) {
+            BOOST_CHECK_CLOSE(static_cast<double>(event.breach.s), static_cast<double>(*expected->s), tol);
+        }
+        if (expected->s_dot.has_value()) {
+            BOOST_CHECK_CLOSE(static_cast<double>(event.breach.s_dot), static_cast<double>(*expected->s_dot), tol);
+        }
+
+        if (expected->s_dot_max_acc.has_value()) {
+            const double actual = static_cast<double>(event.s_dot_max_acc);
+            const double expected_val = static_cast<double>(*expected->s_dot_max_acc);
+            if (std::isinf(expected_val)) {
+                BOOST_CHECK_EQUAL(actual, expected_val);
+            } else {
+                BOOST_CHECK_CLOSE(actual, expected_val, tol);
+            }
+        }
+
+        if (expected->s_dot_max_vel.has_value()) {
+            BOOST_CHECK_CLOSE(static_cast<double>(event.s_dot_max_vel), static_cast<double>(*expected->s_dot_max_vel), tol);
+        }
+
+        if constexpr (k_log_met_expectations) {
+            std::cout << "Met expectation: hit_limit at s=" << event.breach.s << " s_dot=" << event.breach.s_dot
+                      << " acc_limit=" << event.s_dot_max_acc << " vel_limit=" << event.s_dot_max_vel << "\n";
+        }
+
+        expectations_.pop_front();
+    }
+}
+
+void expectation_observer::on_started_backward_integration(const trajectory&, started_backward_event event) {
+    BOOST_TEST_CONTEXT("on_started_backward_integration event") {
+        BOOST_REQUIRE_MESSAGE(!expectations_.empty(),
+                              "Unexpected backward_start event at s=" << event.start.s << " s_dot=" << event.start.s_dot);
+
+        const auto* expected = std::get_if<expected_backward_start>(&expectations_.front());
+        BOOST_REQUIRE_MESSAGE(expected != nullptr, "Expected different event type, got backward_start at s=" << event.start.s);
+
+        const double tol = expected->tolerance_percent.value_or(default_tolerance_percent_);
+
+        if (expected->s.has_value()) {
+            BOOST_CHECK_CLOSE(static_cast<double>(event.start.s), static_cast<double>(*expected->s), tol);
+        }
+        if (expected->s_dot.has_value()) {
+            BOOST_CHECK_CLOSE(static_cast<double>(event.start.s_dot), static_cast<double>(*expected->s_dot), tol);
+        }
+
+        // Check switching point kind if expectation includes it
+        if (expected->kind.has_value()) {
+            BOOST_CHECK_EQUAL(static_cast<int>(event.kind), static_cast<int>(*expected->kind));
+        }
+
+        if constexpr (k_log_met_expectations) {
+            std::cout << "Met expectation: backward_start at s=" << event.start.s << " s_dot=" << event.start.s_dot
+                      << " kind=" << static_cast<int>(event.kind) << "\n";
+        }
+
+        expectations_.pop_front();
+    }
+}
+
+void expectation_observer::on_trajectory_extended(const trajectory& traj, splice_event event) {
+    BOOST_TEST_CONTEXT("on_trajectory_extended event") {
+        BOOST_REQUIRE_MESSAGE(!expectations_.empty(), "Unexpected splice event at duration=" << traj.duration().count());
+
+        const auto* expected = std::get_if<expected_splice>(&expectations_.front());
+        BOOST_REQUIRE_MESSAGE(expected != nullptr, "Expected different event type, got splice at duration=" << traj.duration().count());
+
+        const double tol = expected->tolerance_percent.value_or(default_tolerance_percent_);
+
+        if (expected->duration.has_value()) {
+            BOOST_CHECK_CLOSE(traj.duration().count(), expected->duration->count(), tol);
+        }
+
+        if (expected->num_pruned.has_value()) {
+            BOOST_CHECK_EQUAL(event.pruned.size(), *expected->num_pruned);
+        }
+
+        if constexpr (k_log_met_expectations) {
+            std::cout << "Met expectation: splice at duration=" << traj.duration().count() << " pruned=" << event.pruned.size() << "\n";
+        }
+
+        expectations_.pop_front();
+    }
+}
+
+void validate_trajectory_invariants(const trajectory& traj, double tolerance_percent) {
+    const auto& points = traj.get_integration_points();
+    const auto& p = traj.path();
+
+    BOOST_TEST_CONTEXT("Validating trajectory invariants") {
+        // Boundary conditions
+        BOOST_TEST_CONTEXT("Boundary conditions") {
+            BOOST_REQUIRE(!points.empty());
+
+            const auto& first = points.front();
+            BOOST_CHECK_EQUAL(static_cast<double>(first.s), 0.0);
+            BOOST_CHECK_EQUAL(static_cast<double>(first.s_dot), 0.0);
+            BOOST_CHECK_EQUAL(static_cast<double>(first.time.count()), 0.0);
+
+            const auto& last = points.back();
+            BOOST_CHECK_EQUAL(static_cast<double>(last.s), static_cast<double>(p.length()));
+            BOOST_CHECK_EQUAL(static_cast<double>(last.s_dot), 0.0);
+            BOOST_CHECK_EQUAL(static_cast<double>(last.s_ddot), 0.0);
+        }
+
+        // Boundedness
+        BOOST_TEST_CONTEXT("Boundedness") {
+            for (size_t i = 0; i < points.size(); ++i) {
+                BOOST_CHECK(std::isfinite(static_cast<double>(points[i].s)));
+                BOOST_CHECK(std::isfinite(static_cast<double>(points[i].s_dot)));
+                BOOST_CHECK(std::isfinite(static_cast<double>(points[i].s_ddot)));
+                BOOST_CHECK(std::isfinite(points[i].time.count()));
+                BOOST_CHECK_GE(static_cast<double>(points[i].s), 0.0);
+                BOOST_CHECK_LE(static_cast<double>(points[i].s), static_cast<double>(p.length()));
+                BOOST_CHECK_GE(static_cast<double>(points[i].s_dot), 0.0);
+            }
+        }
+
+        // Monotonicity
+        BOOST_TEST_CONTEXT("Monotonicity") {
+            for (size_t i = 1; i < points.size(); ++i) {
+                BOOST_CHECK_LT(points[i - 1].time.count(), points[i].time.count());
+                BOOST_CHECK_LT(static_cast<double>(points[i - 1].s), static_cast<double>(points[i].s));
+            }
+        }
+
+        // Phase plane constraints (velocity limits and acceleration bounds)
+        BOOST_TEST_CONTEXT("Phase plane constraints") {
+            auto cursor = p.create_cursor(arc_length{0.0});
+
+            for (size_t i = 0; i < points.size(); ++i) {
+                const auto& pt = points[i];
+                cursor.seek(pt.s);
+
+                // Validate velocity limits
+                const auto limits = traj.get_velocity_limits(cursor);
+                const double s_dot_max_vel = static_cast<double>(limits.s_dot_max_vel);
+                const double s_dot_max_acc = static_cast<double>(limits.s_dot_max_acc);
+                const double s_dot_limit = std::min(s_dot_max_vel, s_dot_max_acc);
+                const double actual_s_dot = static_cast<double>(pt.s_dot);
+
+                // Validate acceleration bounds
+                const auto bounds = traj.get_acceleration_bounds(cursor, pt.s_dot);
+                const double s_ddot_min = static_cast<double>(bounds.s_ddot_min);
+                const double s_ddot_max = static_cast<double>(bounds.s_ddot_max);
+                const double actual_s_ddot = static_cast<double>(pt.s_ddot);
+
+                BOOST_TEST_CONTEXT("Integration point " << i << " at s=" << static_cast<double>(pt.s)) {
+                    BOOST_CHECK(std::isfinite(actual_s_dot));
+                    BOOST_CHECK(std::isfinite(actual_s_ddot));
+                    BOOST_CHECK_GE(actual_s_dot, 0.0);
+
+                    // Check velocity limits
+                    const double allowed_vel_limit = s_dot_limit * (1.0 + tolerance_percent / 100.0);
+                    BOOST_CHECK_LE(actual_s_dot, allowed_vel_limit);
+
+                    if (actual_s_dot > allowed_vel_limit) {
+                        BOOST_TEST_MESSAGE("s_dot=" << actual_s_dot << " exceeds limit=" << s_dot_limit << " (vel_limit=" << s_dot_max_vel
+                                                    << ", acc_limit=" << s_dot_max_acc << ")");
+                    }
+
+                    // Check acceleration bounds
+                    const double tolerance_margin = std::max(std::abs(s_ddot_max), std::abs(s_ddot_min)) * (tolerance_percent / 100.0);
+                    const double allowed_min = s_ddot_min - tolerance_margin;
+                    const double allowed_max = s_ddot_max + tolerance_margin;
+
+                    BOOST_CHECK_GE(actual_s_ddot, allowed_min);
+                    BOOST_CHECK_LE(actual_s_ddot, allowed_max);
+
+                    if (actual_s_ddot < allowed_min || actual_s_ddot > allowed_max) {
+                        BOOST_TEST_MESSAGE("s_ddot=" << actual_s_ddot << " outside bounds=[" << s_ddot_min << ", " << s_ddot_max << "]");
+                    }
+                }
+            }
+        }
+
+        // Integration point kinematic consistency
+        //
+        // Validates that consecutive integration points form a consistent kinematic sequence.
+        // Starting from point i with (s, s_dot, s_ddot), constant-acceleration integration
+        // should approximately reach point i+1's (s, s_dot). This checks that the stored
+        // acceleration values and time steps produce the claimed trajectory.
+        BOOST_TEST_CONTEXT("Integration point kinematic consistency") {
+            for (size_t i = 0; i + 1 < points.size(); ++i) {
+                const auto& curr = points[i];
+                const auto& next = points[i + 1];
+
+                const auto dt = next.time - curr.time;
+
+                // Constant-acceleration kinematics: integrate from current point
+                const auto predicted_s_dot = curr.s_dot + (curr.s_ddot * dt);
+                const auto predicted_s = curr.s + (curr.s_dot * dt) + (0.5 * (curr.s_ddot * dt) * dt);
+
+                BOOST_TEST_CONTEXT("Point " << i << " -> " << (i + 1) << " (dt=" << dt.count() << "s, s=" << static_cast<double>(curr.s)
+                                            << " -> " << static_cast<double>(next.s) << ")") {
+                    // Position check (always use relative error)
+                    BOOST_CHECK_CLOSE(static_cast<double>(predicted_s), static_cast<double>(next.s), tolerance_percent);
+
+                    // Velocity check: use absolute error for near-zero, relative error otherwise
+                    const double next_s_dot_val = static_cast<double>(next.s_dot);
+                    const double predicted_s_dot_val = static_cast<double>(predicted_s_dot);
+
+                    if (std::abs(next_s_dot_val) < 1e-9) {
+                        // Near-zero velocity: check absolute error
+                        // BOOST_CHECK_CLOSE would divide by ~zero and give meaningless result
+                        const double abs_error = std::abs(predicted_s_dot_val - next_s_dot_val);
+                        BOOST_TEST_CONTEXT("Near-zero velocity: checking absolute error") {
+                            BOOST_CHECK_LT(abs_error, 1e-9);
+                            if (abs_error >= 1e-9) {
+                                BOOST_TEST_MESSAGE("Absolute error: " << abs_error << " (predicted=" << predicted_s_dot_val
+                                                                      << ", actual=" << next_s_dot_val << ")");
+                            }
+                        }
+                    } else {
+                        // Normal case: check relative error
+                        BOOST_CHECK_CLOSE(predicted_s_dot_val, next_s_dot_val, tolerance_percent);
+                        if (std::abs((predicted_s_dot_val - next_s_dot_val) / next_s_dot_val) * 100.0 > tolerance_percent) {
+                            BOOST_TEST_MESSAGE("Velocity mismatch: predicted=" << predicted_s_dot_val << ", actual=" << next_s_dot_val
+                                                                               << ", curr.s_ddot=" << static_cast<double>(curr.s_ddot));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+void validate_joint_kinematics(const trajectory& traj,
+                               const xvector<>& max_velocity,
+                               const xvector<>& max_acceleration,
+                               double tolerance_percent) {
+    const size_t dof = max_velocity.size();
+    const double tol_factor = 1.0 + (tolerance_percent / 100.0);
+
+    BOOST_TEST_CONTEXT("Joint-space kinematic validation") {
+        // Boundary conditions: s_dot=0 at both endpoints forces all joint velocities to zero;
+        // s_ddot=0 at the endpoint forces all joint accelerations to zero there as well.
+        BOOST_TEST_CONTEXT("Boundary conditions") {
+            const struct trajectory::sample first = traj.sample(trajectory::seconds{0.0});
+            const struct trajectory::sample last = traj.sample(traj.duration());
+            for (size_t i = 0; i < dof; ++i) {
+                BOOST_TEST_CONTEXT("joint=" << i) {
+                    BOOST_CHECK_EQUAL(first.velocity(i), 0.0);
+                    BOOST_CHECK_EQUAL(last.velocity(i), 0.0);
+                    BOOST_CHECK_EQUAL(last.acceleration(i), 0.0);
+                }
+            }
+        }
+
+        // Sample at 2.5x the integration frequency (above Nyquist with a safety margin) so
+        // that any velocity discontinuity manifests as a finite-difference acceleration far
+        // exceeding the joint limit.
+        const double sample_hz = 2.5 / traj.get_options().delta.count();
+        auto sampler = uniform_sampler::quantized_for_trajectory(traj, viam::trajex::types::hertz{sample_hz});
+
+        std::optional<struct trajectory::sample> prev;
+        for (const auto& s : traj.samples(sampler)) {
+            BOOST_TEST_CONTEXT("t=" << s.time.count()) {
+                for (size_t i = 0; i < dof; ++i) {
+                    BOOST_TEST_CONTEXT("joint=" << i) {
+                        BOOST_CHECK_LE(std::abs(s.velocity(i)), max_velocity(i) * tol_factor);
+                        BOOST_CHECK_LE(std::abs(s.acceleration(i)), max_acceleration(i) * tol_factor);
+
+                        if (prev.has_value()) {
+                            const double dt = (s.time - prev->time).count();
+
+                            const double delta_v = std::abs(s.velocity(i) - prev->velocity(i));
+                            const double finite_diff_acc = delta_v / dt;
+                            BOOST_TEST_CONTEXT("vel_fd: delta_v=" << delta_v << " dt=" << dt << " => " << finite_diff_acc
+                                                                  << " limit=" << max_acceleration(i)) {
+                                BOOST_CHECK_LE(finite_diff_acc, max_acceleration(i) * tol_factor);
+                            }
+
+                            // Trapezoidal velocity estimate from position; error is O(accel*dt).
+                            const double pos_fd = (s.configuration(i) - prev->configuration(i)) / dt;
+                            const double vel_avg = 0.5 * (s.velocity(i) + prev->velocity(i));
+                            BOOST_TEST_CONTEXT("pos_fd=" << pos_fd << " vel_avg=" << vel_avg << " diff=" << std::abs(pos_fd - vel_avg)) {
+                                BOOST_CHECK_LE(std::abs(pos_fd - vel_avg), max_acceleration(i) * dt * 10.0);
+                            }
+                        }
+                    }
+                }
+            }
+            prev = s;
+        }
+    }
+}
+
+void trajectory_test_fixture::try_legacy_comparison(const xmatrix<>& waypoints [[maybe_unused]]) {
+#if defined(VIAM_TRAJEX_LEGACY_ENABLED)
+    try {
+        // Convert waypoints to legacy format (std::list<Eigen::VectorXd>)
+        std::list<Eigen::VectorXd> legacy_waypoints;
+        for (size_t i = 0; i < waypoints.shape(0); ++i) {
+            Eigen::VectorXd wp(static_cast<Eigen::Index>(dof_));
+            for (size_t j = 0; j < dof_; ++j) {
+                wp(static_cast<Eigen::Index>(j)) = waypoints(i, j);
+            }
+            legacy_waypoints.push_back(wp);
+        }
+
+        // Convert limits to Eigen format
+        Eigen::VectorXd legacy_max_vel(static_cast<Eigen::Index>(dof_));
+        Eigen::VectorXd legacy_max_acc(static_cast<Eigen::Index>(dof_));
+        for (size_t i = 0; i < dof_; ++i) {
+            legacy_max_vel(static_cast<Eigen::Index>(i)) = (*traj_opts.max_velocity)(i);
+            legacy_max_acc(static_cast<Eigen::Index>(i)) = (*traj_opts.max_acceleration)(i);
+        }
+
+        // Create legacy path and trajectory with timing
+        const auto legacy_start_time = std::chrono::high_resolution_clock::now();
+        const Path legacy_path(legacy_waypoints, path_opts.max_blend_deviation());
+        const Trajectory legacy_traj(legacy_path, legacy_max_vel, legacy_max_acc, traj_opts.delta.count());
+        const auto legacy_end_time = std::chrono::high_resolution_clock::now();
+        legacy_generation_time_ms_ = std::chrono::duration_cast<std::chrono::milliseconds>(legacy_end_time - legacy_start_time).count();
+
+        if (legacy_traj.isValid()) {
+            legacy_duration_ = legacy_traj.getDuration();
+            legacy_path_length_ = legacy_path.getLength();
+            std::cout << "[LEGACY] duration=" << *legacy_duration_ << "s, path_length=" << *legacy_path_length_ << "\n";
+        } else {
+            std::cout << "[LEGACY] FAILED: invalid trajectory\n";
+        }
+    } catch (const std::exception& e) {
+        std::cout << "[LEGACY] FAILED: " << e.what() << "\n";
+    }
+#endif
+}
+
+void trajectory_test_fixture::validate_against_legacy(const trajectory& traj) {
+    BOOST_TEST_CONTEXT("Legacy comparison") {
+        const double new_duration = traj.duration().count();
+        const double new_path_length = static_cast<double>(traj.path().length());
+
+        if (legacy_path_length_.has_value()) {
+            const double path_ratio = new_path_length / *legacy_path_length_;
+            const double path_diff_percent = std::abs((new_path_length - *legacy_path_length_) / *legacy_path_length_) * 100.0;
+
+            std::cout << "[COMPARISON] Path: new=" << new_path_length << ", legacy=" << *legacy_path_length_ << ", "
+                      << "ratio=" << path_ratio << ", diff=" << path_diff_percent << "%\n";
+
+            // Path should be within configured tolerance
+            BOOST_CHECK_CLOSE(new_path_length, *legacy_path_length_, legacy_path_tolerance_percent);
+        }
+
+        if (legacy_duration_.has_value()) {
+            const double duration_ratio = new_duration / *legacy_duration_;
+            const double duration_diff_percent = ((new_duration - *legacy_duration_) / *legacy_duration_) * 100.0;
+
+            std::cout << "[COMPARISON] Duration: new=" << new_duration << "s, legacy=" << *legacy_duration_ << "s, "
+                      << "ratio=" << duration_ratio << ", diff=" << duration_diff_percent << "%\n";
+
+            // We should do NO WORSE than legacy: duration should be within configured tolerance
+            const double duration_tolerance_multiplier = 1.0 + (legacy_duration_tolerance_percent / 100.0);
+            BOOST_CHECK_LE(new_duration, *legacy_duration_ * duration_tolerance_multiplier);
+
+            BOOST_TEST_MESSAGE("Duration comparison: new=" << new_duration << "s vs legacy=" << *legacy_duration_
+                                                           << "s (ratio=" << duration_ratio << ", diff=" << duration_diff_percent << "%)");
+        }
+    }
+}
+
+trajectory trajectory_test_fixture::create_and_validate() {
+    BOOST_REQUIRE_MESSAGE(waypoints_.size() > 0, "Must set waypoints before calling create_and_validate");
+
+    // Try legacy comparison if enabled
+    if (compare_with_legacy_) {
+        try_legacy_comparison(waypoints_);
+    }
+
+    // Create path
+    path p = path::create(waypoints_, path_opts);
+
+    // Validate path length expectation
+    if (expected_path_length_.has_value()) {
+        const double tol = expected_path_length_->tolerance_percent.value_or(validation_tolerance_percent);
+        BOOST_TEST_CONTEXT("Path length expectation") {
+            BOOST_CHECK_CLOSE(static_cast<double>(p.length()), static_cast<double>(expected_path_length_->length), tol);
+        }
+    }
+
+    // Validate that expectations follow TOTG invariant (only if expectations were specified)
+    if (!allow_any_events_) {
+        // Must have at least 3 events: forward_start, backward_start from endpoint, splice
+        const auto& expectations = expectation_observer_->get_expectations();
+        BOOST_REQUIRE_MESSAGE(expectations.size() >= 3, "Must have at least 3 expected events (TOTG invariant)");
+
+        BOOST_TEST_CONTEXT("Expectation coherence (TOTG invariant)") {
+            // First must be forward_start
+            const auto* first_forward = std::get_if<expectation_observer::expected_forward_start>(&expectations.front());
+            BOOST_REQUIRE_MESSAGE(first_forward != nullptr, "First expectation must be forward_start (TOTG invariant)");
+
+            // Second-to-last must be backward_start (from endpoint)
+            const auto& second_last = expectations[expectations.size() - 2];
+            const auto* backward = std::get_if<expectation_observer::expected_backward_start>(&second_last);
+            BOOST_REQUIRE_MESSAGE(backward != nullptr, "Second-to-last expectation must be backward_start (TOTG invariant)");
+
+            // Backward expectation must specify k_path_end kind (TOTG always ends with backward from endpoint)
+            BOOST_REQUIRE_MESSAGE(backward->kind.has_value(),
+                                  "Second-to-last expectation must specify switching point kind (TOTG invariant)");
+            BOOST_REQUIRE_MESSAGE(*backward->kind == trajectory::switching_point_kind::k_path_end,
+                                  "Second-to-last expectation must be backward_start with k_path_end kind (TOTG invariant)");
+
+            // Sanity check: backward expectation should be approximately at path endpoint (if s is specified)
+            if (backward->s.has_value()) {
+                const double backward_tol = backward->tolerance_percent.value_or(expectation_observer_->get_default_tolerance_percent());
+                BOOST_CHECK_CLOSE(static_cast<double>(*backward->s), static_cast<double>(p.length()), backward_tol);
+            }
+
+            // Last must be splice
+            const auto* splice = std::get_if<expectation_observer::expected_splice>(&expectations.back());
+            BOOST_REQUIRE_MESSAGE(splice != nullptr, "Last expectation must be splice (TOTG invariant)");
+        }
+    }
+
+    // Set up observer chain - always use composite observer
+    traj_opts.observer = &composite_observer_;
+
+    // Add expectation observer if validating events
+    if (!allow_any_events_) {
+        composite_observer_.add_observer(expectation_observer_);
+    }
+
+    // Add collector if JSON output enabled
+    if (json_output_filename_.has_value() || collector_) {
+        if (!collector_) {
+            collector_ = std::make_shared<trajectory_integration_event_collector>();
+        }
+        composite_observer_.add_observer(collector_);
+    }
+
+    // Generate trajectory - catch failures to write diagnostic JSON before propagating
+    trajectory traj = [&]() -> trajectory {
+        try {
+            return trajectory::create(std::move(p), traj_opts);
+        } catch (const std::exception& e) {
+            if (json_output_filename_.has_value() && collector_) {
+                std::ofstream out(*json_output_filename_);
+                write_trajectory_json(out, *collector_);
+                BOOST_TEST_MESSAGE("Wrote failure JSON to " << *json_output_filename_);
+            }
+            if (assert_on_create_failure_) {
+                BOOST_FAIL(e.what());
+            }
+            throw;
+        }
+    }();
+
+    // Verify all expectations were met (only if expectations were specified)
+    if (!allow_any_events_) {
+        expectation_observer_->verify_all_expectations_met();
+    }
+
+    // Validate trajectory-wide expectations
+    if (expected_duration_.has_value()) {
+        const double tol = expected_duration_->tolerance_percent.value_or(validation_tolerance_percent);
+        BOOST_TEST_CONTEXT("Trajectory duration expectation") {
+            BOOST_CHECK_CLOSE(traj.duration().count(), expected_duration_->duration.count(), tol);
+        }
+    }
+
+    if (expected_integration_point_count_.has_value()) {
+        BOOST_TEST_CONTEXT("Integration point count expectation") {
+            BOOST_CHECK_EQUAL(traj.get_integration_points().size(), *expected_integration_point_count_);
+        }
+    }
+
+    // Compare with legacy if available
+    if (legacy_duration_.has_value() || legacy_path_length_.has_value()) {
+        validate_against_legacy(traj);
+    }
+
+    validate_path_quality(traj.path(), waypoint_accumulator{waypoints_}, path_opts);
+
+    // Validate trajectory invariants
+    validate_trajectory_invariants(traj, validation_tolerance_percent);
+
+    if (validate_joint_kinematics_) {
+        validate_joint_kinematics(traj, traj_opts.max_velocity, traj_opts.max_acceleration, validation_tolerance_percent);
+    }
+
+    // Write JSON if enabled, after all validation so failure-only mode can check results.
+    if (json_output_filename_.has_value() && collector_) {
+        const bool has_failures =
+            boost::unit_test::results_collector.results(boost::unit_test::framework::current_test_case().p_id).p_assertions_failed > 0;
+        if (!json_on_failure_only_ || has_failures) {
+            std::ofstream out(*json_output_filename_);
+            write_trajectory_json(out, *collector_, &traj);
+            BOOST_TEST_MESSAGE("Wrote trajectory JSON to " << *json_output_filename_);
+        }
+    }
+
+    return traj;
+}
+
+std::ostream& operator<<(std::ostream& os, const constraint_profile& profile) {
+    return os << profile.name;
 }
 
 }  // namespace viam::trajex::totg::test

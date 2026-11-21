@@ -809,12 +809,31 @@ if (VIAM_TRAJEX_BUILD_TESTS)
   # truly opt-in (e.g. separately compiled and conditionally linked), the test target is
   # only buildable when VIAM_TRAJEX_ENABLE_TOOLS is ON.
   if (VIAM_TRAJEX_ENABLE_TOOLS)
+    include(cmake/BoostTestDiscovery.cmake)
+
+    # Validators, observers, and the trajectory test fixture shared across the TOTG test sources.
+    add_library(viam-trajex-totg-test-support STATIC)
+
+    target_sources(viam-trajex-totg-test-support
+      PRIVATE
+      src/viam/trajex/totg/test/test_utils.cpp
+    )
+
+    target_link_libraries(viam-trajex-totg-test-support
+      PUBLIC
+      viam::trajex::totg::tools
+      Boost::boost
+      PRIVATE
+      jsoncpp_lib
+    )
+
+    apply_wall_werror(viam-trajex-totg-test-support)
+
     add_executable(viam-trajex-totg-test)
 
     target_sources(viam-trajex-totg-test
       PRIVATE
       src/viam/trajex/totg/test/main.cpp
-      src/viam/trajex/totg/test/test_utils.cpp
       src/viam/trajex/totg/test/waypoint_accumulator.cpp
       src/viam/trajex/totg/test/path_basic.cpp
       src/viam/trajex/totg/test/path_coalescing.cpp
@@ -823,7 +842,13 @@ if (VIAM_TRAJEX_BUILD_TESTS)
       src/viam/trajex/totg/test/path_cursor.cpp
       src/viam/trajex/totg/test/trajectory.cpp
       src/viam/trajex/totg/test/uniform_sampler.cpp
-      src/viam/trajex/totg/test/integration.cpp
+      src/viam/trajex/totg/test/integration_end_to_end.cpp
+      src/viam/trajex/totg/test/integration_extremal_paths.cpp
+      src/viam/trajex/totg/test/integration_velocity_switching_points.cpp
+      src/viam/trajex/totg/test/integration_zero_limit_joint.cpp
+      src/viam/trajex/totg/test/integration_replay_regression.cpp
+      src/viam/trajex/totg/test/integration_online_extension.cpp
+      src/viam/trajex/totg/test/integration_random_trajectory.cpp
       src/viam/trajex/totg/test/observers.cpp
       src/viam/trajex/totg/test/tcp_limits.cpp
       src/viam/trajex/kinematics/test/chain.cpp
@@ -831,8 +856,7 @@ if (VIAM_TRAJEX_BUILD_TESTS)
 
     target_link_libraries(viam-trajex-totg-test
       PRIVATE
-      viam::trajex::totg::tools
-      Boost::boost
+      viam-trajex-totg-test-support
       jsoncpp_lib
     )
 
@@ -842,10 +866,7 @@ if (VIAM_TRAJEX_BUILD_TESTS)
 
     apply_wall_werror(viam-trajex-totg-test)
 
-    add_test(
-      NAME viam-trajex-totg-test
-      COMMAND viam-trajex-totg-test
-    )
+    boost_test_discover_tests(viam-trajex-totg-test)
 
 
     # Separate binary for streaming session tests so they can be looped fast

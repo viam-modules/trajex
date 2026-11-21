@@ -5,12 +5,22 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <deque>
+#include <memory>
 #include <optional>
+#include <ostream>
 #include <string>
+#include <variant>
 
+#include <boost/test/unit_test.hpp>
+
+#include <viam/trajex/totg/observers.hpp>
+#include <viam/trajex/totg/path.hpp>
 #include <viam/trajex/totg/trajectory.hpp>
 #include <viam/trajex/totg/uniform_sampler.hpp>
 #include <viam/trajex/totg/waypoint_accumulator.hpp>
+#include <viam/trajex/types/angles.hpp>
+#include <viam/trajex/types/arc_length.hpp>
 #include <viam/trajex/types/xt.hpp>
 
 namespace viam::trajex::totg::test {
@@ -149,6 +159,270 @@ inline double max_realized_tcp_speed(const trajectory& traj, double l1, double l
     }
     return peak;
 }
+
+/// Observer that validates expectations as events occur.
+class expectation_observer final : public trajectory::integration_observer {
+   public:
+    struct expected_forward_start {
+        std::optional<arc_length> s;
+        std::optional<arc_velocity> s_dot;
+        std::optional<double> tolerance_percent;
+    };
+
+    struct expected_hit_limit {
+        std::optional<arc_length> s;
+        std::optional<arc_velocity> s_dot;
+        std::optional<arc_velocity> s_dot_max_acc;
+        std::optional<arc_velocity> s_dot_max_vel;
+        std::optional<double> tolerance_percent;
+    };
+
+    struct expected_backward_start {
+        std::optional<arc_length> s;
+        std::optional<arc_velocity> s_dot;
+        std::optional<trajectory::switching_point_kind> kind;
+        std::optional<double> tolerance_percent;
+    };
+
+    struct expected_splice {
+        std::optional<trajectory::seconds> duration;
+        std::optional<std::size_t> num_pruned;
+        std::optional<double> tolerance_percent;
+    };
+
+    using integration_expectation = std::variant<expected_forward_start, expected_hit_limit, expected_backward_start, expected_splice>;
+
+    explicit expectation_observer(double default_tolerance_percent = 0.1) : default_tolerance_percent_(default_tolerance_percent) {}
+
+    expectation_observer& expect_forward_start(std::optional<arc_length> s = std::nullopt,
+                                               std::optional<arc_velocity> s_dot = std::nullopt,
+                                               std::optional<double> tolerance_percent = std::nullopt) {
+        expectations_.push_back(expected_forward_start{s, s_dot, tolerance_percent});
+        return *this;
+    }
+
+    expectation_observer& expect_hit_limit(std::optional<arc_length> s = std::nullopt,
+                                           std::optional<arc_velocity> s_dot = std::nullopt,
+                                           std::optional<arc_velocity> acc_limit = std::nullopt,
+                                           std::optional<arc_velocity> vel_limit = std::nullopt,
+                                           std::optional<double> tolerance_percent = std::nullopt) {
+        expectations_.push_back(expected_hit_limit{s, s_dot, acc_limit, vel_limit, tolerance_percent});
+        return *this;
+    }
+
+    expectation_observer& expect_backward_start(std::optional<arc_length> s = std::nullopt,
+                                                std::optional<arc_velocity> s_dot = std::nullopt,
+                                                std::optional<trajectory::switching_point_kind> kind = std::nullopt,
+                                                std::optional<double> tolerance_percent = std::nullopt) {
+        expectations_.push_back(expected_backward_start{s, s_dot, kind, tolerance_percent});
+        return *this;
+    }
+
+    expectation_observer& expect_splice(std::optional<trajectory::seconds> duration = std::nullopt,
+                                        std::optional<std::size_t> num_pruned = std::nullopt,
+                                        std::optional<double> tolerance_percent = std::nullopt) {
+        expectations_.push_back(expected_splice{duration, num_pruned, tolerance_percent});
+        return *this;
+    }
+
+    void verify_all_expectations_met() const {
+        BOOST_TEST_CONTEXT("Checking all expectations were met") {
+            BOOST_CHECK_MESSAGE(expectations_.empty(), "Not all expected events occurred. Remaining: " << expectations_.size());
+        }
+    }
+
+    const std::deque<integration_expectation>& get_expectations() const {
+        return expectations_;
+    }
+
+    double get_default_tolerance_percent() const {
+        return default_tolerance_percent_;
+    }
+
+    void on_started_forward_integration(const trajectory&, started_forward_event event) override;
+
+    void on_hit_limit_curve(const trajectory&, limit_hit_event event) override;
+
+    void on_started_backward_integration(const trajectory&, started_backward_event event) override;
+
+    void on_trajectory_extended(const trajectory& traj, splice_event event) override;
+
+    void on_failed(std::exception_ptr, std::shared_ptr<const trajectory>) noexcept override {}
+
+   private:
+    double default_tolerance_percent_;
+    std::deque<integration_expectation> expectations_;
+};
+
+/// Validates fundamental trajectory invariants.
+void validate_trajectory_invariants(const trajectory& traj, double tolerance_percent = 0.1);
+
+/// Validates joint-space kinematic bounds across a dense sampling of the trajectory.
+///
+/// Checks:
+///   - Boundary conditions: zero velocity at start/end, zero acceleration at end
+///   - Velocity and acceleration bounds at every sample
+///   - Velocity continuity via finite differences (catches instantaneous joint-velocity jumps
+///     that the arc-length phase-plane check in validate_trajectory_invariants cannot detect)
+///   - Position-velocity consistency: finite difference of position should match trapezoidal
+///     velocity estimate; large discrepancy indicates the two fields are mutually inconsistent
+void validate_joint_kinematics(const trajectory& traj,
+                               const xvector<>& max_velocity,
+                               const xvector<>& max_acceleration,
+                               double tolerance_percent = 0.1);
+
+/// Test fixture for trajectory integration tests.
+struct trajectory_test_fixture {
+    path::options path_opts;
+    trajectory::options traj_opts;
+    std::shared_ptr<expectation_observer> expectation_observer_;
+    composite_integration_observer composite_observer_;
+    double validation_tolerance_percent = 0.1;
+    size_t dof_;
+    xmatrix<> waypoints_;
+
+    // Trajectory-wide expectations (optional)
+    struct expected_duration {
+        trajectory::seconds duration;
+        std::optional<double> tolerance_percent;
+    };
+    struct expected_path_length {
+        arc_length length;
+        std::optional<double> tolerance_percent;
+    };
+
+    std::optional<expected_duration> expected_duration_;
+    std::optional<size_t> expected_integration_point_count_;
+    std::optional<expected_path_length> expected_path_length_;
+
+    // Legacy comparison (A/B testing against reference implementation)
+    bool compare_with_legacy_ = false;
+    std::optional<double> legacy_duration_;
+    std::optional<double> legacy_path_length_;
+    std::optional<double> legacy_generation_time_ms_;
+    double legacy_path_tolerance_percent = 5.0;
+    double legacy_duration_tolerance_percent = 5.0;
+
+    // Event validation control
+    bool allow_any_events_ = false;
+
+    // Joint-space kinematic validation
+    bool validate_joint_kinematics_ = true;
+
+    // JSON output for visualization
+    std::optional<std::string> json_output_filename_;
+    bool json_on_failure_only_ = false;
+    bool assert_on_create_failure_ = true;
+    std::shared_ptr<trajectory_integration_event_collector> collector_;
+
+    explicit trajectory_test_fixture(size_t dof = 6, double expectation_tolerance_percent = 0.1)
+        : expectation_observer_(std::make_shared<expectation_observer>(expectation_tolerance_percent)), dof_(dof) {}
+
+    trajectory_test_fixture& set_waypoints_deg(const xmatrix<>& waypoints_deg) {
+        waypoints_ = degrees_to_radians(waypoints_deg);
+        return *this;
+    }
+
+    trajectory_test_fixture& set_waypoints_rad(const xmatrix<>& waypoints_rad) {
+        waypoints_ = waypoints_rad;
+        return *this;
+    }
+
+    trajectory_test_fixture& set_max_velocity(const xvector<>& max_vel) {
+        traj_opts.max_velocity = max_vel;
+        return *this;
+    }
+
+    trajectory_test_fixture& set_max_acceleration(const xvector<>& max_acc) {
+        traj_opts.max_acceleration = max_acc;
+        return *this;
+    }
+
+    trajectory_test_fixture& set_max_blend_deviation(double max_dev) {
+        path_opts.set_max_blend_deviation(max_dev);
+        return *this;
+    }
+
+    trajectory_test_fixture& expect_duration(trajectory::seconds duration, std::optional<double> tolerance_percent = std::nullopt) {
+        expected_duration_ = expected_duration{duration, tolerance_percent};
+        return *this;
+    }
+
+    trajectory_test_fixture& expect_integration_point_count(size_t count) {
+        expected_integration_point_count_ = count;
+        return *this;
+    }
+
+    trajectory_test_fixture& expect_path_length(arc_length length, std::optional<double> tolerance_percent = std::nullopt) {
+        expected_path_length_ = expected_path_length{length, tolerance_percent};
+        return *this;
+    }
+
+    trajectory_test_fixture& enable_legacy_comparison() {
+        compare_with_legacy_ = true;
+        return *this;
+    }
+
+    trajectory_test_fixture& allow_any_events() {
+        allow_any_events_ = true;
+        return *this;
+    }
+
+    trajectory_test_fixture& disable_joint_kinematics_validation() {
+        validate_joint_kinematics_ = false;
+        return *this;
+    }
+
+    trajectory_test_fixture& set_legacy_path_tolerance(double tolerance_percent) {
+        legacy_path_tolerance_percent = tolerance_percent;
+        return *this;
+    }
+
+    trajectory_test_fixture& set_legacy_duration_tolerance(double tolerance_percent) {
+        legacy_duration_tolerance_percent = tolerance_percent;
+        return *this;
+    }
+
+    trajectory_test_fixture& enable_json_output(std::string filename) {
+        json_output_filename_ = std::move(filename);
+        json_on_failure_only_ = false;
+        return *this;
+    }
+
+    trajectory_test_fixture& enable_json_output_on_failure(std::string filename) {
+        json_output_filename_ = std::move(filename);
+        json_on_failure_only_ = true;
+        return *this;
+    }
+
+    trajectory_test_fixture& enable_event_collection() {
+        if (!collector_) {
+            collector_ = std::make_shared<trajectory_integration_event_collector>();
+        }
+        return *this;
+    }
+
+    trajectory_test_fixture& suppress_create_failure_assertions() {
+        assert_on_create_failure_ = false;
+        return *this;
+    }
+
+    void try_legacy_comparison(const xmatrix<>& waypoints);
+
+    void validate_against_legacy(const trajectory& traj);
+
+    trajectory create_and_validate();
+};
+
+/// Constraint profile for parameterized trajectory testing.
+struct constraint_profile {
+    std::string name;
+    xvector<> max_velocity;
+    xvector<> max_acceleration;
+};
+
+/// Print operator for Boost.Test data framework.
+std::ostream& operator<<(std::ostream& os, const constraint_profile& profile);
 
 }  // namespace viam::trajex::totg::test
 
