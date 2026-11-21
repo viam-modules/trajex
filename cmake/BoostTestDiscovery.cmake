@@ -42,6 +42,10 @@ if (NOT CMAKE_SCRIPT_MODE_FILE)
   return()
 endif()
 
+# Script mode starts with every policy unset, so without this an older CMake reads the script with its
+# oldest behaviors, under which `IN_LIST` below is not an operator. Match the project's minimum.
+cmake_minimum_required(VERSION 3.25)
+
 execute_process(
   COMMAND "${TEST_EXECUTABLE}" --list_content
   OUTPUT_VARIABLE listing
