@@ -48,6 +48,31 @@ struct switching_point {
     trajectory::switching_point_kind kind;
     std::optional<arc_acceleration> forward_accel = std::nullopt;
     std::optional<arc_acceleration> backward_accel = std::nullopt;
+
+    // Unlike the switching points the searches find, the end of the path has a known forward
+    // acceleration. The trajectory ends there at rest, so it is zero. Backward integration records a
+    // missing forward acceleration as NaN for forward integration to fill in later. Nothing integrates
+    // forward from the end of the path, so without it the terminal integration point would be left
+    // holding that NaN.
+    static constexpr switching_point path_end(arc_length path_length) noexcept {
+        return {.point = {.s = path_length, .s_dot = arc_velocity{0.0}},
+                .kind = trajectory::switching_point_kind::k_path_end,
+                .forward_accel = arc_acceleration{0.0}};
+    }
+
+    // The trajectory starts at rest at the beginning of the path. Its forward acceleration is left
+    // for forward integration to determine, as for any switching point it starts from.
+    static constexpr switching_point path_begin() noexcept {
+        return {.point = {.s = arc_length{0.0}, .s_dot = arc_velocity{0.0}}, .kind = trajectory::switching_point_kind::k_path_begin};
+    }
+
+    // At a tangent discontinuity the velocity limit drops to zero at the boundary itself. The
+    // trajectory must pass through it at rest (`Divergent Behavior 4`). Other discontinuous velocity
+    // limits switch at a velocity the limit curves determine, and are built where they are found.
+    static constexpr switching_point tangent_discontinuity(arc_length boundary) noexcept {
+        return {.point = {.s = boundary, .s_dot = arc_velocity{0.0}},
+                .kind = trajectory::switching_point_kind::k_discontinuous_velocity_limit};
+    }
 };
 
 // Holds the most recent switching point of each type across iterations of the main integration loop.
@@ -890,10 +915,7 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
         // boundaries are C1-continuous; we enforce this explicitly.
         const auto dot = xt::sum(q_prime_before * q_prime_after);
         if (opt.epsilon.wrap(dot()) != opt.epsilon.wrap(1.0)) {
-            return switching_point{
-                .point = {.s = boundary, .s_dot = arc_velocity{0.0}},
-                .kind = trajectory::switching_point_kind::k_discontinuous_velocity_limit,
-            };
+            return switching_point::tangent_discontinuity(boundary);
         }
 
         const auto q_double_prime_before = current_segment.curvature(boundary);
@@ -1204,8 +1226,7 @@ switching_point find_switching_point(switching_point_cache* cache, path::cursor 
     const auto path_length = cursor.path().length();
     const auto cursor_position = cursor.position();
 
-    const switching_point k_path_end_sentinel = {.point = {.s = path_length, .s_dot = arc_velocity{0.0}},
-                                                 .kind = trajectory::switching_point_kind::k_path_end};
+    const auto k_path_end_sentinel = switching_point::path_end(path_length);
 
     // Invalidate cache entries that have fallen behind the cursor.
     if (cache->next_accel && cache->next_accel->point.s <= cursor_position) {
@@ -1780,8 +1801,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
                     // `Divergent Behavior 4`: We observed a tangent discontinuity; switch at the boundary with s_dot = 0.
                     if ((*limit_hit_event).s_dot_max_vel == arc_velocity{0.0}) {
-                        return switching_point{.point = {.s = (*limit_hit_event).breach.s, .s_dot = arc_velocity{0.0}},
-                                               .kind = switching_point_kind::k_discontinuous_velocity_limit};
+                        return switching_point::tangent_discontinuity((*limit_hit_event).breach.s);
                     }
 
                     cache.path_cursor.seek(next_point.s);
@@ -1795,9 +1815,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                                                         .s_ddot = arc_acceleration{std::numeric_limits<double>::quiet_NaN()}});
 
                     cache.path_cursor.seek(next_point.s);
-                    return {.point = {next_point.s, arc_velocity{0.0}},
-                            .kind = switching_point_kind::k_path_end,
-                            .forward_accel = arc_acceleration{0.0}};
+                    return switching_point::path_end(next_point.s);
                 }
 
                 // Forward integration must increase s. The identical check earlier in this function
@@ -2244,7 +2262,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
         };
 
         try {
-            switching_point sp = {.point = {arc_length{0}, arc_velocity{0}}, .kind = switching_point_kind::k_path_begin};
+            auto sp = switching_point::path_begin();
             while (sp.kind != switching_point_kind::k_path_end) {
                 sp = integrate_backwards_from(ensure_progress(integrate_forward_from)(sp));
             }
