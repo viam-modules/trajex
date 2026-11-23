@@ -12,6 +12,7 @@
 #include <viam/trajex/totg/waypoint_accumulator.hpp>
 #include <viam/trajex/types/angles.hpp>
 #include <viam/trajex/types/arc_length.hpp>
+#include <viam/trajex/types/hertz.hpp>
 #include <viam/trajex/types/xt.hpp>
 
 namespace {
