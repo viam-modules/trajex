@@ -79,7 +79,7 @@ jobs:
         run: |
           set -euxo pipefail
           cmake -S . -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_C_COMPILER=clang-19 \
             -DCMAKE_CXX_COMPILER=clang++-19 \
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
