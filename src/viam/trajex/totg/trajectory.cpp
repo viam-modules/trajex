@@ -1226,7 +1226,7 @@ switching_point find_switching_point(switching_point_cache* cache, path::cursor 
     const auto path_length = cursor.path().length();
     const auto cursor_position = cursor.position();
 
-    const switching_point k_path_end_sentinel = switching_point::path_end(path_length);
+    const auto k_path_end_sentinel = switching_point::path_end(path_length);
 
     // Invalidate cache entries that have fallen behind the cursor.
     if (cache->next_accel && cache->next_accel->point.s <= cursor_position) {
