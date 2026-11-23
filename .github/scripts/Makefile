@@ -45,8 +45,11 @@ verify-package: build
 install: build
 	DESTDIR=build/install cmake --install build --prefix /
 
+# Arguments for ctest that depend on where it runs, such as a per-test timeout, are left to the caller.
+CTEST_EXTRA_ARGS ?=
+
 test: build
-	CTEST_OUTPUT_ON_FAILURE=1 cmake --build build --target test
+	ctest --test-dir build --parallel --output-on-failure $(CTEST_EXTRA_ARGS)
 
 module.tar.gz: format-check install
 	cmake --build build --target package

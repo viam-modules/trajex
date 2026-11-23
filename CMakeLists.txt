@@ -248,11 +248,12 @@ set(VIAM_TRAJEX_XTL_VERSION_MINIMUM 0.8.0)
 #   Eigen3         ENABLE_LEGACY (reference impl + colinearization helpers), and
 #                  TOTG_ENABLE_LEGACY_COMPAT (the compatibility layer's interface).
 #   moveit_core    ENABLE_MOVEIT; found through the ROS environment, never fetched.
-#   Boost          BUILD_TESTS (boost.test framework, consumed in header-only mode
-#                  via `<boost/test/included/unit_test.hpp>`; we still declare the
-#                  `unit_test_framework` component to validate it is installed.
-#                  The service code path uses Boost headers too but receives them
-#                  transitively through viam-cpp-sdk).
+#   Boost          BUILD_TESTS (the compiled boost.test framework, through the
+#                  `unit_test_framework` component. Linking the shared variant defines
+#                  BOOST_UNIT_TEST_FRAMEWORK_DYN_LINK, which Boost.Test's headers turn
+#                  into BOOST_TEST_DYN_LINK, so each test main matches the library it
+#                  links. The service code path uses Boost headers too but receives
+#                  them transitively through viam-cpp-sdk).
 #   jsoncpp        ENABLE_TOOLS (planner / replay / serialization sources).
 #   benchmark      BUILD_BENCHMARKS; FetchContent with system fallback via
 #                  FIND_PACKAGE_ARGS, so a system install (e.g. homebrew) is preferred
@@ -804,17 +805,39 @@ if (VIAM_TRAJEX_BUILD_TESTS)
 
   enable_testing()
 
+  # Every Boost.Test binary registers each of its test cases with ctest individually.
+  include(cmake/BoostTestDiscovery.cmake)
+
   # TODO: viam-trajex-totg-test currently depends on the tools library for opt-in JSON
   # trajectory dumping (json_serialization.hpp). Until that dependency is refactored to be
   # truly opt-in (e.g. separately compiled and conditionally linked), the test target is
   # only buildable when VIAM_TRAJEX_ENABLE_TOOLS is ON.
   if (VIAM_TRAJEX_ENABLE_TOOLS)
+    # Validators, observers, and the trajectory test fixture shared across the TOTG test sources. It
+    # calls into Boost.Test, so it can be a shared library only because every test binary links the
+    # compiled Boost.Test rather than embedding the header-only runner.
+    add_library(viam-trajex-totg-test-support)
+
+    target_sources(viam-trajex-totg-test-support
+      PRIVATE
+      src/viam/trajex/totg/test/test_utils.cpp
+    )
+
+    target_link_libraries(viam-trajex-totg-test-support
+      PUBLIC
+      viam::trajex::totg::tools
+      Boost::unit_test_framework
+      PRIVATE
+      jsoncpp_lib
+    )
+
+    apply_wall_werror(viam-trajex-totg-test-support)
+
     add_executable(viam-trajex-totg-test)
 
     target_sources(viam-trajex-totg-test
       PRIVATE
       src/viam/trajex/totg/test/main.cpp
-      src/viam/trajex/totg/test/test_utils.cpp
       src/viam/trajex/totg/test/waypoint_accumulator.cpp
       src/viam/trajex/totg/test/path_basic.cpp
       src/viam/trajex/totg/test/path_coalescing.cpp
@@ -823,58 +846,34 @@ if (VIAM_TRAJEX_BUILD_TESTS)
       src/viam/trajex/totg/test/path_cursor.cpp
       src/viam/trajex/totg/test/trajectory.cpp
       src/viam/trajex/totg/test/uniform_sampler.cpp
-      src/viam/trajex/totg/test/integration.cpp
+      src/viam/trajex/totg/test/integration_end_to_end.cpp
+      src/viam/trajex/totg/test/integration_extremal_paths.cpp
+      src/viam/trajex/totg/test/integration_velocity_switching_points.cpp
+      src/viam/trajex/totg/test/integration_zero_limit_joint.cpp
+      src/viam/trajex/totg/test/integration_replay_regression.cpp
+      src/viam/trajex/totg/test/integration_online_extension.cpp
+      src/viam/trajex/totg/test/integration_random_trajectory.cpp
       src/viam/trajex/totg/test/observers.cpp
       src/viam/trajex/totg/test/tcp_limits.cpp
+      src/viam/trajex/totg/streaming/test/session.cpp
+      src/viam/trajex/totg/streaming/test/waypoint_store.cpp
       src/viam/trajex/kinematics/test/chain.cpp
     )
 
     target_link_libraries(viam-trajex-totg-test
       PRIVATE
-      viam::trajex::totg::tools
-      Boost::boost
+      viam-trajex-totg-test-support
       jsoncpp_lib
     )
 
     target_compile_definitions(viam-trajex-totg-test PRIVATE
       VIAM_TRAJEX_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/viam/trajex/totg/test/data"
+      VIAM_TRAJEX_STREAMING_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/viam/trajex/totg/streaming/test/data"
     )
 
     apply_wall_werror(viam-trajex-totg-test)
 
-    add_test(
-      NAME viam-trajex-totg-test
-      COMMAND viam-trajex-totg-test
-    )
-
-
-    # Separate binary for streaming session tests so they can be looped fast
-    # without paying the integration suite's runtime.
-    add_executable(viam-trajex-totg-streaming-test)
-
-    target_sources(viam-trajex-totg-streaming-test
-      PRIVATE
-      src/viam/trajex/totg/streaming/test/main.cpp
-      src/viam/trajex/totg/streaming/test/session.cpp
-      src/viam/trajex/totg/streaming/test/waypoint_store.cpp
-    )
-
-    target_link_libraries(viam-trajex-totg-streaming-test
-      PRIVATE
-      viam::trajex::totg
-      Boost::boost
-    )
-
-    target_compile_definitions(viam-trajex-totg-streaming-test PRIVATE
-      VIAM_TRAJEX_STREAMING_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/viam/trajex/totg/streaming/test/data"
-    )
-
-    apply_wall_werror(viam-trajex-totg-streaming-test)
-
-    add_test(
-      NAME viam-trajex-totg-streaming-test
-      COMMAND viam-trajex-totg-streaming-test
-    )
+    boost_test_discover_tests(viam-trajex-totg-test)
 
 
     # Streaming-session simulator. Standalone binary, not wired into ctest --
@@ -915,16 +914,14 @@ if (VIAM_TRAJEX_BUILD_TESTS)
 
     target_link_libraries(viam-trajex-totg-tools-test
       PRIVATE
+      viam-trajex-totg-test-support
       viam::trajex::totg::tools
-      Boost::boost
+      Boost::unit_test_framework
     )
 
     apply_wall_werror(viam-trajex-totg-tools-test)
 
-    add_test(
-      NAME viam-trajex-totg-tools-test
-      COMMAND viam-trajex-totg-tools-test
-    )
+    boost_test_discover_tests(viam-trajex-totg-tools-test)
   endif()
 
 
@@ -944,17 +941,14 @@ if (VIAM_TRAJEX_BUILD_TESTS)
   # the trajex library, which is where every other test target picks that up.
   target_link_libraries(viam-trajex-types-test
     PRIVATE
-    Boost::boost
+    Boost::unit_test_framework
     xtensor
     xtl
   )
 
   apply_wall_werror(viam-trajex-types-test)
 
-  add_test(
-    NAME viam-trajex-types-test
-    COMMAND viam-trajex-types-test
-  )
+  boost_test_discover_tests(viam-trajex-types-test)
 
 
   if (VIAM_TRAJEX_TOTG_ENABLE_LEGACY_COMPAT)
@@ -973,15 +967,12 @@ if (VIAM_TRAJEX_BUILD_TESTS)
       viam::trajex::totg::compat
       viam::trajex::totg
       viam::trajex::totg::legacy
-      Boost::boost
+      Boost::unit_test_framework
     )
 
     apply_wall_werror(viam-trajex-totg-compat-test)
 
-    add_test(
-      NAME viam-trajex-totg-compat-test
-      COMMAND viam-trajex-totg-compat-test
-    )
+    boost_test_discover_tests(viam-trajex-totg-compat-test)
 
     # We also build the reference implementation's own example and test programs, unmodified,
     # against the shim, so that we notice if it stops being source compatible with the original.
@@ -1043,15 +1034,12 @@ if (VIAM_TRAJEX_BUILD_TESTS)
       moveit_core::moveit_robot_model
       moveit_core::moveit_robot_state
       moveit_core::moveit_test_utils
-      Boost::boost
+      Boost::unit_test_framework
     )
 
     apply_wall_werror(viam-trajex-moveit-totg-test)
 
-    add_test(
-      NAME viam-trajex-moveit-totg-test
-      COMMAND viam-trajex-moveit-totg-test
-    )
+    boost_test_discover_tests(viam-trajex-moveit-totg-test)
   endif()
 
 
@@ -1066,15 +1054,12 @@ if (VIAM_TRAJEX_BUILD_TESTS)
     target_link_libraries(viam-trajex-service-test
       PRIVATE
       viam::trajex::service
-      Boost::boost
+      Boost::unit_test_framework
     )
 
     apply_wall_werror(viam-trajex-service-test)
 
-    add_test(
-      NAME viam-trajex-service-test
-      COMMAND viam-trajex-service-test
-    )
+    boost_test_discover_tests(viam-trajex-service-test)
   endif()
 
   # C ABI compile-smoke: a tiny .c file that references every exported
@@ -1118,15 +1103,12 @@ if (VIAM_TRAJEX_BUILD_TESTS)
     target_link_libraries(viam-trajex-capi-test
       PRIVATE
       viam::trajex::capi
-      Boost::boost
+      Boost::unit_test_framework
     )
 
     apply_wall_werror(viam-trajex-capi-test)
 
-    add_test(
-      NAME viam-trajex-capi-test
-      COMMAND viam-trajex-capi-test
-    )
+    boost_test_discover_tests(viam-trajex-capi-test)
   endif()
 
   # We also build the find_package consumer's programs here, against this build's own targets, so

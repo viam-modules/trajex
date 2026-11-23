@@ -19,10 +19,7 @@
 #include <viam/trajex/types/epsilon.hpp>
 #include <viam/trajex/types/xt.hpp>
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wnull-dereference"
-#include <boost/test/included/unit_test.hpp>
-#pragma GCC diagnostic pop
+#include <boost/test/unit_test.hpp>
 
 using namespace std::chrono_literals;
 

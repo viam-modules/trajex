@@ -14,7 +14,4 @@
 #include <xtensor/xnorm.hpp>
 #endif
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wnull-dereference"
-#include <boost/test/included/unit_test.hpp>
-#pragma GCC diagnostic pop
+#include <boost/test/unit_test.hpp>
