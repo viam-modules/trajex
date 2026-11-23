@@ -7,7 +7,7 @@
 // output -- not golden values.
 
 #define BOOST_TEST_MODULE viam_trajex_capi
-#include <boost/test/included/unit_test.hpp>
+#include <boost/test/unit_test.hpp>
 
 #include <algorithm>
 #include <array>
