@@ -1056,10 +1056,7 @@ bool operator==(const trajectory::integration_observer::splice_event& a, const t
         }
         // NaN compares unequal to everything, so a NaN on only one side is a mismatch, as it should be.
         const auto nans = std::isnan(static_cast<double>(lhs.s_ddot)) && std::isnan(static_cast<double>(rhs.s_ddot));
-        if (!nans && (lhs.s_ddot != rhs.s_ddot)) {
-            return false;
-        }
-        return true;
+        return nans || (lhs.s_ddot == rhs.s_ddot);
     });
 }
 
